@@ -1,0 +1,593 @@
+corridor_follower_node:
+  ros__parameters:
+    # LaserScan input for corridor centering control (topic name).
+    scan_topic: /scan
+    # Chassis velocity command output (topic name).
+    cmd_vel_topic: /cmd_vel
+    # Nominal forward speed in corridor mode (meters/second).
+    forward_speed: 0.20
+    # Absolute angular speed limit for correction (radians/second).
+    max_angular_speed: 0.60
+    # PID proportional gain for lateral error correction (gain).
+    pid_kp: 1.20
+    # PID integral gain for lateral error correction (gain).
+    pid_ki: 0.00
+    # PID derivative gain for lateral error correction (gain).
+    pid_kd: 0.15
+    # Integral term clamp limit (absolute value, gain output unit).
+    integral_limit: 1.5
+    # Deadband for centering error before correction (meters).
+    error_deadband: 0.02
+    # Left-side sampling sector start angle in base frame (degrees).
+    left_start_deg: 60.0
+    # Left-side sampling sector end angle in base frame (degrees).
+    left_end_deg: 120.0
+    # Right-side sampling sector start angle in base frame (degrees).
+    right_start_deg: -120.0
+    # Right-side sampling sector end angle in base frame (degrees).
+    right_end_deg: -60.0
+    # Minimum valid lidar range used by corridor control (meters).
+    min_valid_range: 0.05
+    # Maximum valid lidar range used by corridor control (meters).
+    max_valid_range: 8.0
+    # External enable command topic for corridor follower (topic name).
+    enable_control_topic: /inventory/corridor_enable
+    # External reverse-mode command topic for corridor follower (topic name).
+    reverse_control_topic: /inventory/corridor_reverse
+    # Service name to enable/disable corridor following (service name).
+    set_enable_service_name: /inventory/set_corridor_following
+
+number_recognizer_node:
+  ros__parameters:
+    # Camera image topic name (topic name).
+    camera_topic: /camera/color/image_raw
+    # Recognition output topic for cabinet number (topic name).
+    recognized_topic: /inventory/recognized_number
+    # Debug topic: A4 detection / warped view image (topic name).
+    debug_a4_topic: /inventory/debug_a4_region
+    # Debug topic: segmented digit crops image (topic name).
+    debug_digits_topic: /inventory/debug_digits
+    # Debug topic: final visualization overlay image (topic name).
+    visualization_topic: /inventory/visualization
+    # Service name to manually enable/disable recognizer (service name).
+    trigger_service_name: /inventory/trigger_recognition
+    # External enable control from mission state machine (topic name, boolean command).
+    enable_control_topic: /inventory/recognizer_enable
+    # Distance overlay input for visualization text (topic name).
+    distance_overlay_topic: /inventory/target_distance
+
+    # Enable recognizer at startup before mission_manager publishes state control (boolean).
+    enable_on_start: true
+    # Minimum confidence to mark recognition as valid (ratio, 0~1).
+    min_confidence: 0.80
+    # Max failed attempts before local counter reset (count).
+    max_attempts: 20
+    # Minimum interval between inference attempts (seconds).
+    attempt_interval: 0.1
+    # Max age of distance overlay message considered fresh (seconds).
+    distance_overlay_timeout_sec: 0.8
+    # Whether to allow union-patch classification as last fallback (boolean).
+    enable_union_fallback_classification: true
+    # Minimum accepted cabinet ID value (count / integer id).
+    cabinet_id_min: 1
+    # Maximum accepted cabinet ID value (count / integer id). Raise when warehouse has more cabinet IDs.
+    cabinet_id_max: 36
+
+    # Reference digit height in pixels for visual distance estimation (pixels).
+    known_digit_height_px: 40.0
+    # Reference distance corresponding to known_digit_height_px (meters).
+    known_distance_m: 1.0
+    # Equivalent focal-length factor used by pinhole estimate (pixels).
+    distance_focal_length: 600.0
+
+    # A4 detector Gaussian blur kernel size (pixels, odd preferred).
+    a4_gaussian_kernel: 5
+    # A4 detector morphology kernel size (pixels).
+    a4_morph_kernel_size: 5
+    # Minimum A4 contour area ratio to image area (ratio).
+    a4_min_area_ratio: 0.01
+    # Polygon approximation epsilon ratio for A4 contour fitting (ratio).
+    a4_approx_epsilon: 0.02
+    # Minimum A4 aspect ratio accepted during detection (ratio).
+    a4_min_aspect_ratio: 0.55
+    # Maximum A4 aspect ratio accepted during detection (ratio).
+    a4_max_aspect_ratio: 2.2
+
+    # CLAHE clip limit for segmentation preprocessing (ratio-like gain).
+    clahe_clip_limit: 2.0
+    # CLAHE tile grid size (count / pixels per tile group).
+    clahe_grid_size: 8
+    # Pre-threshold Gaussian blur kernel size (pixels, odd preferred).
+    pre_blur_kernel: 5
+    # Adaptive threshold block size (pixels, odd required).
+    adaptive_thresh_block_size: 11
+    # Adaptive threshold C offset (count / intensity offset).
+    adaptive_thresh_c: 4
+    # Fuse adaptive threshold with Otsu threshold for robustness (boolean).
+    enable_otsu_fusion: true
+    # Legacy morphology kernel size (pixels).
+    morph_kernel_size: 1
+    # Morphology open kernel size for denoising (pixels). Keep small; raising may erase thin digit strokes.
+    morph_open_kernel_size: 1
+    # Morphology close kernel size for reconnecting strokes (pixels). Raise if distant digits split; lower if nearby noise merges.
+    morph_close_kernel_size: 5
+    # Minimum candidate contour area (pixels^2). Raise to remove specks; lower if distant/small digits disappear.
+    min_digit_area: 50
+    # Maximum candidate contour area (pixels^2). Lower to reject A4 border chunks; raise if large close digits are rejected.
+    max_digit_area: 5000
+    # Minimum candidate area relative to warped A4 area. Raise to remove small specks; lower if distant digits disappear.
+    min_digit_area_ratio: 0.0001
+    # Maximum candidate area relative to warped A4 area. Raise if close digits are rejected as too large; lower to reject paper border blobs.
+    max_digit_area_ratio: 0.35
+    # Minimum candidate width (pixels). Raise to reject thin vertical noise; lower if digit "1" is missed.
+    min_digit_width: 6
+    # Minimum candidate height (pixels). Raise to reject horizontal fragments; lower if distant digits are missed.
+    min_digit_height: 10
+    # Maximum candidate width (pixels). 0 disables; set lower if full paper border enters candidate list.
+    max_digit_width: 0
+    # Maximum candidate height (pixels). 0 disables; set lower if full paper border enters candidate list.
+    max_digit_height: 0
+    # Minimum candidate width relative to warped A4 width. Raise to remove tiny fragments; lower if far digits are narrow.
+    min_digit_width_ratio: 0.01
+    # Maximum candidate width relative to warped A4 width. Raise if close/side-view digits are rejected; lower to reject border-wide blobs.
+    max_digit_width_ratio: 0.80
+    # Minimum candidate height relative to warped A4 height. Raise to remove short fragments; lower if far digits are short.
+    min_digit_height_ratio: 0.025
+    # Maximum candidate height relative to warped A4 height. Raise if close digits are rejected; lower to reject tall border lines.
+    max_digit_height_ratio: 0.90
+    # Minimum candidate aspect ratio h/w (ratio). Raise to remove flat horizontal lines.
+    min_digit_aspect_ratio: 0.20
+    # Maximum candidate aspect ratio h/w (ratio). Lower to remove very tall border/vertical line candidates.
+    max_digit_aspect_ratio: 12.0
+    # Minimum contour fill ratio area/(bbox area). Raise to reject sparse edge fragments; lower if hollow digits break.
+    min_candidate_extent: 0.06
+    # Maximum contour fill ratio area/(bbox area). Lower to reject solid border blobs; raise if thick printed digits reject.
+    max_candidate_extent: 0.99
+    # Reject candidates touching A4 border margin or outside allowed center window.
+    reject_border_candidates: true
+    # Fixed A4 inner border margin ignored during digit candidate filtering (pixels).
+    a4_border_margin_px: 2
+    # Relative A4 inner border margin ignored during digit candidate filtering (ratio of min warped size).
+    # Keep small; edge filtering now also checks candidate quality before rejecting near-border digits.
+    a4_border_margin_ratio: 0.005
+    # Minimum candidate center x ratio in warped A4. 0.0 disables center-window left rejection.
+    min_candidate_center_x_ratio: 0.01
+    # Maximum candidate center x ratio in warped A4. 1.0 disables center-window right rejection.
+    max_candidate_center_x_ratio: 0.99
+    # Minimum candidate center y ratio in warped A4. 0.0 disables center-window top rejection.
+    min_candidate_center_y_ratio: 0.01
+    # Maximum candidate center y ratio in warped A4. 1.0 disables center-window bottom rejection.
+    max_candidate_center_y_ratio: 0.99
+    # Reject vertical-line noise when bbox width is below this pixel threshold.
+    max_vertical_line_width_px: 7
+    # Reject vertical-line noise when bbox width is below this ratio of warped A4 width.
+    max_vertical_line_width_ratio: 0.035
+    # h/w threshold for very thin vertical-line rejection. Raise if digit "1" is incorrectly rejected.
+    min_vertical_line_aspect_ratio: 8.0
+    # Reject horizontal-line noise when bbox height is below this pixel threshold.
+    max_horizontal_line_height_px: 7
+    # Reject horizontal-line noise when bbox height is below this ratio of warped A4 height.
+    max_horizontal_line_height_ratio: 0.035
+    # h/w threshold for very flat horizontal-line rejection. Lower to reject more horizontal strokes.
+    max_horizontal_line_aspect_ratio: 0.14
+    # Padding added around final digit crop (pixels), clipped inside A4 inner margin.
+    crop_padding_px: 4
+    # Relative padding added around final digit crop (ratio of bbox max side).
+    crop_padding_ratio: 0.025
+    # Padding around union fallback crop (pixels), clipped inside A4 inner margin.
+    union_fallback_padding_px: 10
+    # Relative padding around union fallback crop (ratio of union bbox max side).
+    union_fallback_padding_ratio: 0.05
+    # Enable splitting wide union fallback into two digit crops before classification.
+    enable_union_split: true
+    # Width/height ratio above which union fallback tries a two-digit split. Raise to avoid splitting single wide digits.
+    union_split_min_width_height_ratio: 1.20
+    # Required valley/side-peak ink ratio for union split. Lower requires a clearer gap between two digits.
+    union_split_min_valley_ratio: 0.28
+    # Enable rescuing the best shape-like candidate when strict filters leave final empty.
+    enable_relaxed_digit_fallback: true
+    # Minimum score for relaxed fallback rescue. Raise to be stricter; lower to rescue more near-border/large digits.
+    relaxed_fallback_min_score: 0.20
+    # Normalized digit canvas size fed to classifier (pixels).
+    digit_input_size: 64
+    # Maximum number of digit boxes kept after segmentation (count). Lower to suppress fragments; keep >=2 for two-digit IDs.
+    max_digit_count: 3
+
+    # Enable relative-size filtering against largest candidate (boolean).
+    enable_relative_size_filter: true
+    # Relative-size rule mode: OR when true, AND when false (boolean / mode).
+    relative_filter_use_or: true
+    # Minimum area ratio to largest candidate for keeping (ratio). Raise to drop fragments; lower for distant digits.
+    min_area_ratio_to_largest: 0.10
+    # Minimum height ratio to largest candidate for keeping (ratio). Raise to drop short line fragments.
+    min_height_ratio_to_largest: 0.30
+
+    # --- Slender-digit protection (kept for compatibility/future tuning) ---
+    # Slender-digit protection related parameter.
+    # Current recommended setting for this project is DISABLED unless digit "1" is frequently missed.
+    # Kept only for future tuning / compatibility (boolean).
+    enable_slender_digit_protection: false
+    # Slender-digit protection related parameter.
+    # Used only when enable_slender_digit_protection=true (ratio).
+    slender_min_height_ratio_to_largest: 0.40
+    # Slender-digit protection related parameter.
+    # Used only when enable_slender_digit_protection=true (ratio).
+    slender_max_width_ratio_to_largest: 0.50
+
+    # Maximum horizontal gap allowed for merging fragments from the same digit (pixels).
+    merge_gap_px: 24
+    # Maximum merge gap relative to warped A4 width/height. Raise if distant digit fragments fail to merge.
+    merge_gap_ratio: 0.05
+    # Enable horizontal merge of adjacent fragments (boolean).
+    enable_horizontal_merge: true
+    # Enable vertical split merge for broken-up same digit parts (boolean).
+    enable_vertical_split_merge: true
+    # Minimum vertical overlap ratio required for horizontal merge (ratio).
+    merge_vertical_overlap_min_ratio: 0.30
+    # Minimum y-overlap ratio for multi-pass same-digit fragment merge. Lower merges more fragments; raise to avoid merging adjacent digits.
+    merge_min_y_overlap_ratio: 0.25
+    # Maximum small/large area ratio considered mergeable (ratio).
+    merge_small_part_area_ratio_max: 0.30
+    # Maximum small/large height ratio considered mergeable (ratio).
+    merge_small_part_height_ratio_max: 0.72
+    # Maximum height difference allowed for merge (pixels).
+    merge_max_height_diff_px: 18
+    # Maximum height difference ratio allowed for merge. Raise if one digit breaks into unequal pieces; lower to avoid merging different digits.
+    merge_max_height_diff_ratio: 0.55
+    # Maximum vertical gap allowed for vertical split merge (pixels).
+    vertical_merge_gap_px: 10
+    # Minimum horizontal overlap ratio for vertical split merge (ratio).
+    min_horizontal_overlap_ratio_for_vertical_merge: 0.55
+
+    # ONNX model relative path under package share or absolute path (path string).
+    onnx_model_path: models/digit_cnn.onnx
+    # Minimum per-digit classifier confidence accepted as success (ratio, 0~1).
+    classifier_min_confidence: 0.70
+    # Classifier network input size (pixels).
+    classifier_input_size: 64
+    # Prefer CUDA backend if available (boolean).
+    prefer_cuda: false
+
+distance_estimator_node:
+  ros__parameters:
+    # LaserScan input topic for ranging (topic name).
+    scan_topic: /scan
+    # Recognition input topic used for target bearing and validity (topic name).
+    recognized_topic: /inventory/recognized_number
+    # Output distance topic for mission tracking control (topic name).
+    output_topic: /inventory/target_distance
+    # Fusion mode enum: visual | lidar | hybrid (enum / mode).
+    fusion_mode: hybrid
+    # Maximum recognition age accepted for distance publish (seconds).
+    recognition_timeout_sec: 0.8
+    # Minimum visual fallback distance after clamp (meters).
+    visual_min_distance: 0.2
+    # Maximum visual fallback distance after clamp (meters).
+    visual_max_distance: 5.0
+
+    # Camera horizontal field-of-view for image-to-lidar angle mapping (degrees).
+    camera_hfov_deg: 60.0
+    # Camera image width used by horizontal offset normalization (pixels).
+    camera_image_width_px: 640.0
+    # Legacy lidar local window size (degrees).
+    lidar_window_deg: 10.0
+
+    # Generic minimum accepted lidar range (meters).
+    min_valid_range: 0.05
+    # Generic maximum accepted lidar range (meters).
+    max_valid_range: 8.0
+
+    # Tracking sector start relative to visual target bearing (degrees).
+    tracking_range_sector_start_deg: -3.0
+    # Tracking sector end relative to visual target bearing (degrees).
+    tracking_range_sector_end_deg: 3.0
+    # Minimum valid lidar points required in tracking sector (count).
+    tracking_min_valid_points: 5
+    # True=median statistic, False=low-percentile statistic (boolean / mode).
+    tracking_use_median: true
+    # Low percentile used when tracking_use_median=false (ratio, 0~1).
+    tracking_low_percentile: 0.35
+    # EMA alpha for temporal smoothing of lidar distance (ratio, 0~1).
+    tracking_distance_filter_alpha: 0.35
+    # Tracking-sector minimum accepted lidar distance (meters).
+    tracking_min_valid_distance: 0.10
+    # Tracking-sector maximum accepted lidar distance (meters).
+    tracking_max_valid_distance: 5.00
+    # In hybrid mode, prioritize lidar estimate when available (boolean).
+    tracking_prioritize_lidar: true
+    # In hybrid mode, fallback to visual estimate if lidar is unavailable (boolean).
+    tracking_visual_fallback_when_lidar_missing: true
+
+    # Publish loop frequency for target distance output (hertz).
+    publish_rate_hz: 10.0
+
+gap_detector_node:
+  ros__parameters:
+    # LaserScan input for gap detection (topic name).
+    scan_topic: /scan
+    # Output topic carrying gap status and debug values (topic name).
+    output_topic: /inventory/gap_status
+    # Context topic from mission_manager (target side / adjust info) (topic name).
+    context_topic: /inventory/gap_context
+    # Gap detector enable control topic (topic name, boolean command).
+    enable_topic: /inventory/gap_detector_enable
+    # Entry side command topic from mission_manager (left/right string).
+    entry_side_topic: /inventory/entry_side
+    # Default active entry side before mission_manager publishes route side.
+    entry_side: left
+    # Enable state at startup before state-machine control arrives (boolean).
+    enable_on_start: false
+    # Working coordinate frame for interpretation / logging (frame id string).
+    base_link_frame: base_link
+    # Legacy alias for left-side main detection sector start angle (degrees).
+    gap_sector_start_deg: 60.0
+    # Legacy alias for left-side main detection sector end angle (degrees).
+    gap_sector_end_deg: 120.0
+    # Left-side main gap-detection sector start angle in base_link (degrees).
+    left_gap_sector_start_deg: 60.0
+    # Left-side main gap-detection sector end angle in base_link (degrees).
+    left_gap_sector_end_deg: 120.0
+    # Right-side main gap-detection sector start angle in base_link (degrees).
+    right_gap_sector_start_deg: -120.0
+    # Right-side main gap-detection sector end angle in base_link (degrees).
+    right_gap_sector_end_deg: -60.0
+    # Front-left veto sector start angle for near-obstacle hard block (degrees).
+    front_left_veto_sector_start_deg: 10.0
+    # Front-left veto sector end angle for near-obstacle hard block (degrees).
+    front_left_veto_sector_end_deg: 70.0
+    # Left route front-side veto sector start angle (degrees).
+    left_front_veto_sector_start_deg: 10.0
+    # Left route front-side veto sector end angle (degrees).
+    left_front_veto_sector_end_deg: 70.0
+    # Left-side veto sector start angle for near-obstacle hard block (degrees).
+    left_side_veto_sector_start_deg: 70.0
+    # Left-side veto sector end angle for near-obstacle hard block (degrees).
+    left_side_veto_sector_end_deg: 120.0
+    # Right route front-side veto sector start angle (degrees).
+    right_front_veto_sector_start_deg: -70.0
+    # Right route front-side veto sector end angle (degrees).
+    right_front_veto_sector_end_deg: -10.0
+    # Right-side veto sector start angle for near-obstacle hard block (degrees).
+    right_side_veto_sector_start_deg: -120.0
+    # Right-side veto sector end angle for near-obstacle hard block (degrees).
+    right_side_veto_sector_end_deg: -70.0
+
+    # Minimum distance treated as open-point candidate (meters).
+    open_point_min_distance: 0.5
+    # Near-obstacle veto threshold for safety hard block (meters).
+    near_obstacle_veto_distance: 0.5
+    # Required estimated opening width to allow entering (meters).
+    required_entry_width: 0.4
+
+    # Minimum accepted lidar range for gap detector (meters).
+    min_valid_range: 0.05
+    # Maximum accepted lidar range for gap detector (meters).
+    max_valid_range: 8.0
+
+    # Minimum consecutive open points to form one open run/window (count).
+    open_run_min_points: 3
+    # Minimum valid points required in sector for one frame evaluation (count).
+    min_valid_points: 8
+    # Minimum open-point ratio in sector to qualify as candidate frame (ratio, 0~1).
+    open_ratio_threshold: 0.10
+    # Max angular gap between adjacent points considered contiguous (degrees).
+    max_adjacent_angle_gap_deg: 2.0
+    # Optional smoothing window length over frame metrics (frames/count).
+    smoothing_window: 1
+    # Consecutive candidate frames required for stable gap_detected=true (frames/count).
+    stable_frames_required: 100
+    # Timeout defining one complete detect cycle in WAITING_GAP (seconds).
+    detect_cycle_timeout_sec: 2.5
+
+    # Enable CSV debug logging output (boolean).
+    enable_csv_log: true
+    # CSV log directory path (filesystem path).
+    csv_log_dir: /tmp/wheeltec_inventory_gap_logs
+    # CSV log file prefix (string).
+    csv_file_prefix: gap_debug
+
+mission_manager_node:
+  ros__parameters:
+    # Recognizer input topic (topic name).
+    recognized_topic: /inventory/recognized_number
+    # Distance input topic used for TARGET_TRACKING (topic name).
+    distance_topic: /inventory/target_distance
+    # Gap detector status input topic (topic name).
+    gap_topic: /inventory/gap_status
+    # Primary odometry source topic (topic name).
+    odom_topic: /odom_combined
+    # Fallback odometry source topic (topic name).
+    odom_fallback_topic: /odom
+    # Timeout before switching from primary odom to fallback (seconds).
+    odom_primary_timeout_sec: 0.8
+    # LaserScan input topic for entering-stage safety checks (topic name).
+    scan_topic: /scan
+
+    # Mission state publication topic (topic name).
+    mission_state_topic: /inventory/mission_state
+    # Mission log publication topic (topic name).
+    mission_log_topic: /inventory/mission_log
+    # Velocity command output topic (topic name).
+    cmd_vel_topic: /cmd_vel
+
+    # Corridor follower enable topic (topic name, boolean command).
+    corridor_enable_topic: /inventory/corridor_enable
+    # Corridor follower reverse topic (topic name, boolean command).
+    corridor_reverse_topic: /inventory/corridor_reverse
+    # Gap-context publication topic to detector (topic name).
+    gap_context_topic: /inventory/gap_context
+    # Recognizer enable topic, true only in search/tracking phases (topic name).
+    recognizer_enable_topic: /inventory/recognizer_enable
+    # Gap detector enable topic, true only in WAITING_GAP (topic name).
+    gap_detector_enable_topic: /inventory/gap_detector_enable
+    # Entry side topic published to gap_detector (left/right string).
+    entry_side_topic: /inventory/entry_side
+
+    # Start mission service name (service name).
+    start_service_name: /inventory/start_mission
+    # Cancel mission service name (service name).
+    cancel_service_name: /inventory/cancel_mission
+    # Optional recognizer trigger service name (service name).
+    recognizer_trigger_service: /inventory/trigger_recognition
+
+    # Default mission targets list when no external target list is passed (string list).
+    target_list: ["2-3-1-2"]
+    # Route waypoint YAML under package share, or absolute path.
+    route_waypoints_file: config/route_waypoints.yaml
+    # Warehouse physical-unit layout YAML under package share, or absolute path.
+    warehouse_layout_file: config/warehouse_layout.yaml
+    # Route search failure policy: error | return.
+    route_search_failure_policy: error
+    # Desired following distance in TARGET_TRACKING (meters).
+    follow_distance: 0.75
+    # Warehouse longitudinal reference length for return decisions (meters).
+    warehouse_length: 12.0
+    # Corridor search speed (meters/second).
+    corridor_speed: 0.20
+    # Tracking speed cap while following target cabinet (meters/second).
+    tracking_speed: 0.15
+    # Legacy entry speed parameter (meters/second).
+    entry_speed: 0.15
+    # Entering success travel distance threshold in ENTERING_GAP (meters).
+    entry_distance: 1.2
+    # Generic turning speed parameter (radians/second).
+    turn_speed: 0.40
+    # Reactive entering nominal linear speed (meters/second).
+    enter_linear_speed: 0.15
+    # Reactive entering nominal angular speed (radians/second).
+    enter_angular_speed: 0.30
+    # Angular multiplier when entering a left-side gap. ROS /cmd_vel: positive angular.z turns left.
+    enter_left_angular_multiplier: 1.0
+    # Angular multiplier when entering a right-side gap. ROS /cmd_vel: negative angular.z turns right.
+    enter_right_angular_multiplier: -1.0
+    # Reactive entering hard-stop distance threshold (meters).
+    enter_stop_distance: 0.30
+    # Reactive entering slow-down distance threshold (meters).
+    enter_slow_distance: 0.55
+    # Front safety sector start angle during entering (degrees).
+    enter_front_sector_start_deg: -20.0
+    # Front safety sector end angle during entering (degrees).
+    enter_front_sector_end_deg: 20.0
+    # Front-left safety sector start angle during entering (degrees).
+    enter_front_left_sector_start_deg: 20.0
+    # Front-left safety sector end angle during entering (degrees).
+    enter_front_left_sector_end_deg: 75.0
+    # Left-side safety sector start angle during entering (degrees).
+    enter_left_side_sector_start_deg: 75.0
+    # Left-side safety sector end angle during entering (degrees).
+    enter_left_side_sector_end_deg: 120.0
+    # Front-right safety sector start angle during entering (degrees).
+    enter_front_right_sector_start_deg: -75.0
+    # Front-right safety sector end angle during entering (degrees).
+    enter_front_right_sector_end_deg: -20.0
+    # Right-side safety sector start angle during entering (degrees).
+    enter_right_side_sector_start_deg: -120.0
+    # Right-side safety sector end angle during entering (degrees).
+    enter_right_side_sector_end_deg: -75.0
+
+    # Distance-loop proportional gain in TARGET_TRACKING (gain).
+    tracking_kp_distance: 0.80
+    # Heading-loop proportional gain in TARGET_TRACKING (gain).
+    tracking_kp_heading: 1.20
+    # Pixel-to-heading normalization factor for horizontal offset (pixels).
+    tracking_offset_scale_px: 320.0
+    # Angular speed clamp in TARGET_TRACKING (radians/second).
+    tracking_max_angular: 0.80
+
+    # Distance tolerance to consider tracking error small (meters).
+    distance_tolerance: 0.08
+    # Required duration with stable distance/heading before "stable" (seconds).
+    distance_stable_time_sec: 1.2
+    # Recognition timeout used by tracking validity checks (seconds).
+    recognition_timeout_sec: 1.0
+    # Consecutive target-recognition frames required to stop Nav2 route search (frames/count).
+    target_recognition_stable_frames: 3
+    # Minimum time the target recognition must stay stable before stopping Nav2 route search (seconds).
+    target_recognition_stable_time_sec: 0.30
+    # Fallback fixed retreat distance after SEARCH_GAP timeout, before static confirmation (meters).
+    post_track_retreat_distance: 0.10
+    # Linear speed used for post-tracking retreat (meters/second).
+    retreat_speed: 0.08
+    # Stop-settle time after retreat/adjust motion before detection (seconds).
+    wait_gap_stop_settle_sec: 0.25
+    # Low speed used while SEARCH_GAP moves toward the expected physical-unit gap (meters/second).
+    search_gap_speed: 0.06
+    # SEARCH_GAP timeout before falling back to the legacy micro-adjust sequence (seconds).
+    search_gap_timeout_sec: 4.0
+    # Timeout of one WAITING_GAP detection cycle (seconds).
+    gap_detect_cycle_timeout_sec: 2.5
+    # Number of failed detect cycles before one pose adjustment (count).
+    gap_failures_before_adjust: 3
+    # Linear speed for gap-adjust sequence motions (meters/second).
+    gap_adjust_speed: 0.08
+    # Relative adjustment sequence applied per retry stage (meters list).
+    gap_adjust_sequence: [-0.10, 0.10, -0.20]
+
+    # Whether to return home after mission finishes (boolean).
+    return_home_on_finish: false
+    # Return target mode enum: start | charge (enum / mode).
+    return_target_mode: start
+    # Charging pose X coordinate (meters).
+    charge_pose_x: 0.0
+    # Charging pose Y coordinate (meters).
+    charge_pose_y: 0.0
+    # Charging pose yaw angle (radians).
+    charge_pose_yaw: 0.0
+    # Frame ID of charging pose coordinates (frame id string).
+    charge_pose_frame_id: odom_combined
+    # Enable Nav2-based return path as primary return method (boolean).
+    use_nav2_return: true
+    # NavigateToPose action name (action name string).
+    nav2_action_name: navigate_to_pose
+    # Goal frame for Nav2 return target (frame id string).
+    nav2_goal_frame: map
+    # Timeout waiting for Nav2 action server (seconds).
+    nav2_server_wait_timeout_sec: 1.0
+    # Timeout waiting for Nav2 goal result (seconds).
+    nav2_goal_timeout_sec: 40.0
+    # Timeout for each route waypoint NavigateToPose goal (seconds).
+    nav2_route_waypoint_timeout_sec: 60.0
+    # Duration to continuously publish zero velocity after canceling Nav2 route search (seconds).
+    nav2_cancel_stop_duration_sec: 0.50
+    # Allow Nav2 return in search-return path (boolean).
+    nav2_enable_for_search_return: false
+    # Fallback rotate controller proportional gain (gain).
+    fallback_rotate_kp: 1.5
+    # Fallback rotate controller angular speed limit (radians/second).
+    fallback_rotate_max_angular: 0.8
+    # Fallback rotate finish tolerance (radians).
+    fallback_rotate_tolerance_rad: 0.08
+    # Stable hold time at rotate tolerance before completion (seconds).
+    fallback_rotate_stable_time_sec: 0.25
+    # Fallback straight-drive speed to home (meters/second).
+    fallback_drive_speed: 0.20
+    # Fallback heading controller proportional gain while driving (gain).
+    fallback_heading_kp: 1.2
+    # Fallback heading controller angular speed limit (radians/second).
+    fallback_drive_max_angular: 0.8
+    # Fallback return goal distance tolerance (meters).
+    fallback_goal_tolerance_m: 0.18
+    # Continue to next target after one target error (boolean).
+    continue_on_error: false
+    # Main mission manager control loop rate (hertz).
+    control_rate_hz: 10.0
+
+    # Enable LaserScan safety checks during entering (boolean).
+    use_scan_safety: true
+    # Max accepted scan message age for safety checks (seconds).
+    max_scan_age_sec: 0.8
+
+    # Enable ultrasonic safety checks during entering (boolean).
+    use_ultrasonic_safety: true
+    # Ultrasonic topic list used for entering safety checks (topic name list).
+    ultrasonic_topics:
+      - /ultrasonic_data_A
+      - /ultrasonic_data_B
+      - /ultrasonic_data_C
+      - /ultrasonic_data_D
+      - /ultrasonic_data_E
+      - /ultrasonic_data_F
+    # Ultrasonic hard-stop threshold during entering (meters).
+    entry_ultrasonic_stop_distance: 0.25
+    # Max accepted ultrasonic message age for safety checks (seconds).
+    max_ultrasonic_age_sec: 0.8

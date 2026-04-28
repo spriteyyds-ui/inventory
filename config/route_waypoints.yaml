@@ -1,0 +1,55 @@
+# Nav2巡航路线配置。
+# waypoints 是覆盖一侧货柜区域的巡航路线点，不是单个货柜的精确位置。
+# 所有坐标均为 map 坐标系；实际值需要在建图后通过 RViz 标定替换。
+routes:
+  left_route:
+    frame_id: map
+    waypoints:
+      - {x: 2.0, y: 0.0, yaw: 0.0}
+
+  right_route:
+    frame_id: map
+    waypoints:
+      - {x: 2.0, y: 0.0, yaw: 0.0}
+
+side_route_map:
+  left: left_route
+  right: right_route
+
+cabinet_side_map:
+  "1": left
+  "2": left
+  "3": left
+  "4": left
+  "5": left
+  "6": left
+  "7": left
+  "8": left
+  "9": left
+  "10": left
+  "11": left
+  "12": left
+  "13": left
+  "14": left
+  "15": left
+  "16": left
+  "17": left
+  "18": left
+  "19": right
+  "20": right
+  "21": right
+  "22": right
+  "23": right
+  "24": right
+  "25": right
+  "26": right
+  "27": right
+  "28": right
+  "29": right
+  "30": right
+  "31": right
+  "32": right
+  "33": right
+  "34": right
+  "35": right
+  "36": right

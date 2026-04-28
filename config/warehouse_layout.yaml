@@ -1,0 +1,40 @@
+# 真实仓库布局配置。
+# physical_units 描述物理货柜单元；同一单元内部编号分界不是可进入间隙。
+# 可展开间隙只存在于相邻物理货柜单元之间，最大展开间隙为 max_gap_width。
+global:
+  corridor_width: 10.0
+  corridor_length: 30.0
+  rail_length: 27.35
+  closed_row_length: 21.5
+  max_gap_width: 5.6
+
+rows:
+  upper_left:
+    side: left
+    cabinet_range: [1, 18]
+    physical_units:
+      - [1]
+      - [2, 3]
+      - [4, 5]
+      - [6, 7]
+      - [8, 9]
+      - [10, 11]
+      - [12, 13]
+      - [14, 15]
+      - [16, 17]
+      - [18]
+
+  lower_right:
+    side: right
+    cabinet_range: [19, 36]
+    physical_units:
+      - [19]
+      - [20, 21]
+      - [22, 23]
+      - [24, 25]
+      - [26, 27]
+      - [28, 29]
+      - [30, 31]
+      - [32, 33]
+      - [34, 35]
+      - [36]
