@@ -1,0 +1,570 @@
+wheeltec_inventory_system 操作手册（V3：Nav2巡航路线搜索 + entry_side自动切换）
+========================================================================
+
+适用环境
+--------
+- Ubuntu 22.04 + ROS2 Humble
+- 工作区：`~/wheeltec_ros2`
+- 功能包：`wheeltec_inventory_system`
+- 本版流程：
+  - 根据目标货柜号读取 `route_waypoints.yaml`
+  - 选择对应侧巡航路线和 `entry_side`
+  - `NAV_ROUTE` 阶段调用 Nav2 `NavigateToPose` 逐点巡航
+  - 巡航过程中数字识别持续工作
+  - 目标编号稳定识别后取消 Nav2 并停车
+  - 跟踪稳定后根据 `warehouse_layout.yaml` 判断目标间隙在前方/后方
+  - `SEARCH_GAP` 按规划方向低速前进/后退，同时按 `entry_side` 检测间隙
+  - 检测到候选间隙后进入 `WAITING_GAP` 静态确认宽度、稳定性和安全距离
+  - 找缝超时或确认失败后，按原固定回退和调整序列 fallback 重试
+  - 满足条件后按 `entry_side` 和入缝角速度倍率进入入缝
+
+
+1. 终端分工（建议）
+-------------------
+- T1：底层驱动 + 导航
+- T2：盘库系统
+- T3：状态和服务测试
+- T4：图像调试画面
+- T5：Nav2 / 路线点 / TF 检查
+
+提示：尽量手敲命令，避免出现 `^[[200~ros2` 这种粘贴乱码。
+
+
+2. 编译（改代码后必做）
+----------------------
+```bash
+cd ~/wheeltec_ros2
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install --packages-select wheeltec_inventory_system
+source ~/wheeltec_ros2/install/setup.bash
+```
+
+预期：输出 `Summary: 1 package finished`。
+
+如果提示找不到 `yaml-cpp`：
+```bash
+sudo apt update
+sudo apt install libyaml-cpp-dev
+colcon build --symlink-install --packages-select wheeltec_inventory_system
+```
+
+
+3. 启动底层（T1）
+-----------------
+```bash
+cd ~/wheeltec_ros2
+source /opt/ros/humble/setup.bash
+source ~/wheeltec_ros2/install/setup.bash
+ros2 launch wheeltec_nav2 wheeltec_nav2.launch.py
+```
+
+说明：
+- 本包不负责启动 Cartographer 或 Nav2，只调用外部已有能力。
+- 实车导航测试前，必须已有可用地图、定位、Nav2 action server 和 `map -> base_link` TF。
+
+如果相机话题没起来，再补：
+```bash
+ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
+```
+
+
+4. 启动盘库系统（T2）
+--------------------
+```bash
+cd ~/wheeltec_ros2
+source /opt/ros/humble/setup.bash
+source ~/wheeltec_ros2/install/setup.bash
+ros2 launch wheeltec_inventory_system inventory_system.launch.py
+```
+
+完整盘库系统和单独数字识别节点都使用同一份参数文件：
+- `src/wheeltec_inventory_system/config/inventory_system.yaml`
+- 已不再维护独立的识别参数文件
+
+预期节点：
+- `corridor_follower_node`
+- `number_recognizer_node`
+- `distance_estimator_node`
+- `gap_detector_node`
+- `mission_manager_node`
+
+
+5. 启动后健康检查（T3）
+----------------------
+```bash
+source /opt/ros/humble/setup.bash
+source ~/wheeltec_ros2/install/setup.bash
+```
+
+5.1 基础话题
+```bash
+ros2 topic list | egrep "/scan|/odom|/odom_combined|/camera/color/image_raw|/inventory"
+ros2 topic info /scan
+ros2 topic info /camera/color/image_raw
+ros2 topic info /odom_combined
+ros2 topic info /odom
+```
+
+5.2 关键服务
+```bash
+ros2 service list | grep /inventory
+```
+
+5.3 返航参数
+```bash
+ros2 param get /mission_manager_node odom_topic
+ros2 param get /mission_manager_node odom_fallback_topic
+ros2 param get /mission_manager_node use_nav2_return
+ros2 param get /mission_manager_node return_target_mode
+ros2 param get /mission_manager_node route_waypoints_file
+ros2 param get /mission_manager_node route_search_failure_policy
+ros2 param get /mission_manager_node target_recognition_stable_frames
+ros2 param get /mission_manager_node target_recognition_stable_time_sec
+```
+
+5.4 Nav2 Action
+```bash
+ros2 action list | grep navigate_to_pose
+```
+
+5.5 entry_side 与 gap_detector 参数
+```bash
+ros2 topic info /inventory/entry_side
+ros2 param get /gap_detector_node entry_side_topic
+ros2 param get /gap_detector_node left_gap_sector_start_deg
+ros2 param get /gap_detector_node left_gap_sector_end_deg
+ros2 param get /gap_detector_node right_gap_sector_start_deg
+ros2 param get /gap_detector_node right_gap_sector_end_deg
+```
+
+
+6. 摄像头与识别调试（T4）
+------------------------
+先开原始图像：
+```bash
+source /opt/ros/humble/setup.bash
+source ~/wheeltec_ros2/install/setup.bash
+ros2 run image_tools showimage --ros-args -r image:=/camera/color/image_raw
+```
+
+再开识别调试图：
+```bash
+ros2 run image_tools showimage --ros-args -r image:=/inventory/visualization
+ros2 run image_tools showimage --ros-args -r image:=/inventory/debug_a4_region
+ros2 run image_tools showimage --ros-args -r image:=/inventory/debug_digits
+```
+
+识别分割调试图含义：
+- `/inventory/debug_a4_region`：观察 A4 是否被稳定框住，数字是否落在矫正后的 A4 内部。
+- `/inventory/debug_digits` 左侧为二值图，中间为候选框过滤过程，右侧为最终 crop 和 union fallback。
+- `raw candidates` 中橙色表示通过基础候选，红色表示尺寸/面积/比例不合格，蓝色表示竖线或横线噪声，紫色表示填充率异常，粉色表示贴近 A4 边缘。
+- `filtered + rejects` 中绿色表示保留候选，粉色表示边缘候选，蓝色表示线条候选，紫色表示填充率候选，红色表示相对大小过滤候选。
+- `final + union` 中绿色是最终数字框，青黄色 `union` 是 fallback 合并框，橙色 `relaxed` 是放宽救回的候选，黄色竖线 `split` 表示 union split 实际发生。
+- 如果图上出现 `split reject: ...`，说明 union 没有满足双数字切分条件；单个 6 正常情况下应多见 `not_wide_enough` 或 `no_clear_valley`。
+
+识别节点会低频输出分割统计：
+- `raw`：原始轮廓数量。
+- `area_ok`：面积过滤后数量。
+- `shape_ok`：宽高和长宽比过滤后数量。
+- `edge_ok`：填充率、线条噪声和 A4 边缘过滤后数量。
+- `rel_ok`：相对最大候选面积/高度过滤后数量。
+- `final`：最终用于分类的 digit candidates 数量。
+- `rej(edge/line/extent)`：被边缘、线条、填充率过滤掉的数量。
+- `union`：本次最终结果是否来自 union fallback。
+- `SEG_DEBUG`：final=0 时输出 warped A4 尺寸、各层计数和 shape_ok 中得分最高候选。
+- `SEG_CAND[n]`：逐个候选输出 `x/y/w/h/area/ar/ext/cx/cy/score/reason`，可直接判断被 `area_small`、`width_large`、`edge_left`、`relative_to_largest` 等哪一层过滤。
+
+识别结果查看：
+```bash
+ros2 topic echo /inventory/recognized_number
+```
+
+重点看字段：
+- `number`
+- `confidence`
+- `valid`
+- `horizontal_offset`
+- `estimated_distance`
+
+如果 `showimage` 缺失：
+```bash
+sudo apt update
+sudo apt install ros-humble-image-tools
+```
+
+识别参数现场调试顺序建议：
+1. 先确认 A4 检测稳定，再看 `SEG_DEBUG warped=宽x高` 是否合理。
+2. 近距离大数字被拒绝时，先看 `SEG_CAND` reason 是否为 `area_large`、`width_large`、`height_large` 或 `edge_*`，再放宽 `max_digit_*_ratio`、`a4_border_margin_*`。
+3. 如果 final=0 但 shape_ok>0，确认 `enable_relaxed_digit_fallback=true`，必要时降低 `relaxed_fallback_min_score`。
+4. 如果远距离数字被切碎，先适当增大 `morph_close_kernel_size`、`merge_gap_px`、`merge_gap_ratio`，再降低 `merge_min_y_overlap_ratio` 或增大 `merge_max_height_diff_ratio`。
+5. 如果碎片噪声太多，再提高 `min_digit_area`、`min_digit_area_ratio`、`min_candidate_extent` 或 `min_area_ratio_to_largest`。
+6. 如果最终绿色框包含太多空白或边框，减小 `crop_padding_px` 和 `union_fallback_padding_px`。
+7. 如果单个 6 被 split 成两半，提高 `union_split_min_width_height_ratio` 或降低 `union_split_min_valley_ratio`；如果双数字无法 split，反向调整。
+
+识别参数只维护在：
+```bash
+~/wheeltec_ros2/src/wheeltec_inventory_system/config/inventory_system.yaml
+```
+
+修改 YAML 后需要重新启动 `number_recognizer_node`。单独启动识别节点和启动完整盘库系统都会加载这份 YAML。
+
+确认参数是否生效：
+```bash
+ros2 param get /number_recognizer_node reject_border_candidates
+ros2 param get /number_recognizer_node a4_border_margin_px
+ros2 param get /number_recognizer_node min_candidate_center_x_ratio
+```
+
+
+7. 路线配置检查（T5，任务启动前必做）
+-----------------------------------
+路线文件：
+```bash
+less ~/wheeltec_ros2/src/wheeltec_inventory_system/config/route_waypoints.yaml
+```
+
+重点检查：
+- `routes.<route_name>.waypoints` 是巡航路线点，不是货柜精确坐标。
+- `waypoints` 使用 `map` 坐标系，必须由建图后在 RViz 中标定。
+- `cabinet_side_map` 中目标货柜号必须能找到 `left/right`。
+- `side_route_map` 中 `left/right` 必须能找到对应路线名。
+- 路线名必须真实存在于 `routes` 下。
+- 调试前不要让路线点仍全部是 `{x: 0.0, y: 0.0, yaw: 0.0}`。
+
+快速检查是否还有占位坐标：
+```bash
+grep -n "{x: 0.0, y: 0.0, yaw: 0.0}" \
+  ~/wheeltec_ros2/src/wheeltec_inventory_system/config/route_waypoints.yaml
+```
+
+如果 grep 有输出，说明还未完成路线标定。可以做软件连通测试，但不要直接实车自动巡航。
+
+
+8. 主流程测试（T3）
+------------------
+8.1 观察状态机和关键话题
+```bash
+ros2 topic echo /inventory/mission_state
+ros2 topic echo /inventory/mission_log
+ros2 topic echo /inventory/entry_side
+ros2 topic echo /inventory/gap_status
+ros2 topic echo /inventory/recognized_number
+```
+
+8.2 启动任务（示例单目标）
+```bash
+ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: true}"
+```
+
+预期主状态大致顺序：
+- `NAV_ROUTE`
+- `TARGET_TRACKING`
+- `SEARCH_GAP`
+- `WAITING_GAP`
+- `ENTERING_GAP`
+- `INVENTORYING`
+- `RETURNING`
+- `DONE` 或 `IDLE`
+
+8.3 NAV_ROUTE 阶段重点现象
+- `/inventory/mission_state` 应显示 `NAV_ROUTE`。
+- Nav2 应收到 `navigate_to_pose` 目标，并按路线点逐点巡航。
+- `/inventory/recognizer_enable` 应为 true。
+- `/inventory/recognized_number` 应持续输出识别结果。
+- `/inventory/entry_side` 应输出目标货柜解析得到的 `left` 或 `right`。
+- 如果整条路线走完仍未识别到目标，默认进入 `ERROR`。
+
+观察 Nav2 action：
+```bash
+ros2 action info /navigate_to_pose
+```
+
+
+9. mock识别测试：验证识别后取消Nav2（T3）
+---------------------------------------
+用途：在不依赖真实相机识别稳定性的情况下，验证 `NAV_ROUTE -> TARGET_TRACKING`。
+
+先启动任务，让状态进入 `NAV_ROUTE`：
+```bash
+ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: false}"
+```
+
+目标货柜号取自示例 `2-3-1-2` 的第二段，即 `3`。连续发布目标识别结果：
+```bash
+ros2 topic pub --rate 10 /inventory/recognized_number wheeltec_inventory_system/msg/RecognizedNumber "{number: '3', confidence: 0.95, valid: true, horizontal_offset: 0.0, attempts: 1, estimated_distance: 1.0}"
+```
+
+预期：
+- mission log 出现“目标货柜识别稳定”。
+- 当前 Nav2 巡航目标被取消。
+- 小车连续短时间发布零速度停车。
+- `/inventory/mission_state` 从 `NAV_ROUTE` 变为 `TARGET_TRACKING`。
+
+如果只发 1 帧就停车，说明稳定判定参数过低；如果一直不停车，检查：
+```bash
+ros2 param get /mission_manager_node target_recognition_stable_frames
+ros2 param get /mission_manager_node target_recognition_stable_time_sec
+ros2 topic echo /inventory/recognized_number
+```
+
+
+10. entry_side 切换测试（T3）
+----------------------------
+`mission_manager` 会根据路线配置自动发布 `/inventory/entry_side`。也可以手动发布测试 `gap_detector` 是否切侧。
+
+切到左侧：
+```bash
+ros2 topic pub --once /inventory/entry_side std_msgs/msg/String "{data: left}"
+ros2 topic echo /inventory/gap_status
+```
+
+切到右侧：
+```bash
+ros2 topic pub --once /inventory/entry_side std_msgs/msg/String "{data: right}"
+ros2 topic echo /inventory/gap_status
+```
+
+预期：
+- `/inventory/gap_status.active_side` 跟随变为 `left` 或 `right`。
+- CSV 日志中出现 `active_side` 列。
+- 左侧检测使用 `left_gap_sector_start_deg/end_deg`。
+- 右侧检测使用 `right_gap_sector_start_deg/end_deg`。
+
+
+11. 入缝方向参数测试（低速、空旷区域）
+------------------------------------
+当前入缝不是原地旋转，而是边前进边转向：
+- `linear.x = abs(enter_linear_speed)`
+- `angular.z = enter_*_angular_multiplier * abs(enter_angular_speed)`
+
+查看参数：
+```bash
+ros2 param get /mission_manager_node enter_linear_speed
+ros2 param get /mission_manager_node enter_angular_speed
+ros2 param get /mission_manager_node enter_left_angular_multiplier
+ros2 param get /mission_manager_node enter_right_angular_multiplier
+```
+
+调试原则：
+- `entry_side=left` 时，应向左侧缝隙切入。
+- `entry_side=right` 时，应向右侧缝隙切入。
+- 如果方向反了，只改倍率符号，不改代码。
+- 阿克曼底盘严禁按原地旋转思路调试。
+
+示例：左右方向反了时可临时调参验证：
+```bash
+ros2 param set /mission_manager_node enter_left_angular_multiplier -1.0
+ros2 param set /mission_manager_node enter_right_angular_multiplier 1.0
+```
+
+确认正确后，再把参数固化到 `inventory_system.yaml`。
+
+
+12. WAITING_GAP 子阶段说明（本版关键）
+-----------------------------------
+`WAITING_GAP` 内部会按以下子阶段执行：
+- `RETREATING`：SEARCH_GAP 超时后的 fallback 固定回退（默认 0.1m）
+- `STOP_BEFORE_DETECT`：停车稳定
+- `DETECTING_GAP`：连续缝隙检测
+- `POSE_ADJUSTING`：检测失败后按偏移序列调整位姿
+
+默认调整序列参数：
+```yaml
+gap_adjust_sequence: [-0.10, 0.10, -0.20]
+```
+含义：
+- 负数：后退
+- 正数：前进
+- 每个偏移都相对“当前位姿”执行
+
+
+13. gap_status 字段解释（T3）
+---------------------------
+```bash
+ros2 topic echo /inventory/gap_status
+```
+
+核心字段：
+- `gap_detected`：连续稳定帧达标后置 true
+- `entry_width_ok`：估计缝宽是否达到 `required_entry_width`
+- `front_left_safe`：左前安全扇区距离是否安全
+- `allow_enter`：是否允许入缝（综合判定）
+- `gap_width`：估计缝宽（m）
+- `side`：检测成功时输出当前侧，未检测到时为 `none`
+- `active_side`：当前正在检测的方向，来自 `/inventory/entry_side`
+- `stable_frame_count`：当前连续稳定帧计数
+- `failed_cycle_count`：检测周期失败计数
+- `open_ratio`：主检测扇区开口点比例
+- `max_open_run`：最长连续开口点数
+- `open_window_start_deg / open_window_end_deg`：最佳开口窗口角度边界
+- `min_front_left_dist`：左前安全扇区最小距离
+- `current_adjust_index / current_adjust_offset`：当前位姿调整进度
+
+
+14. gap 检测参数联调建议
+-----------------------
+推荐先看当前参数：
+```bash
+ros2 param get /gap_detector_node left_gap_sector_start_deg
+ros2 param get /gap_detector_node left_gap_sector_end_deg
+ros2 param get /gap_detector_node right_gap_sector_start_deg
+ros2 param get /gap_detector_node right_gap_sector_end_deg
+ros2 param get /gap_detector_node open_point_min_distance
+ros2 param get /gap_detector_node required_entry_width
+ros2 param get /gap_detector_node stable_frames_required
+```
+
+在线调参示例：
+```bash
+ros2 param set /gap_detector_node left_gap_sector_start_deg 60.0
+ros2 param set /gap_detector_node left_gap_sector_end_deg 120.0
+ros2 param set /gap_detector_node right_gap_sector_start_deg -120.0
+ros2 param set /gap_detector_node right_gap_sector_end_deg -60.0
+ros2 param set /gap_detector_node open_point_min_distance 0.50
+ros2 param set /gap_detector_node required_entry_width 0.40
+ros2 param set /gap_detector_node stable_frames_required 3
+```
+
+
+15. CSV 调试日志（T3）
+---------------------
+本版会在 `gap_detector_node` 每帧写 CSV。
+
+默认目录：
+- `/tmp/wheeltec_inventory_gap_logs`
+
+查看最新日志：
+```bash
+ls -lt /tmp/wheeltec_inventory_gap_logs
+tail -f /tmp/wheeltec_inventory_gap_logs/$(ls -t /tmp/wheeltec_inventory_gap_logs | head -n 1)
+```
+
+日志字段包含：
+- 时间戳
+- active_side
+- 扇区角度
+- 有效点数/开口点数
+- 最佳窗口宽度
+- stable_count
+- gap_detected / entry_width_ok / front_left_safe / allow_enter
+- 当前调整索引与偏移
+
+
+16. 返航测试（T3）
+-----------------
+16.1 返航模式切换
+```bash
+ros2 param set /mission_manager_node return_target_mode start
+ros2 param set /mission_manager_node return_target_mode charge
+```
+
+16.2 充电位参数（charge 模式）
+```bash
+ros2 param set /mission_manager_node charge_pose_x 0.0
+ros2 param set /mission_manager_node charge_pose_y 0.0
+ros2 param set /mission_manager_node charge_pose_yaw 0.0
+ros2 param set /mission_manager_node charge_pose_frame_id odom_combined
+```
+
+16.3 取消任务触发返航
+```bash
+ros2 service call /inventory/cancel_mission std_srvs/srv/Trigger "{}"
+```
+
+说明：
+- 当前实现：`RETURNING` 阶段不再重新识别目标。
+- 默认 Nav2 优先，失败后兜底回撤。
+
+
+17. 安全与急停
+-------------
+推荐停任务：
+```bash
+ros2 service call /inventory/cancel_mission std_srvs/srv/Trigger "{}"
+```
+
+硬急停（仅停速度，不走状态机）：
+```bash
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angular: {z: 0.0}}"
+```
+
+
+18. 常见问题排查
+---------------
+1) `Unknown topic /scan` 或 `/camera/color/image_raw`
+- 底层未启动，先检查 T1。
+
+2) 编译提示找不到 `yaml-cpp`
+- 安装 `libyaml-cpp-dev`。
+- 重新 `colcon build --packages-select wheeltec_inventory_system`。
+
+3) 启动任务后提示路线配置文件不存在
+- 查 `/mission_manager_node route_waypoints_file`。
+- 默认应为 `config/route_waypoints.yaml`。
+- 确认已重新编译并 `source install/setup.bash`。
+
+4) `NAV_ROUTE` 不动，日志提示 Nav2 action server 不可用
+- 查：
+  ```bash
+  ros2 action list | grep navigate_to_pose
+  ros2 action info /navigate_to_pose
+  ```
+- Nav2 未启动或 action 名称不一致时，先修外部导航启动。
+
+5) `waypoints` 仍为 0.0
+- 只能做软件连通测试。
+- 不要实车自动巡航。
+- 使用 Cartographer 建图后，在 RViz 的 `map` 坐标系下重新标定路线点。
+
+6) TF 不连通
+- 查：
+  ```bash
+  ros2 run tf2_ros tf2_echo map base_link
+  ros2 run tf2_ros tf2_echo base_link laser
+  ```
+- `NAV_ROUTE` 依赖 Nav2 的 map 定位。
+- `gap_detector` 依赖雷达点能转换到 `base_link`。
+
+7) `recognized_number` 有结果，但一直不取消 Nav2
+- 确认识别到的是目标货柜号，不是目标字符串的其他字段。
+- 示例 `2-3-1-2` 的目标货柜号是 `3`。
+- 检查稳定判定：
+  ```bash
+  ros2 param get /mission_manager_node target_recognition_stable_frames
+  ros2 param get /mission_manager_node target_recognition_stable_time_sec
+  ```
+- 单帧误识别不会触发停车，这是正常设计。
+
+8) `gap_width` 一直偏小或为 0
+- 先看 `/inventory/gap_status.active_side` 是否正确。
+- 再看对应侧扇区是否覆盖货柜侧：
+  - left：`left_gap_sector_start_deg/end_deg`
+  - right：`right_gap_sector_start_deg/end_deg`
+- 再看 `open_point_min_distance` 是否过大。
+- 用 RViz 叠加 `/scan` 验证开口几何。
+
+9) 一直不进入 `ENTERING_GAP`
+- 看 `/inventory/gap_status` 的 `allow_enter` 是否为 true。
+- 若 `gap_detected=true` 但 `allow_enter=false`，优先查：
+  - `entry_width_ok`
+  - `front_left_safe`
+  - `left_side_safe`
+
+10) `/inventory/entry_side` 正确，但左右检测像是反了
+- 先确认雷达坐标系在 `base_link` 下的正负方向。
+- 调整 gap_detector 的左右扇区参数，不要改代码。
+- 用 `ros2 topic echo /inventory/gap_status` 看 `active_side` 和窗口角度。
+
+11) 入缝方向反了
+- 不要改代码。
+- 调整：
+  ```bash
+  ros2 param set /mission_manager_node enter_left_angular_multiplier -1.0
+  ros2 param set /mission_manager_node enter_right_angular_multiplier 1.0
+  ```
+- 确认后写回 `inventory_system.yaml`。
+
+12) 返航不动
+- 查 `/mission_manager_node` 是否在 `RETURNING`。
+- 查 `navigate_to_pose` action 是否在线。
+- 查里程计 `/odom_combined`、`/odom` 是否有发布者。

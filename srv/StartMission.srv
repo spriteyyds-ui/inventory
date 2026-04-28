@@ -1,0 +1,5 @@
+string[] targets
+bool return_home
+---
+bool accepted
+string message

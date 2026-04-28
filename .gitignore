@@ -1,0 +1,22 @@
+# ROS / colcon
+build/
+install/
+log/
+
+# CMake
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Python
+__pycache__/
+*.pyc
+
+# Runtime logs
+*.log
+*.bag
+*.db3
+
+# VSCode
+.vscode/
