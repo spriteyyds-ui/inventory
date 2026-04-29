@@ -448,18 +448,46 @@ mission_manager_node:
     tracking_speed: 0.15
     # Legacy entry speed parameter (meters/second).
     entry_speed: 0.15
-    # Entering success travel distance threshold in ENTERING_GAP (meters).
+    # Legacy fixed entering distance fallback when enable_grid_center_entry=false (meters).
     entry_distance: 1.2
     # Generic turning speed parameter (radians/second).
     turn_speed: 0.40
-    # Reactive entering nominal linear speed (meters/second).
+    # Legacy reactive entering nominal linear speed (kept for compatibility; meters/second).
     enter_linear_speed: 0.15
-    # Reactive entering nominal angular speed (radians/second).
+    # Legacy reactive entering nominal angular speed (kept for compatibility; radians/second).
     enter_angular_speed: 0.30
     # Angular multiplier when entering a left-side gap. ROS /cmd_vel: positive angular.z turns left.
     enter_left_angular_multiplier: 1.0
     # Angular multiplier when entering a right-side gap. ROS /cmd_vel: negative angular.z turns right.
     enter_right_angular_multiplier: -1.0
+    # Prefer dynamic straight distance to the target depth-grid center instead of legacy entry_distance.
+    enable_grid_center_entry: true
+    # Length of one cabinet depth grid (meters). Centers are (depth_index - 0.5) * grid_depth_m.
+    grid_depth_m: 2.4
+    # Maximum allowed depth_index for left / upper-side cabinets (1-18).
+    left_max_depth_index: 4
+    # Maximum allowed depth_index for right / lower-side cabinets (19-36).
+    right_max_depth_index: 3
+    # Calibration offset added to the depth-grid center distance (meters).
+    entry_center_offset_m: 0.0
+    # Yaw delta from corridor heading to gap heading during ENTERING_TURN (radians).
+    entry_turn_yaw_delta_rad: 1.5708
+    # Yaw tolerance to finish ENTERING_TURN and stop large steering (radians).
+    entry_align_yaw_tolerance_rad: 0.08
+    # Linear speed during ENTERING_TURN (meters/second).
+    entry_turn_linear_speed: 0.12
+    # Angular speed during ENTERING_TURN. Sign is selected by target side (radians/second).
+    entry_turn_angular_speed: 0.30
+    # Straight speed after alignment, used while moving to depth-grid center (meters/second).
+    entry_straight_speed: 0.15
+    # Proportional yaw-hold gain in straight entry stage (gain).
+    entry_straight_yaw_kp: 0.8
+    # Deadband where straight-stage yaw hold outputs zero angular.z (radians).
+    entry_straight_yaw_deadband_rad: 0.03
+    # Small angular clamp for straight-stage yaw hold (radians/second).
+    entry_straight_max_angular_speed: 0.10
+    # Safety cap for computed dynamic entry distance (meters).
+    max_dynamic_entry_distance_m: 10.0
     # Reactive entering hard-stop distance threshold (meters).
     enter_stop_distance: 0.30
     # Reactive entering slow-down distance threshold (meters).
