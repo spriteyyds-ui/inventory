@@ -107,6 +107,11 @@ public:
       declare_parameter<double>("entry_straight_yaw_deadband_rad", 0.03);
     entry_straight_max_angular_speed_ =
       declare_parameter<double>("entry_straight_max_angular_speed", 0.10);
+    entry_side_hold_target_distance_m_ =
+      declare_parameter<double>("entry_side_hold_target_distance_m", 0.60);
+    entry_side_hold_kp_ = declare_parameter<double>("entry_side_hold_kp", 0.35);
+    entry_side_hold_min_valid_points_ =
+      declare_parameter<int>("entry_side_hold_min_valid_points", 5);
     max_dynamic_entry_distance_m_ = declare_parameter<double>("max_dynamic_entry_distance_m", 10.0);
     enter_stop_distance_ = declare_parameter<double>("enter_stop_distance", 0.30);
     enter_slow_distance_ = declare_parameter<double>("enter_slow_distance", 0.55);
@@ -459,6 +464,23 @@ private:
     bool blocked{false};
     std::string active_side{"left"};
     std::string block_reason{"NONE"};
+  };
+
+  struct EntrySideHoldEval
+  {
+    bool active{false};
+    std::string status{"NOT_EVALUATED"};
+    std::string target_side{"left"};
+    double target_distance{0.60};
+    double left_side_dist{std::numeric_limits<double>::infinity()};
+    double right_side_dist{std::numeric_limits<double>::infinity()};
+    double control_side_dist{std::numeric_limits<double>::infinity()};
+    double side_error{0.0};
+    double yaw_hold_cmd{0.0};
+    double side_distance_cmd{0.0};
+    double final_angular_cmd{0.0};
+    std::size_t left_valid_points{0};
+    std::size_t right_valid_points{0};
   };
 
   static std::string state_to_string(State s)
@@ -1602,6 +1624,140 @@ private:
     }
 
     return best;
+  }
+
+  bool median_lateral_scan_distance_in_sector(
+    const sensor_msgs::msg::LaserScan & scan,
+    double sector_start_deg,
+    double sector_end_deg,
+    double & distance,
+    std::size_t & valid_points) const
+  {
+    distance = std::numeric_limits<double>::infinity();
+    valid_points = 0;
+
+    double tx = 0.0;
+    double ty = 0.0;
+    double yaw = 0.0;
+    if (!resolve_scan_to_base_transform(scan, tx, ty, yaw)) {
+      return false;
+    }
+
+    const double cy = std::cos(yaw);
+    const double sy = std::sin(yaw);
+    std::vector<double> samples;
+    samples.reserve(scan.ranges.size());
+
+    for (std::size_t i = 0; i < scan.ranges.size(); ++i) {
+      const double r = scan.ranges[i];
+      if (!std::isfinite(r)) {
+        continue;
+      }
+      if (r < scan.range_min || r > scan.range_max) {
+        continue;
+      }
+
+      const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
+      const double x_scan = r * std::cos(angle);
+      const double y_scan = r * std::sin(angle);
+      const double x_base = cy * x_scan - sy * y_scan + tx;
+      const double y_base = sy * x_scan + cy * y_scan + ty;
+      const double point_dist = std::hypot(x_base, y_base);
+      if (!std::isfinite(point_dist) || point_dist <= 0.0) {
+        continue;
+      }
+
+      const double angle_deg = normalize_deg(std::atan2(y_base, x_base) * 180.0 / M_PI);
+      if (!in_deg_range(angle_deg, sector_start_deg, sector_end_deg)) {
+        continue;
+      }
+
+      const double lateral_dist = std::abs(y_base);
+      if (!std::isfinite(lateral_dist) || lateral_dist <= 0.0) {
+        continue;
+      }
+      samples.push_back(lateral_dist);
+    }
+
+    valid_points = samples.size();
+    if (samples.empty()) {
+      return false;
+    }
+
+    std::sort(samples.begin(), samples.end());
+    const std::size_t mid = samples.size() / 2;
+    if (samples.size() % 2 == 0) {
+      distance = 0.5 * (samples[mid - 1] + samples[mid]);
+    } else {
+      distance = samples[mid];
+    }
+    return std::isfinite(distance);
+  }
+
+  bool evaluate_entry_side_distance_hold(EntrySideHoldEval & eval)
+  {
+    eval = EntrySideHoldEval{};
+    eval.target_side = current_target_side_;
+    eval.target_distance = entry_side_hold_target_distance_m_;
+
+    if (!latest_scan_ || (this->now() - latest_scan_stamp_).seconds() > max_scan_age_sec_) {
+      eval.status = "NO_FRESH_SCAN";
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        2000,
+        "entry side distance hold disabled: target_side=%s reason=%s",
+        eval.target_side.c_str(),
+        eval.status.c_str());
+      return false;
+    }
+
+    (void)median_lateral_scan_distance_in_sector(
+      *latest_scan_,
+      enter_left_side_sector_start_deg_,
+      enter_left_side_sector_end_deg_,
+      eval.left_side_dist,
+      eval.left_valid_points);
+    (void)median_lateral_scan_distance_in_sector(
+      *latest_scan_,
+      enter_right_side_sector_start_deg_,
+      enter_right_side_sector_end_deg_,
+      eval.right_side_dist,
+      eval.right_valid_points);
+
+    const bool target_is_right = eval.target_side == "right";
+    const std::size_t target_points = target_is_right ?
+      eval.right_valid_points : eval.left_valid_points;
+    eval.control_side_dist = target_is_right ? eval.right_side_dist : eval.left_side_dist;
+    const int required_points = std::max(1, entry_side_hold_min_valid_points_);
+
+    if (!std::isfinite(eval.control_side_dist) ||
+      target_points < static_cast<std::size_t>(required_points))
+    {
+      eval.status = target_is_right ? "INSUFFICIENT_RIGHT_POINTS" : "INSUFFICIENT_LEFT_POINTS";
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        2000,
+        "entry side distance hold disabled: target_side=%s reason=%s left_side_dist=%.3f "
+        "right_side_dist=%.3f left_points=%zu right_points=%zu required_points=%d",
+        eval.target_side.c_str(),
+        eval.status.c_str(),
+        eval.left_side_dist,
+        eval.right_side_dist,
+        eval.left_valid_points,
+        eval.right_valid_points,
+        required_points);
+      return false;
+    }
+
+    eval.side_error = eval.control_side_dist - eval.target_distance;
+    eval.side_distance_cmd = target_is_right ?
+      -entry_side_hold_kp_ * eval.side_error :
+      entry_side_hold_kp_ * eval.side_error;
+    eval.active = true;
+    eval.status = "ACTIVE";
+    return true;
   }
 
   double min_ultrasonic_range() const
@@ -2782,6 +2938,20 @@ private:
       reason = "entry_straight_max_angular_speed 不能为负数";
       return false;
     }
+    if (!std::isfinite(entry_side_hold_target_distance_m_) ||
+      entry_side_hold_target_distance_m_ <= 0.0)
+    {
+      reason = "entry_side_hold_target_distance_m 必须为正数";
+      return false;
+    }
+    if (!std::isfinite(entry_side_hold_kp_) || entry_side_hold_kp_ < 0.0) {
+      reason = "entry_side_hold_kp 不能为负数";
+      return false;
+    }
+    if (entry_side_hold_min_valid_points_ <= 0) {
+      reason = "entry_side_hold_min_valid_points 必须为正整数";
+      return false;
+    }
     return true;
   }
 
@@ -3055,7 +3225,8 @@ private:
     double angular_z,
     double traveled,
     bool turn_done,
-    bool straight_done)
+    bool straight_done,
+    const EntrySideHoldEval & side_hold)
   {
     std::ostringstream straight_start_text;
     if (straight_start_pose_.valid) {
@@ -3066,6 +3237,8 @@ private:
       straight_start_text << "invalid";
     }
     const std::string straight_start = straight_start_text.str();
+    const std::string target_side_text = side_hold.status == "NOT_EVALUATED" ?
+      current_target_side_ : side_hold.target_side;
 
     RCLCPP_INFO_THROTTLE(
       get_logger(),
@@ -3074,7 +3247,10 @@ private:
       "entering_gap: phase=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
       "current_yaw=%.3f yaw_error=%.3f angular.z=%.3f straight_start_pose=(%s) "
       "traveled=%.3f target_straight_distance=%.3f turn_done=%d straight_done=%d "
-      "safety_stop=%d safety_reason=%s front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f",
+      "target_side=%s left_side_dist=%.3f right_side_dist=%.3f control_side_dist=%.3f "
+      "side_error=%.3f yaw_hold_cmd=%.3f side_distance_cmd=%.3f final_angular_cmd=%.3f "
+      "side_hold_status=%s side_points[left=%zu,right=%zu] safety_stop=%d safety_reason=%s "
+      "front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f",
       entry_gap_phase_to_string(entry_gap_phase_).c_str(),
       entry_turn_start_yaw_,
       target_gap_yaw_,
@@ -3086,12 +3262,37 @@ private:
       target_straight_distance_,
       turn_done ? 1 : 0,
       straight_done ? 1 : 0,
+      target_side_text.c_str(),
+      side_hold.left_side_dist,
+      side_hold.right_side_dist,
+      side_hold.control_side_dist,
+      side_hold.side_error,
+      side_hold.yaw_hold_cmd,
+      side_hold.side_distance_cmd,
+      side_hold.final_angular_cmd,
+      side_hold.status.c_str(),
+      side_hold.left_valid_points,
+      side_hold.right_valid_points,
       entry_stopped_by_safety_ ? 1 : 0,
       safety.block_reason.c_str(),
       safety.front_min_dist,
       safety.front_side_min_dist,
       safety.side_min_dist,
       safety.speed_scale);
+  }
+
+  void log_entering_gap_status(
+    const EnteringSafetyEval & safety,
+    const Pose2D & current,
+    double yaw_error,
+    double angular_z,
+    double traveled,
+    bool turn_done,
+    bool straight_done)
+  {
+    EntrySideHoldEval side_hold;
+    log_entering_gap_status(
+      safety, current, yaw_error, angular_z, traveled, turn_done, straight_done, side_hold);
   }
 
   void handle_entering_gap_state()
@@ -3200,19 +3401,30 @@ private:
         }
 
         entry_last_traveled_ = traveled;
+        EntrySideHoldEval side_hold;
+        double yaw_hold_cmd = 0.0;
         if (std::abs(yaw_error) >= entry_straight_yaw_deadband_rad_) {
-          angular_z = std::clamp(
+          yaw_hold_cmd = std::clamp(
             entry_straight_yaw_kp_ * yaw_error,
             -std::abs(entry_straight_max_angular_speed_),
             std::abs(entry_straight_max_angular_speed_));
         }
+        (void)evaluate_entry_side_distance_hold(side_hold);
+        side_hold.yaw_hold_cmd = yaw_hold_cmd;
+
+        const double angular_limit = std::abs(entry_straight_max_angular_speed_);
+        const double limited_angular = std::clamp(
+          yaw_hold_cmd + side_hold.side_distance_cmd,
+          -angular_limit,
+          angular_limit);
 
         geometry_msgs::msg::Twist cmd;
         cmd.linear.x = std::abs(entry_straight_speed_) * safety.speed_scale;
-        cmd.angular.z = angular_z * safety.speed_scale;
+        cmd.angular.z = limited_angular * safety.speed_scale;
         angular_z = cmd.angular.z;
+        side_hold.final_angular_cmd = angular_z;
         cmd_pub_->publish(cmd);
-        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false, side_hold);
         break;
       }
 
@@ -3396,6 +3608,9 @@ private:
   double entry_straight_yaw_kp_{0.8};
   double entry_straight_yaw_deadband_rad_{0.03};
   double entry_straight_max_angular_speed_{0.10};
+  double entry_side_hold_target_distance_m_{0.60};
+  double entry_side_hold_kp_{0.35};
+  int entry_side_hold_min_valid_points_{5};
   double max_dynamic_entry_distance_m_{10.0};
   double enter_stop_distance_{0.30};
   double enter_slow_distance_{0.55};

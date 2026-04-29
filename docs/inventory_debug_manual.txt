@@ -347,18 +347,49 @@ ros2 param get /mission_manager_node entry_turn_angular_speed
 ros2 param get /mission_manager_node entry_straight_speed
 ros2 param get /mission_manager_node entry_straight_yaw_kp
 ros2 param get /mission_manager_node entry_straight_max_angular_speed
+ros2 param get /mission_manager_node entry_side_hold_target_distance_m
+ros2 param get /mission_manager_node entry_side_hold_kp
+ros2 param get /mission_manager_node entry_side_hold_min_valid_points
 ```
 
 调试原则：
 - `entry_side=left` 时，`ENTERING_TURN` 的 `angular.z` 应为正。
 - `entry_side=right` 时，`ENTERING_TURN` 的 `angular.z` 应为负。
 - 进入 `MOVING_TO_GRID_CENTER` 后，不能再持续使用入缝转向角速度。
+- 目标侧距离保持只在 `MOVING_TO_GRID_CENTER` 启用，`ENTERING_TURN` 不做侧距保持。
 - 阿克曼底盘严禁按原地旋转思路调试。
 
 直行阶段建议：
 - `entry_straight_max_angular_speed` 先放在 0.08~0.15 rad/s。
 - 如果已经平行但左右抖动，降低 `entry_straight_yaw_kp` 或增大 `entry_straight_yaw_deadband_rad`。
 - 如果直行慢慢偏航，略增大 `entry_straight_yaw_kp`，但不要把 `entry_straight_max_angular_speed` 调得很大。
+- 如果侧距保持导致左右修正过猛，先降低 `entry_side_hold_kp`，不要放大 `entry_straight_max_angular_speed`。
+
+目标侧距离保持：
+- `mission_manager` 根据路线配置解析目标货柜在 `left/right`，并发布 `/inventory/entry_side`。
+- `target_side=left` 时，`MOVING_TO_GRID_CENTER` 使用左侧 +90° 附近雷达扇区，控制 `left_side_dist -> entry_side_hold_target_distance_m`，默认约 0.6m。
+- `target_side=right` 时，`MOVING_TO_GRID_CENTER` 使用右侧 -90° 附近雷达扇区，控制 `right_side_dist -> entry_side_hold_target_distance_m`，默认约 0.6m。
+- 0.6m 是入缝后与目标侧货柜保持的工作间距，避免贴柜刮碰，同时让车体沿目标货柜侧稳定直行到深度格中心。
+- 侧距由 LaserScan 有效点 median 估计；过滤 nan、inf、超出 `range_min/range_max` 的点。目标侧有效点数不足时，本周期只用 yaw hold，并打印节流日志。
+- 最终角速度由 `yaw_hold_cmd + side_distance_cmd` 合成，再经过 `entry_straight_max_angular_speed` 直行阶段限幅；`BLOCKED_LEFT_SIDE` / `BLOCKED_RIGHT_SIDE` 安全停车仍然优先。
+- 日志 `entering_gap` 中重点看：`target_side`、`left_side_dist`、`right_side_dist`、`control_side_dist`、`side_error`、`yaw_hold_cmd`、`side_distance_cmd`、`final_angular_cmd`、`traveled`、`target_straight_distance`、`speed_scale`、`safety_reason`。
+
+控制符号：
+```text
+target_side=left:
+  side_error = left_side_dist - entry_side_hold_target_distance_m
+  side_distance_cmd = entry_side_hold_kp * side_error
+
+target_side=right:
+  side_error = right_side_dist - entry_side_hold_target_distance_m
+  side_distance_cmd = -entry_side_hold_kp * side_error
+```
+
+雷达左右方向检查：
+- 在 RViz 或 `/scan` 中确认 `base_link` 左侧是否对应 +90°，右侧是否对应 -90°。
+- 让车辆静止靠近左侧货柜，`left_side_dist` 应明显小于 `right_side_dist`；靠近右侧货柜时相反。
+- 如果 gap 检测方向反了，调整 `gap_detector_node` 的 `left/right_gap_sector_*`。
+- 如果只有入缝后侧距保持方向反了，优先调整 `mission_manager_node` 的 `enter_left_side_sector_*` / `enter_right_side_sector_*`，不要破坏已经调好的 gap detection。
 
 
 12. 深度格中心入缝距离（本版关键）
@@ -641,7 +672,32 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angul
 - 增大 `entry_straight_yaw_deadband_rad`。
 - 降低 `entry_straight_max_angular_speed` 到 0.08~0.10 rad/s。
 
-17) depth_index 越界
+17) 目标在左侧却继续向左贴近
+- 看 `entering_gap` 日志：`target_side` 应为 `left`，`side_error` 小于 0 时 `side_distance_cmd` 应小于 0。
+- 如果符号正确但实车仍向左，检查底盘 `angular.z` 正负方向或雷达左右扇区是否反了。
+- 如果 `left_side_dist` 明显不可信，检查 `enter_left_side_sector_start_deg/end_deg` 和雷达 TF。
+
+18) 目标在右侧却继续向右贴近
+- 看 `target_side` 是否为 `right`，`side_error` 小于 0 时 `side_distance_cmd` 应大于 0。
+- 如果符号正确但实车仍向右，检查底盘 `angular.z` 正负方向或雷达左右扇区是否反了。
+- 如果 `right_side_dist` 明显不可信，检查 `enter_right_side_sector_start_deg/end_deg` 和雷达 TF。
+
+19) side distance hold 抖动
+- 降低 `entry_side_hold_kp`。
+- 保持 `entry_straight_max_angular_speed` 在 0.08~0.10 rad/s。
+- 检查侧向扇区是否扫到货柜边角、立柱或空洞；必要时略收窄对应 `enter_*_side_sector_*`。
+
+20) 雷达点数不足
+- 日志会出现 `side_hold_status=INSUFFICIENT_LEFT_POINTS` 或 `INSUFFICIENT_RIGHT_POINTS`。
+- 检查 `/scan` 是否新鲜、雷达 `range_min/range_max`、目标侧扇区角度和货柜是否进入 ±90° 附近视野。
+- 点数不足时系统只用 yaw hold，不会沿用旧侧距盲目控制。
+
+21) `BLOCKED_LEFT_SIDE` / `BLOCKED_RIGHT_SIDE` 仍然触发
+- 这是安全停车逻辑，优先级高于目标侧距离保持。
+- 先看 `side_dist` 是否低于 `enter_stop_distance`，再看 `enter_slow_distance` 是否导致 `speed_scale` 降低。
+- 不要为了走完 `target_straight_distance` 关闭或绕过侧向安全阻塞。
+
+22) depth_index 越界
 - left / 上侧 / 1-18 货柜只允许 1..4。
 - right / 下侧 / 19-36 货柜只允许 1..3。
 - 越界时任务会被拒绝或进入 `ERROR`，这是安全保护。

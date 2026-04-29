@@ -486,6 +486,12 @@ mission_manager_node:
     entry_straight_yaw_deadband_rad: 0.03
     # Small angular clamp for straight-stage yaw hold (radians/second).
     entry_straight_max_angular_speed: 0.10
+    # Target-side LiDAR distance to hold during MOVING_TO_GRID_CENTER (meters).
+    entry_side_hold_target_distance_m: 0.80
+    # Proportional gain for target-side distance hold in MOVING_TO_GRID_CENTER (rad/s per meter).
+    entry_side_hold_kp: 0.35
+    # Minimum valid LiDAR points required in the target-side sector before side hold is enabled.
+    entry_side_hold_min_valid_points: 5
     # Safety cap for computed dynamic entry distance (meters).
     max_dynamic_entry_distance_m: 10.0
     # Reactive entering hard-stop distance threshold (meters).
@@ -539,7 +545,7 @@ mission_manager_node:
     # Stop-settle time after retreat/adjust motion before detection (seconds).
     wait_gap_stop_settle_sec: 0.25
     # Low speed used while SEARCH_GAP moves toward the expected physical-unit gap (meters/second).
-    search_gap_speed: 0.06
+    search_gap_speed: 0.10
     # SEARCH_GAP timeout before falling back to the legacy micro-adjust sequence (seconds).
     search_gap_timeout_sec: 4.0
     # Timeout of one WAITING_GAP detection cycle (seconds).
