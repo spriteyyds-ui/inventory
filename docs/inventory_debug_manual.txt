@@ -333,34 +333,91 @@ ros2 topic echo /inventory/gap_status
 
 11. 入缝方向参数测试（低速、空旷区域）
 ------------------------------------
-当前入缝不是原地旋转，而是边前进边转向：
-- `linear.x = abs(enter_linear_speed)`
-- `angular.z = enter_*_angular_multiplier * abs(enter_angular_speed)`
+当前 `ENTERING_GAP` 已拆成 3 个子阶段：
+- `ENTERING_TURN`：只在这里使用较大的转向角速度切入缝隙。
+- `ENTERING_STRAIGHT_ALIGN`：转向完成后停车/记录直行起点。
+- `MOVING_TO_GRID_CENTER`：沿目标缝隙航向直行到目标深度格中心，只允许很小的 yaw hold。
 
 查看参数：
 ```bash
-ros2 param get /mission_manager_node enter_linear_speed
-ros2 param get /mission_manager_node enter_angular_speed
-ros2 param get /mission_manager_node enter_left_angular_multiplier
-ros2 param get /mission_manager_node enter_right_angular_multiplier
+ros2 param get /mission_manager_node entry_turn_yaw_delta_rad
+ros2 param get /mission_manager_node entry_align_yaw_tolerance_rad
+ros2 param get /mission_manager_node entry_turn_linear_speed
+ros2 param get /mission_manager_node entry_turn_angular_speed
+ros2 param get /mission_manager_node entry_straight_speed
+ros2 param get /mission_manager_node entry_straight_yaw_kp
+ros2 param get /mission_manager_node entry_straight_max_angular_speed
 ```
 
 调试原则：
-- `entry_side=left` 时，应向左侧缝隙切入。
-- `entry_side=right` 时，应向右侧缝隙切入。
-- 如果方向反了，只改倍率符号，不改代码。
+- `entry_side=left` 时，`ENTERING_TURN` 的 `angular.z` 应为正。
+- `entry_side=right` 时，`ENTERING_TURN` 的 `angular.z` 应为负。
+- 进入 `MOVING_TO_GRID_CENTER` 后，不能再持续使用入缝转向角速度。
 - 阿克曼底盘严禁按原地旋转思路调试。
 
-示例：左右方向反了时可临时调参验证：
+直行阶段建议：
+- `entry_straight_max_angular_speed` 先放在 0.08~0.15 rad/s。
+- 如果已经平行但左右抖动，降低 `entry_straight_yaw_kp` 或增大 `entry_straight_yaw_deadband_rad`。
+- 如果直行慢慢偏航，略增大 `entry_straight_yaw_kp`，但不要把 `entry_straight_max_angular_speed` 调得很大。
+
+
+12. 深度格中心入缝距离（本版关键）
+--------------------------------
+目标格式建议使用：
 ```bash
-ros2 param set /mission_manager_node enter_left_angular_multiplier -1.0
-ros2 param set /mission_manager_node enter_right_angular_multiplier 1.0
+仓库号-货柜号-层号-depth_index
+```
+例如 `2-3-1-2` 表示目标货柜号为 3，层号为 1，深度格为 2。
+
+动态入缝默认开启：
+```bash
+ros2 param get /mission_manager_node enable_grid_center_entry
+ros2 param get /mission_manager_node grid_depth_m
+ros2 param get /mission_manager_node entry_center_offset_m
 ```
 
-确认正确后，再把参数固化到 `inventory_system.yaml`。
+计算方法：
+```text
+target_depth_center_m = (target_depth_index - 0.5) * grid_depth_m
+target_straight_distance = target_depth_center_m + entry_center_offset_m
+```
+
+默认 `grid_depth_m = 2.4m`，不含 offset 时：
+- `depth_index=1`：中心 1.2m
+- `depth_index=2`：中心 3.6m
+- `depth_index=3`：中心 6.0m
+- `depth_index=4`：中心 8.4m
+
+左右侧最大深度不同：
+- left / 上侧 / 1-18 货柜：最大 `depth_index=4`
+- right / 下侧 / 19-36 货柜：最大 `depth_index=3`
+
+如果 `depth_index` 越界，`mission_manager` 会拒绝任务或进入 `ERROR`，不会继续盲目前进。
+如果任务没有传入 `depth_index`，默认按 `depth_index=1` 执行，并打印 WARN。
+
+`entry_center_offset_m` 标定方法：
+1. 先设为 `0.0`，选择已知 depth_index 的货柜低速测试。
+2. 如果停车太浅，例如差 0.20m 到中心，则把 `entry_center_offset_m` 增加 `+0.20`。
+3. 如果停车太深，例如越过中心 0.15m，则把 `entry_center_offset_m` 减小 `-0.15`。
+4. 每次只改小量，重复验证 depth_index=1 和最深格，确认误差一致。
+
+为什么不能在整个 `ENTERING_GAP` 持续打方向：
+- 车辆完成转入后，车体已经基本与两侧货柜平行。
+- 此时继续使用大的固定 `angular.z` 会持续积累航向误差，导致越走越偏。
+- 所以大转向只允许在 `ENTERING_TURN`，直行阶段只允许小角速度 yaw hold 或 `angular.z=0`。
+
+`entry_align_yaw_tolerance_rad` 调法：
+- 初值 0.08 rad，约 4.6 度。
+- 转到一半就开始直行：减小该值。
+- 已经平行但迟迟不直行：增大该值。
+
+`entry_straight_yaw_kp` 与 `entry_straight_max_angular_speed` 调法：
+- 直行阶段慢慢偏航：略增大 `entry_straight_yaw_kp`。
+- 直行阶段左右抖动：降低 `entry_straight_yaw_kp`，或增大 `entry_straight_yaw_deadband_rad`。
+- 直行阶段仍像在大幅打方向：降低 `entry_straight_max_angular_speed`，建议保持 0.08~0.15 rad/s。
 
 
-12. WAITING_GAP 子阶段说明（本版关键）
+13. WAITING_GAP 子阶段说明（本版关键）
 -----------------------------------
 `WAITING_GAP` 内部会按以下子阶段执行：
 - `RETREATING`：SEARCH_GAP 超时后的 fallback 固定回退（默认 0.1m）
@@ -378,7 +435,7 @@ gap_adjust_sequence: [-0.10, 0.10, -0.20]
 - 每个偏移都相对“当前位姿”执行
 
 
-13. gap_status 字段解释（T3）
+14. gap_status 字段解释（T3）
 ---------------------------
 ```bash
 ros2 topic echo /inventory/gap_status
@@ -401,7 +458,7 @@ ros2 topic echo /inventory/gap_status
 - `current_adjust_index / current_adjust_offset`：当前位姿调整进度
 
 
-14. gap 检测参数联调建议
+15. gap 检测参数联调建议
 -----------------------
 推荐先看当前参数：
 ```bash
@@ -426,7 +483,7 @@ ros2 param set /gap_detector_node stable_frames_required 3
 ```
 
 
-15. CSV 调试日志（T3）
+16. CSV 调试日志（T3）
 ---------------------
 本版会在 `gap_detector_node` 每帧写 CSV。
 
@@ -450,15 +507,15 @@ tail -f /tmp/wheeltec_inventory_gap_logs/$(ls -t /tmp/wheeltec_inventory_gap_log
 - 当前调整索引与偏移
 
 
-16. 返航测试（T3）
+17. 返航测试（T3）
 -----------------
-16.1 返航模式切换
+17.1 返航模式切换
 ```bash
 ros2 param set /mission_manager_node return_target_mode start
 ros2 param set /mission_manager_node return_target_mode charge
 ```
 
-16.2 充电位参数（charge 模式）
+17.2 充电位参数（charge 模式）
 ```bash
 ros2 param set /mission_manager_node charge_pose_x 0.0
 ros2 param set /mission_manager_node charge_pose_y 0.0
@@ -466,7 +523,7 @@ ros2 param set /mission_manager_node charge_pose_yaw 0.0
 ros2 param set /mission_manager_node charge_pose_frame_id odom_combined
 ```
 
-16.3 取消任务触发返航
+17.3 取消任务触发返航
 ```bash
 ros2 service call /inventory/cancel_mission std_srvs/srv/Trigger "{}"
 ```
@@ -476,7 +533,7 @@ ros2 service call /inventory/cancel_mission std_srvs/srv/Trigger "{}"
 - 默认 Nav2 优先，失败后兜底回撤。
 
 
-17. 安全与急停
+18. 安全与急停
 -------------
 推荐停任务：
 ```bash
@@ -489,7 +546,7 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angul
 ```
 
 
-18. 常见问题排查
+19. 常见问题排查
 ---------------
 1) `Unknown topic /scan` 或 `/camera/color/image_raw`
 - 底层未启动，先检查 T1。
@@ -555,9 +612,48 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angul
 - 调整 gap_detector 的左右扇区参数，不要改代码。
 - 用 `ros2 topic echo /inventory/gap_status` 看 `active_side` 和窗口角度。
 
-11) 入缝方向反了
-- 不要改代码。
-- 调整：
+11) 入缝方向反了或没有朝目标侧转入
+- `entry_side=left` 时 `angular.z` 必须为正，`entry_side=right` 时必须为负。
+- 先确认 `/inventory/entry_side` 是否等于目标货柜解析出的 side。
+- 再确认 `route_waypoints.yaml` 的 `cabinet_side_map` 和雷达/底盘坐标方向。
+- 本版不要再靠旧的 `enter_left_angular_multiplier` / `enter_right_angular_multiplier` 修正新入缝逻辑。
+
+12) 入缝太浅
+- 先确认任务传入了正确的 `depth_index`。
+- 如果所有 depth 都偏浅，把 `entry_center_offset_m` 增大。
+- 如果只有深格偏浅，检查里程计累计、地面打滑和 `max_dynamic_entry_distance_m` 是否过低。
+
+13) 入缝太深
+- 如果所有 depth 都偏深，把 `entry_center_offset_m` 减小。
+- 如果只在直行末端明显越过，降低 `entry_straight_speed` 并确认 odom 没有延迟。
+
+14) 入缝后仍持续转向
+- 看日志中的 `phase`，正常应从 `ENTERING_TURN` 切到 `MOVING_TO_GRID_CENTER`。
+- 如果已经在 `MOVING_TO_GRID_CENTER` 仍大幅转向，降低 `entry_straight_max_angular_speed`。
+- 如果一直停在 `ENTERING_TURN`，检查 `entry_turn_yaw_delta_rad` 和 odom yaw 是否正确。
+
+15) 转到一半就直行
+- `entry_align_yaw_tolerance_rad` 太大，适当减小。
+- 也检查 `entry_turn_yaw_delta_rad` 是否小于实际需要的转角。
+
+16) 已经平行但 yaw hold 抖动
+- 降低 `entry_straight_yaw_kp`。
+- 增大 `entry_straight_yaw_deadband_rad`。
+- 降低 `entry_straight_max_angular_speed` 到 0.08~0.10 rad/s。
+
+17) depth_index 越界
+- left / 上侧 / 1-18 货柜只允许 1..4。
+- right / 下侧 / 19-36 货柜只允许 1..3。
+- 越界时任务会被拒绝或进入 `ERROR`，这是安全保护。
+
+18) 没有传入 depth_index
+- 直接传货柜号或只传到层号时，默认 `target_depth_index=1`。
+- 日志会打印 WARN：未传入 depth_index，默认走第 1 深度格。
+
+19) 返航不动
+- 查 `/mission_manager_node` 是否在 `RETURNING`。
+- 查 `navigate_to_pose` action 是否在线。
+- 查里程计 `/odom_combined`、`/odom` 是否有发布者。
   ```bash
   ros2 param set /mission_manager_node enter_left_angular_multiplier -1.0
   ros2 param set /mission_manager_node enter_right_angular_multiplier 1.0

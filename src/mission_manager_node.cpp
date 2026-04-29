@@ -91,6 +91,23 @@ public:
     enter_angular_speed_ = declare_parameter<double>("enter_angular_speed", 0.30);
     enter_left_angular_multiplier_ = declare_parameter<double>("enter_left_angular_multiplier", 1.0);
     enter_right_angular_multiplier_ = declare_parameter<double>("enter_right_angular_multiplier", -1.0);
+    enable_grid_center_entry_ = declare_parameter<bool>("enable_grid_center_entry", true);
+    grid_depth_m_ = declare_parameter<double>("grid_depth_m", 2.4);
+    left_max_depth_index_ = declare_parameter<int>("left_max_depth_index", 4);
+    right_max_depth_index_ = declare_parameter<int>("right_max_depth_index", 3);
+    entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
+    entry_turn_yaw_delta_rad_ = declare_parameter<double>("entry_turn_yaw_delta_rad", 1.57079632679);
+    entry_align_yaw_tolerance_rad_ =
+      declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
+    entry_turn_linear_speed_ = declare_parameter<double>("entry_turn_linear_speed", enter_linear_speed_);
+    entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", enter_angular_speed_);
+    entry_straight_speed_ = declare_parameter<double>("entry_straight_speed", enter_linear_speed_);
+    entry_straight_yaw_kp_ = declare_parameter<double>("entry_straight_yaw_kp", 0.8);
+    entry_straight_yaw_deadband_rad_ =
+      declare_parameter<double>("entry_straight_yaw_deadband_rad", 0.03);
+    entry_straight_max_angular_speed_ =
+      declare_parameter<double>("entry_straight_max_angular_speed", 0.10);
+    max_dynamic_entry_distance_m_ = declare_parameter<double>("max_dynamic_entry_distance_m", 10.0);
     enter_stop_distance_ = declare_parameter<double>("enter_stop_distance", 0.30);
     enter_slow_distance_ = declare_parameter<double>("enter_slow_distance", 0.55);
     enter_front_sector_start_deg_ = declare_parameter<double>("enter_front_sector_start_deg", -20.0);
@@ -375,6 +392,14 @@ private:
     POSE_ADJUSTING,
   };
 
+  enum class EntryGapPhase
+  {
+    IDLE,
+    ENTERING_TURN,
+    ENTERING_STRAIGHT_ALIGN,
+    MOVING_TO_GRID_CENTER,
+  };
+
   enum class SearchDirection
   {
     FORWARD,
@@ -413,6 +438,14 @@ private:
     std::vector<int> gap_after_unit;
     std::size_t unit_index{0};
     std::size_t cabinet_index_in_unit{0};
+  };
+
+  struct TargetMetadata
+  {
+    int cabinet_id{-1};
+    int level_index{1};
+    int depth_index{1};
+    bool depth_defaulted{false};
   };
 
   struct EnteringSafetyEval
@@ -550,6 +583,21 @@ private:
   static std::string search_direction_to_string(SearchDirection direction)
   {
     return direction == SearchDirection::BACKWARD ? "backward" : "forward";
+  }
+
+  static std::string entry_gap_phase_to_string(EntryGapPhase phase)
+  {
+    switch (phase) {
+      case EntryGapPhase::ENTERING_TURN:
+        return "ENTERING_TURN";
+      case EntryGapPhase::ENTERING_STRAIGHT_ALIGN:
+        return "ENTERING_STRAIGHT_ALIGN";
+      case EntryGapPhase::MOVING_TO_GRID_CENTER:
+        return "MOVING_TO_GRID_CENTER";
+      case EntryGapPhase::IDLE:
+      default:
+        return "IDLE";
+    }
   }
 
   static std::string cabinet_unit_to_string(const std::vector<int> & ids)
@@ -978,6 +1026,87 @@ private:
     return false;
   }
 
+  std::string entry_turn_direction_text() const
+  {
+    return current_target_side_ == "right" ? "right(angular.z<0)" : "left(angular.z>0)";
+  }
+
+  bool configure_current_entry_profile(std::string & reason)
+  {
+    reason.clear();
+    current_entry_profile_valid_ = false;
+
+    if (!std::isfinite(grid_depth_m_) || grid_depth_m_ <= 0.0) {
+      reason = "grid_depth_m 必须为正数";
+      return false;
+    }
+
+    const int max_depth = current_target_side_ == "right" ?
+      right_max_depth_index_ : left_max_depth_index_;
+    if (max_depth <= 0) {
+      reason = "目标侧最大 depth_index 配置非法: side=" + current_target_side_;
+      return false;
+    }
+
+    if (current_target_depth_index_ < 1 || current_target_depth_index_ > max_depth) {
+      reason =
+        "depth_index 越界: target_cabinet=" + std::to_string(current_target_cabinet_) +
+        " target_side=" + current_target_side_ +
+        " target_depth_index=" + std::to_string(current_target_depth_index_) +
+        " allowed=1.." + std::to_string(max_depth);
+      return false;
+    }
+
+    target_depth_center_m_ =
+      (static_cast<double>(current_target_depth_index_) - 0.5) * grid_depth_m_;
+    const double dynamic_straight_distance = target_depth_center_m_ + entry_center_offset_m_;
+    target_straight_distance_ =
+      enable_grid_center_entry_ ? dynamic_straight_distance : entry_distance_;
+
+    if (!std::isfinite(target_straight_distance_) || target_straight_distance_ <= 0.0) {
+      reason =
+        "入缝目标直行距离非法: target_straight_distance=" +
+        std::to_string(target_straight_distance_);
+      return false;
+    }
+
+    if (std::isfinite(max_dynamic_entry_distance_m_) &&
+      max_dynamic_entry_distance_m_ > 0.0 &&
+      target_straight_distance_ > max_dynamic_entry_distance_m_)
+    {
+      reason =
+        "入缝目标直行距离超过安全上限: target_straight_distance=" +
+        std::to_string(target_straight_distance_) +
+        " max_dynamic_entry_distance_m=" + std::to_string(max_dynamic_entry_distance_m_);
+      return false;
+    }
+
+    current_entry_profile_valid_ = true;
+    return true;
+  }
+
+  void log_current_target_entry_plan() const
+  {
+    RCLCPP_INFO(
+      get_logger(),
+      "目标任务解析: target_cabinet=%d target_side=%s target_level_index=%d "
+      "target_depth_index=%d target_depth_center_m=%.3f entry_center_offset_m=%.3f "
+      "target_straight_distance=%.3f physical_unit=%s expected_gap=%s "
+      "search_direction=%s entry_turn_direction=%s grid_center_entry=%s",
+      current_target_cabinet_,
+      current_target_side_.c_str(),
+      current_target_level_index_,
+      current_target_depth_index_,
+      target_depth_center_m_,
+      entry_center_offset_m_,
+      target_straight_distance_,
+      cabinet_unit_to_string(current_gap_plan_.physical_unit).c_str(),
+      gap_plan_to_string(current_gap_plan_).c_str(),
+      search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      entry_turn_direction_text().c_str(),
+      enable_grid_center_entry_ ? "true" : "false(fallback entry_distance)");
+  }
+
   void publish_entry_side()
   {
     if (!entry_side_pub_) {
@@ -1096,9 +1225,84 @@ private:
     return std::max(0.0, odom_cumulative_distance_ - segment_start_distance_);
   }
 
+  bool parse_target_metadata(
+    const std::string & code,
+    TargetMetadata & target,
+    std::string & reason) const
+  {
+    target = TargetMetadata{};
+    reason.clear();
+
+    const std::string cleaned = wheeltec_inventory_system::trim(code);
+    if (cleaned.empty()) {
+      reason = "目标编号为空";
+      return false;
+    }
+
+    const auto items = wheeltec_inventory_system::split(cleaned, '-');
+    if (items.size() == 1U) {
+      if (!wheeltec_inventory_system::safe_to_int(items[0], target.cabinet_id)) {
+        reason = "目标编号格式非法: " + code;
+        return false;
+      }
+      target.level_index = 1;
+      target.depth_index = 1;
+      target.depth_defaulted = true;
+      if (target.cabinet_id <= 0) {
+        reason = "货柜号必须大于 0: " + code;
+        return false;
+      }
+      return true;
+    }
+
+    if (items.size() == 3U || items.size() == 4U) {
+      int warehouse_id = 0;
+      if (!wheeltec_inventory_system::safe_to_int(items[0], warehouse_id) ||
+        !wheeltec_inventory_system::safe_to_int(items[1], target.cabinet_id) ||
+        !wheeltec_inventory_system::safe_to_int(items[2], target.level_index))
+      {
+        reason = "目标编号格式非法: " + code;
+        return false;
+      }
+
+      if (items.size() == 4U) {
+        if (!wheeltec_inventory_system::safe_to_int(items[3], target.depth_index)) {
+          reason = "目标 depth_index 非法: " + code;
+          return false;
+        }
+      } else {
+        target.depth_index = 1;
+        target.depth_defaulted = true;
+      }
+
+      if (warehouse_id <= 0) {
+        reason = "仓库号必须大于 0: " + code;
+        return false;
+      }
+      if (target.cabinet_id <= 0) {
+        reason = "货柜号必须大于 0: " + code;
+        return false;
+      }
+      if (target.level_index <= 0) {
+        reason = "target_level_index 必须大于 0: " + code;
+        return false;
+      }
+      return true;
+    }
+
+    reason = "目标编号格式非法，应为 货柜号、仓库-货柜-层 或 仓库-货柜-层-深度: " + code;
+    return false;
+  }
+
   bool parse_target_cabinet(const std::string & code, int & cabinet_id) const
   {
-    return wheeltec_inventory_system::extract_cabinet_id_from_code(code, cabinet_id);
+    TargetMetadata target;
+    std::string reason;
+    if (!parse_target_metadata(code, target, reason)) {
+      return false;
+    }
+    cabinet_id = target.cabinet_id;
+    return true;
   }
 
   bool prepare_current_target(std::string & reason)
@@ -1108,9 +1312,24 @@ private:
       return false;
     }
 
-    if (!parse_target_cabinet(targets_[current_target_index_], current_target_cabinet_)) {
-      reason = "目标编号格式非法: " + targets_[current_target_index_];
+    TargetMetadata target;
+    if (!parse_target_metadata(targets_[current_target_index_], target, reason)) {
       return false;
+    }
+
+    current_target_cabinet_ = target.cabinet_id;
+    current_target_level_index_ = target.level_index;
+    current_target_depth_index_ = target.depth_index;
+    current_target_depth_defaulted_ = target.depth_defaulted;
+    current_entry_profile_valid_ = false;
+    current_gap_plan_ = TargetGapPlan{};
+    reset_entry_gap_runtime();
+
+    if (current_target_depth_defaulted_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "任务目标 %s 未传入 depth_index，默认 target_depth_index=1",
+        targets_[current_target_index_].c_str());
     }
 
     return true;
@@ -1195,6 +1414,7 @@ private:
   void apply_odom_measurement(const nav_msgs::msg::Odometry::SharedPtr msg, bool primary_source)
   {
     latest_odom_ = msg;
+    latest_odom_time_ = this->now();
     latest_odom_frame_id_ = sanitize_frame_id(msg->header.frame_id);
     latest_yaw_ = yaw_from_quaternion(msg->pose.pose.orientation);
     has_yaw_ = true;
@@ -1934,6 +2154,7 @@ private:
     fallback_phase_ = FallbackPhase::IDLE;
     fallback_drive_mode_ = FallbackDriveMode::NONE;
     reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
     publish_gap_context();
 
     if (return_mode_ == ReturnMode::CANCEL_HOME) {
@@ -2049,6 +2270,7 @@ private:
     fallback_drive_mode_ = FallbackDriveMode::NONE;
     fallback_rotate_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
     publish_gap_context();
 
     Pose2D target_pose;
@@ -2152,6 +2374,14 @@ private:
         set_state(State::ERROR, reason);
         return;
       }
+      if (!configure_current_entry_profile(reason)) {
+        mission_active_ = false;
+        request_recognizer_enable(false);
+        set_corridor_mode(false, false);
+        publish_stop();
+        set_state(State::ERROR, reason);
+        return;
+      }
       if (!resolve_current_gap_plan(reason)) {
         mission_active_ = false;
         request_recognizer_enable(false);
@@ -2160,11 +2390,13 @@ private:
         set_state(State::ERROR, reason);
         return;
       }
+      log_current_target_entry_plan();
 
       target_visible_ = false;
       has_distance_ = false;
       tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
       reset_wait_gap_runtime();
+      reset_entry_gap_runtime();
       publish_gap_context();
       reset_segment_distance();
       std::string nav_route_fail_reason;
@@ -2215,10 +2447,11 @@ private:
     }
 
     for (const auto & target : targets) {
-      int tmp = -1;
-      if (!parse_target_cabinet(target, tmp)) {
+      TargetMetadata parsed_target;
+      std::string parse_reason;
+      if (!parse_target_metadata(target, parsed_target, parse_reason)) {
         response->accepted = false;
-        response->message = "目标编号格式非法: " + target;
+        response->message = parse_reason;
         return;
       }
     }
@@ -2251,11 +2484,17 @@ private:
       response->message = reason;
       return;
     }
+    if (!configure_current_entry_profile(reason)) {
+      response->accepted = false;
+      response->message = reason;
+      return;
+    }
     if (!resolve_current_gap_plan(reason)) {
       response->accepted = false;
       response->message = reason;
       return;
     }
+    log_current_target_entry_plan();
 
     mission_active_ = true;
     cancel_requested_ = false;
@@ -2273,6 +2512,7 @@ private:
     fallback_phase_ = FallbackPhase::IDLE;
     fallback_drive_mode_ = FallbackDriveMode::NONE;
     reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
     publish_gap_context();
 
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -2416,15 +2656,36 @@ private:
     wait_gap_motion_direction_ = 0.0;
   }
 
+  void reset_entry_gap_runtime()
+  {
+    entry_gap_phase_ = EntryGapPhase::IDLE;
+    entry_gap_phase_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    entry_turn_start_yaw_ = 0.0;
+    target_gap_yaw_ = 0.0;
+    straight_start_pose_ = Pose2D{};
+    entry_last_traveled_ = 0.0;
+    entry_turn_completed_ = false;
+    entry_straight_completed_ = false;
+    entry_stopped_by_safety_ = false;
+  }
+
   void set_wait_gap_phase(WaitGapPhase phase)
   {
     wait_gap_phase_ = phase;
     wait_gap_phase_start_ = this->now();
   }
 
+  void set_entry_gap_phase(EntryGapPhase phase, const std::string & detail)
+  {
+    entry_gap_phase_ = phase;
+    entry_gap_phase_start_ = this->now();
+    publish_log("入缝子阶段切换: " + entry_gap_phase_to_string(phase) + " " + detail);
+  }
+
   void begin_search_gap_flow()
   {
     reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
     if (!current_gap_plan_.valid) {
       std::string reason;
       if (!resolve_current_gap_plan(reason)) {
@@ -2433,6 +2694,16 @@ private:
         set_state(State::ERROR, "无法生成找缝规划: " + reason);
         return;
       }
+    }
+    if (!current_entry_profile_valid_) {
+      std::string reason;
+      if (!configure_current_entry_profile(reason)) {
+        mission_active_ = false;
+        publish_stop();
+        set_state(State::ERROR, "无法生成入缝深度规划: " + reason);
+        return;
+      }
+      log_current_target_entry_plan();
     }
 
     latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
@@ -2466,6 +2737,121 @@ private:
     publish_entry_side();
     set_state(State::WAITING_GAP, detail);
     publish_gap_context();
+  }
+
+  bool validate_entering_runtime_config(std::string & reason) const
+  {
+    reason.clear();
+    if (!current_entry_profile_valid_) {
+      reason = "入缝深度规划尚未生成";
+      return false;
+    }
+    if (!std::isfinite(entry_turn_yaw_delta_rad_) || std::abs(entry_turn_yaw_delta_rad_) <= 1e-4) {
+      reason = "entry_turn_yaw_delta_rad 必须为非零有限值";
+      return false;
+    }
+    if (!std::isfinite(entry_align_yaw_tolerance_rad_) || entry_align_yaw_tolerance_rad_ <= 0.0) {
+      reason = "entry_align_yaw_tolerance_rad 必须为正数";
+      return false;
+    }
+    if (!std::isfinite(entry_turn_linear_speed_) || entry_turn_linear_speed_ < 0.0) {
+      reason = "entry_turn_linear_speed 不能为负数";
+      return false;
+    }
+    if (!std::isfinite(entry_turn_angular_speed_) || entry_turn_angular_speed_ <= 0.0) {
+      reason = "entry_turn_angular_speed 必须为正数";
+      return false;
+    }
+    if (!std::isfinite(entry_straight_speed_) || entry_straight_speed_ <= 0.0) {
+      reason = "entry_straight_speed 必须为正数";
+      return false;
+    }
+    if (!std::isfinite(entry_straight_yaw_kp_) || entry_straight_yaw_kp_ < 0.0) {
+      reason = "entry_straight_yaw_kp 不能为负数";
+      return false;
+    }
+    if (!std::isfinite(entry_straight_yaw_deadband_rad_) ||
+      entry_straight_yaw_deadband_rad_ < 0.0)
+    {
+      reason = "entry_straight_yaw_deadband_rad 不能为负数";
+      return false;
+    }
+    if (!std::isfinite(entry_straight_max_angular_speed_) ||
+      entry_straight_max_angular_speed_ < 0.0)
+    {
+      reason = "entry_straight_max_angular_speed 不能为负数";
+      return false;
+    }
+    return true;
+  }
+
+  bool current_odom_ready_for_entry(std::string & reason) const
+  {
+    reason.clear();
+    if (!latest_odom_ || !has_yaw_) {
+      reason = "无可用里程计/航向";
+      return false;
+    }
+    if (latest_odom_time_.nanoseconds() == 0) {
+      reason = "尚未收到有效里程计时间戳";
+      return false;
+    }
+    const double max_age = std::max(1.0, 2.0 * odom_primary_timeout_sec_);
+    if ((this->now() - latest_odom_time_).seconds() > max_age) {
+      reason = "里程计超时";
+      return false;
+    }
+    return true;
+  }
+
+  void fail_entering_gap(const std::string & reason)
+  {
+    publish_stop();
+    mission_active_ = false;
+    set_state(State::ERROR, reason);
+  }
+
+  void begin_entering_gap_flow(const std::string & detail)
+  {
+    if (!current_entry_profile_valid_) {
+      std::string reason;
+      if (!configure_current_entry_profile(reason)) {
+        fail_entering_gap("无法生成入缝深度规划: " + reason);
+        return;
+      }
+    }
+
+    std::string reason;
+    if (!validate_entering_runtime_config(reason)) {
+      fail_entering_gap("入缝参数非法: " + reason);
+      return;
+    }
+    if (!current_odom_ready_for_entry(reason)) {
+      fail_entering_gap("入缝前里程计异常: " + reason);
+      return;
+    }
+
+    const Pose2D current = current_pose_2d();
+    if (!current.valid) {
+      fail_entering_gap("入缝前当前位姿无效");
+      return;
+    }
+
+    reset_entry_gap_runtime();
+    entry_turn_start_yaw_ = current.yaw;
+    const double signed_delta = current_target_side_ == "right" ?
+      -std::abs(entry_turn_yaw_delta_rad_) : std::abs(entry_turn_yaw_delta_rad_);
+    target_gap_yaw_ = normalize_angle(entry_turn_start_yaw_ + signed_delta);
+    reset_segment_distance();
+    set_entry_gap_phase(
+      EntryGapPhase::ENTERING_TURN,
+      "entry_turn_start_yaw=" + std::to_string(entry_turn_start_yaw_) +
+      " target_gap_yaw=" + std::to_string(target_gap_yaw_) +
+      " direction=" + entry_turn_direction_text());
+    set_state(
+      State::ENTERING_GAP,
+      detail + "，开始转入缝隙 target_straight_distance=" +
+      std::to_string(target_straight_distance_) + "m");
   }
 
   bool run_wait_gap_linear_motion(double direction, double speed, double target_distance)
@@ -2585,8 +2971,7 @@ private:
         const std::string detected_side = latest_gap_.active_side.empty() ?
           latest_gap_.side : latest_gap_.active_side;
         if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_target_side_) {
-          reset_segment_distance();
-          set_state(State::ENTERING_GAP, "检测到可入缝，开始入缝");
+          begin_entering_gap_flow("检测到可入缝");
           return;
         }
 
@@ -2638,6 +3023,203 @@ private:
         set_wait_gap_phase(WaitGapPhase::STOP_BEFORE_DETECT);
         break;
       }
+    }
+  }
+
+  double entry_straight_traveled(const Pose2D & current) const
+  {
+    if (!straight_start_pose_.valid) {
+      return 0.0;
+    }
+    return
+      (current.x - straight_start_pose_.x) * std::cos(target_gap_yaw_) +
+      (current.y - straight_start_pose_.y) * std::sin(target_gap_yaw_);
+  }
+
+  double entry_turn_timeout_sec() const
+  {
+    const double min_angular = std::max(0.05, std::abs(entry_turn_angular_speed_));
+    return std::max(5.0, 2.5 * std::abs(entry_turn_yaw_delta_rad_) / min_angular + 2.0);
+  }
+
+  double entry_straight_timeout_sec() const
+  {
+    const double min_speed = std::max(0.03, std::abs(entry_straight_speed_));
+    return std::max(8.0, 2.5 * target_straight_distance_ / min_speed + 3.0);
+  }
+
+  void log_entering_gap_status(
+    const EnteringSafetyEval & safety,
+    const Pose2D & current,
+    double yaw_error,
+    double angular_z,
+    double traveled,
+    bool turn_done,
+    bool straight_done)
+  {
+    std::ostringstream straight_start_text;
+    if (straight_start_pose_.valid) {
+      straight_start_text << "x=" << straight_start_pose_.x
+                          << ",y=" << straight_start_pose_.y
+                          << ",yaw=" << straight_start_pose_.yaw;
+    } else {
+      straight_start_text << "invalid";
+    }
+    const std::string straight_start = straight_start_text.str();
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "entering_gap: phase=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
+      "current_yaw=%.3f yaw_error=%.3f angular.z=%.3f straight_start_pose=(%s) "
+      "traveled=%.3f target_straight_distance=%.3f turn_done=%d straight_done=%d "
+      "safety_stop=%d safety_reason=%s front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f",
+      entry_gap_phase_to_string(entry_gap_phase_).c_str(),
+      entry_turn_start_yaw_,
+      target_gap_yaw_,
+      current.yaw,
+      yaw_error,
+      angular_z,
+      straight_start.c_str(),
+      traveled,
+      target_straight_distance_,
+      turn_done ? 1 : 0,
+      straight_done ? 1 : 0,
+      entry_stopped_by_safety_ ? 1 : 0,
+      safety.block_reason.c_str(),
+      safety.front_min_dist,
+      safety.front_side_min_dist,
+      safety.side_min_dist,
+      safety.speed_scale);
+  }
+
+  void handle_entering_gap_state()
+  {
+    std::string reason;
+    if (!current_odom_ready_for_entry(reason)) {
+      fail_entering_gap("入缝里程计异常: " + reason);
+      return;
+    }
+
+    Pose2D current = current_pose_2d();
+    if (!current.valid || !std::isfinite(current.x) || !std::isfinite(current.y) ||
+      !std::isfinite(current.yaw))
+    {
+      fail_entering_gap("入缝里程计位姿无效");
+      return;
+    }
+
+    if (entry_gap_phase_ == EntryGapPhase::IDLE) {
+      begin_entering_gap_flow("ENTERING_GAP运行时补初始化");
+      return;
+    }
+
+    const auto safety = evaluate_entering_safety();
+    const double yaw_error = normalize_angle(target_gap_yaw_ - current.yaw);
+    double traveled = straight_start_pose_.valid ? entry_straight_traveled(current) : 0.0;
+    double angular_z = 0.0;
+    bool turn_done = entry_turn_completed_;
+    bool straight_done = entry_straight_completed_;
+
+    if (safety.blocked) {
+      entry_stopped_by_safety_ = true;
+      log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, turn_done, straight_done);
+      fail_entering_gap("入缝被安全策略阻塞: " + safety.block_reason);
+      return;
+    }
+
+    switch (entry_gap_phase_) {
+      case EntryGapPhase::ENTERING_TURN: {
+        turn_done =
+          std::abs(normalize_angle(current.yaw - target_gap_yaw_)) <
+          entry_align_yaw_tolerance_rad_;
+        if (turn_done) {
+          entry_turn_completed_ = true;
+          publish_stop();
+          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+          set_entry_gap_phase(EntryGapPhase::ENTERING_STRAIGHT_ALIGN, "转向完成，停止持续转向");
+          return;
+        }
+
+        if ((this->now() - entry_gap_phase_start_).seconds() > entry_turn_timeout_sec()) {
+          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, false, false);
+          fail_entering_gap("入缝转向超时，未达到目标缝隙航向");
+          return;
+        }
+
+        const double turn_direction = current_target_side_ == "right" ? -1.0 : 1.0;
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = std::abs(entry_turn_linear_speed_) * safety.speed_scale;
+        angular_z = turn_direction * std::abs(entry_turn_angular_speed_) * safety.speed_scale;
+        cmd.angular.z = angular_z;
+        cmd_pub_->publish(cmd);
+        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, false, false);
+        break;
+      }
+
+      case EntryGapPhase::ENTERING_STRAIGHT_ALIGN: {
+        publish_stop();
+        straight_start_pose_ = current;
+        straight_start_pose_.yaw = current.yaw;
+        entry_last_traveled_ = 0.0;
+        traveled = 0.0;
+        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+        set_entry_gap_phase(
+          EntryGapPhase::MOVING_TO_GRID_CENTER,
+          "记录 straight_start_pose，开始直行到深度格中心");
+        break;
+      }
+
+      case EntryGapPhase::MOVING_TO_GRID_CENTER: {
+        if (!straight_start_pose_.valid) {
+          fail_entering_gap("入缝直行起点无效");
+          return;
+        }
+
+        traveled = entry_straight_traveled(current);
+        if (!std::isfinite(traveled) || traveled < -0.15) {
+          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+          fail_entering_gap("入缝直行里程异常，traveled=" + std::to_string(traveled));
+          return;
+        }
+
+        if ((this->now() - entry_gap_phase_start_).seconds() > entry_straight_timeout_sec()) {
+          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+          fail_entering_gap("入缝直行超时，未到达深度格中心");
+          return;
+        }
+
+        if (traveled >= target_straight_distance_) {
+          entry_straight_completed_ = true;
+          straight_done = true;
+          publish_stop();
+          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, true);
+          set_state(State::INVENTORYING, "已直行到目标深度格中心，盘库流程预留");
+          return;
+        }
+
+        entry_last_traveled_ = traveled;
+        if (std::abs(yaw_error) >= entry_straight_yaw_deadband_rad_) {
+          angular_z = std::clamp(
+            entry_straight_yaw_kp_ * yaw_error,
+            -std::abs(entry_straight_max_angular_speed_),
+            std::abs(entry_straight_max_angular_speed_));
+        }
+
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = std::abs(entry_straight_speed_) * safety.speed_scale;
+        cmd.angular.z = angular_z * safety.speed_scale;
+        angular_z = cmd.angular.z;
+        cmd_pub_->publish(cmd);
+        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+        break;
+      }
+
+      case EntryGapPhase::IDLE:
+      default:
+        begin_entering_gap_flow("ENTERING_GAP运行时补初始化");
+        break;
     }
   }
 
@@ -2717,39 +3299,7 @@ private:
       }
 
       case State::ENTERING_GAP: {
-        const auto safety = evaluate_entering_safety();
-        if (safety.blocked) {
-          publish_stop();
-          mission_active_ = false;
-          set_state(State::ERROR, "入缝被安全策略阻塞: " + safety.block_reason);
-          break;
-        }
-
-        const double angular_multiplier = current_target_side_ == "right" ?
-          enter_right_angular_multiplier_ : enter_left_angular_multiplier_;
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = std::abs(enter_linear_speed_) * safety.speed_scale;
-        cmd.angular.z = angular_multiplier * std::abs(enter_angular_speed_) * safety.speed_scale;
-        cmd_pub_->publish(cmd);
-
-        RCLCPP_INFO_THROTTLE(
-          get_logger(),
-          *get_clock(),
-          1000,
-          "entering: side=%s front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f blocked=%d reason=%s",
-          safety.active_side.c_str(),
-          safety.front_min_dist,
-          safety.front_side_min_dist,
-          safety.side_min_dist,
-          safety.speed_scale,
-          safety.blocked ? 1 : 0,
-          safety.block_reason.c_str());
-
-        if (segment_distance() >= entry_distance_) {
-          publish_stop();
-          set_state(State::INVENTORYING, "已进入间隙，盘库流程预留");
-        }
-
+        handle_entering_gap_state();
         break;
       }
 
@@ -2815,6 +3365,9 @@ private:
   std::vector<std::string> targets_;
   std::size_t current_target_index_{0};
   int current_target_cabinet_{-1};
+  int current_target_level_index_{1};
+  int current_target_depth_index_{1};
+  bool current_target_depth_defaulted_{false};
 
   double follow_distance_{0.5};
   double warehouse_length_{12.0};
@@ -2827,6 +3380,23 @@ private:
   double enter_angular_speed_{0.30};
   double enter_left_angular_multiplier_{1.0};
   double enter_right_angular_multiplier_{-1.0};
+  bool enable_grid_center_entry_{true};
+  double grid_depth_m_{2.4};
+  int left_max_depth_index_{4};
+  int right_max_depth_index_{3};
+  double entry_center_offset_m_{0.0};
+  double target_depth_center_m_{1.2};
+  double target_straight_distance_{1.2};
+  bool current_entry_profile_valid_{false};
+  double entry_turn_yaw_delta_rad_{1.57079632679};
+  double entry_align_yaw_tolerance_rad_{0.08};
+  double entry_turn_linear_speed_{0.08};
+  double entry_turn_angular_speed_{0.30};
+  double entry_straight_speed_{0.08};
+  double entry_straight_yaw_kp_{0.8};
+  double entry_straight_yaw_deadband_rad_{0.03};
+  double entry_straight_max_angular_speed_{0.10};
+  double max_dynamic_entry_distance_m_{10.0};
   double enter_stop_distance_{0.30};
   double enter_slow_distance_{0.55};
   double enter_front_sector_start_deg_{-20.0};
@@ -2940,6 +3510,7 @@ private:
   rclcpp::Time latest_recognition_time_{0, 0, RCL_ROS_TIME};
   nav_msgs::msg::Odometry::SharedPtr latest_odom_;
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
+  rclcpp::Time latest_odom_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time latest_scan_stamp_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_primary_odom_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_fallback_odom_time_{0, 0, RCL_ROS_TIME};
@@ -2974,6 +3545,15 @@ private:
   double current_adjust_offset_{0.0};
   double wait_gap_motion_target_distance_{0.0};
   double wait_gap_motion_direction_{0.0};
+  EntryGapPhase entry_gap_phase_{EntryGapPhase::IDLE};
+  rclcpp::Time entry_gap_phase_start_{0, 0, RCL_ROS_TIME};
+  double entry_turn_start_yaw_{0.0};
+  double target_gap_yaw_{0.0};
+  Pose2D straight_start_pose_;
+  double entry_last_traveled_{0.0};
+  bool entry_turn_completed_{false};
+  bool entry_straight_completed_{false};
+  bool entry_stopped_by_safety_{false};
 
   rclcpp::Time tracking_stable_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_target_seen_time_{0, 0, RCL_ROS_TIME};
