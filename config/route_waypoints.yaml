@@ -5,12 +5,18 @@ routes:
   left_route:
     frame_id: map
     waypoints:
+      - {x: 1.0, y: 0.0, yaw: 0.0}
       - {x: 2.0, y: 0.0, yaw: 0.0}
+      - {x: 3.0, y: 0.0, yaw: 0.0}
+      - {x: 4.0, y: 0.0, yaw: 0.0}
+      - {x: 5.0, y: 0.0, yaw: 0.0}
+      - {x: 6.0, y: 0.0, yaw: 0.0}
+      
 
   right_route:
     frame_id: map
     waypoints:
-      - {x: 2.0, y: 0.0, yaw: 0.0}
+      - {x: 4.0, y: 0.0, yaw: 0.0}
 
 side_route_map:
   left: left_route
