@@ -479,17 +479,17 @@ mission_manager_node:
     # Angular speed during ENTERING_TURN. Sign is selected by target side (radians/second).
     entry_turn_angular_speed: 0.30
     # Straight speed after alignment, used while moving to depth-grid center (meters/second).
-    entry_straight_speed: 0.15
+    entry_straight_speed: 0.06
     # Proportional yaw-hold gain in straight entry stage (gain).
-    entry_straight_yaw_kp: 0.8
+    entry_straight_yaw_kp: 1.00
     # Deadband where straight-stage yaw hold outputs zero angular.z (radians).
     entry_straight_yaw_deadband_rad: 0.03
     # Small angular clamp for straight-stage yaw hold (radians/second).
-    entry_straight_max_angular_speed: 0.10
+    entry_straight_max_angular_speed: 0.15
     # Target-side LiDAR distance to hold during MOVING_TO_GRID_CENTER (meters).
-    entry_side_hold_target_distance_m: 0.80
+    entry_side_hold_target_distance_m: 0.60
     # Proportional gain for target-side distance hold in MOVING_TO_GRID_CENTER (rad/s per meter).
-    entry_side_hold_kp: 0.35
+    entry_side_hold_kp: 0.00
     # Minimum valid LiDAR points required in the target-side sector before side hold is enabled.
     entry_side_hold_min_valid_points: 5
     # Safety cap for computed dynamic entry distance (meters).
