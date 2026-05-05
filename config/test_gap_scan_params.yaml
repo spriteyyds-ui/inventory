@@ -9,6 +9,12 @@ move_grid_placeholder_wait_sec: 1.0
 
 test_motion_mode: ackermann_reentry_test
 
+test_real_motion_enabled: false
+test_real_motion_single_cabinet_only: true
+test_real_motion_target_cabinet: 3
+test_real_motion_target_gap: gap_03_02
+test_real_motion_stop_after_scan: true
+
 scan_layers: 2
 scan_depth_count: 3
 default_scan_side: left
