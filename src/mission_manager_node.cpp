@@ -230,6 +230,15 @@ public:
     test_move_grid_placeholder_wait_sec_ =
       declare_parameter<double>("move_grid_placeholder_wait_sec", 1.0);
     test_motion_mode_ = declare_parameter<std::string>("test_motion_mode", "ackermann_reentry_test");
+    test_real_motion_enabled_ = declare_parameter<bool>("test_real_motion_enabled", false);
+    test_real_motion_single_cabinet_only_ =
+      declare_parameter<bool>("test_real_motion_single_cabinet_only", true);
+    test_real_motion_target_cabinet_ =
+      declare_parameter<int>("test_real_motion_target_cabinet", 3);
+    test_real_motion_target_gap_ =
+      declare_parameter<std::string>("test_real_motion_target_gap", "gap_03_02");
+    test_real_motion_stop_after_scan_ =
+      declare_parameter<bool>("test_real_motion_stop_after_scan", true);
     test_scan_layers_ = declare_parameter<int>("scan_layers", 2);
     test_scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
     test_default_scan_side_ = declare_parameter<std::string>("default_scan_side", "left");
@@ -416,6 +425,13 @@ private:
     TEST_NEXT_GAP,
     TEST_DONE,
     TEST_ERROR,
+    TEST_REAL_PREPARE_NAV,
+    TEST_REAL_NAV_TO_TARGET,
+    TEST_REAL_TARGET_TRACKING,
+    TEST_REAL_WAITING_GAP,
+    TEST_REAL_ENTERING_GAP,
+    TEST_REAL_IN_GAP_SCAN,
+    TEST_REAL_STOP_AFTER_SCAN,
   };
 
   enum class ReturnMode
@@ -590,6 +606,20 @@ private:
         return "TEST_DONE";
       case State::TEST_ERROR:
         return "TEST_ERROR";
+      case State::TEST_REAL_PREPARE_NAV:
+        return "TEST_REAL_PREPARE_NAV";
+      case State::TEST_REAL_NAV_TO_TARGET:
+        return "TEST_REAL_NAV_TO_TARGET";
+      case State::TEST_REAL_TARGET_TRACKING:
+        return "TEST_REAL_TARGET_TRACKING";
+      case State::TEST_REAL_WAITING_GAP:
+        return "TEST_REAL_WAITING_GAP";
+      case State::TEST_REAL_ENTERING_GAP:
+        return "TEST_REAL_ENTERING_GAP";
+      case State::TEST_REAL_IN_GAP_SCAN:
+        return "TEST_REAL_IN_GAP_SCAN";
+      case State::TEST_REAL_STOP_AFTER_SCAN:
+        return "TEST_REAL_STOP_AFTER_SCAN";
       default:
         return "UNKNOWN";
     }
@@ -740,6 +770,26 @@ private:
   void publish_test_scan_log(const std::string & text)
   {
     publish_log("[mission_manager][test_scan] " + text);
+  }
+
+  void publish_test_real_log(const std::string & text)
+  {
+    publish_log("[mission_manager][test_real] " + text);
+  }
+
+  static constexpr const char * real_motion_reject_message()
+  {
+    return "real motion test only supports gap_03_02 with scan_cabinets=[3]";
+  }
+
+  bool is_nav_route_like_state(State s) const
+  {
+    return s == State::NAV_ROUTE || s == State::TEST_REAL_NAV_TO_TARGET;
+  }
+
+  bool is_target_tracking_like_state(State s) const
+  {
+    return s == State::TARGET_TRACKING || s == State::TEST_REAL_TARGET_TRACKING;
   }
 
   bool transform_pose_2d(
@@ -967,6 +1017,22 @@ private:
       if (root["test_motion_mode"]) {
         test_motion_mode_ = root["test_motion_mode"].as<std::string>();
       }
+      if (root["test_real_motion_enabled"]) {
+        test_real_motion_enabled_ = root["test_real_motion_enabled"].as<bool>();
+      }
+      if (root["test_real_motion_single_cabinet_only"]) {
+        test_real_motion_single_cabinet_only_ =
+          root["test_real_motion_single_cabinet_only"].as<bool>();
+      }
+      if (root["test_real_motion_target_cabinet"]) {
+        test_real_motion_target_cabinet_ = root["test_real_motion_target_cabinet"].as<int>();
+      }
+      if (root["test_real_motion_target_gap"]) {
+        test_real_motion_target_gap_ = root["test_real_motion_target_gap"].as<std::string>();
+      }
+      if (root["test_real_motion_stop_after_scan"]) {
+        test_real_motion_stop_after_scan_ = root["test_real_motion_stop_after_scan"].as<bool>();
+      }
       if (root["scan_layers"]) {
         test_scan_layers_ = root["scan_layers"].as<int>();
       }
@@ -1040,6 +1106,14 @@ private:
         configured_test_inventory_plan_.size(),
         test_scan_layers_,
         test_scan_depth_count_);
+      RCLCPP_INFO(
+        get_logger(),
+        "测试真实运动配置: enabled=%s target_gap=%s target_cabinet=%d single_only=%s stop_after_scan=%s",
+        test_real_motion_enabled_ ? "true" : "false",
+        test_real_motion_target_gap_.c_str(),
+        test_real_motion_target_cabinet_,
+        test_real_motion_single_cabinet_only_ ? "true" : "false",
+        test_real_motion_stop_after_scan_ ? "true" : "false");
       return true;
     } catch (const std::exception & ex) {
       reason = "解析 test_gap_scan_params.yaml 失败: " + std::string(ex.what());
@@ -1468,11 +1542,18 @@ private:
   void set_state(State s, const std::string & detail)
   {
     // SEARCH_GAP/WAITING_GAP 阶段启用 gap 检测，其他状态全部停掉。
-    set_gap_detector_enabled(s == State::SEARCH_GAP || s == State::WAITING_GAP);
+    set_gap_detector_enabled(
+      s == State::SEARCH_GAP ||
+      s == State::WAITING_GAP ||
+      s == State::TEST_REAL_WAITING_GAP);
     // 识别启停严格由状态机控制：
     // IDLE/NAV_ROUTE/TARGET_TRACKING 开启；进入找缝/回退观测后及后续状态关闭。
     set_recognizer_topic_enabled(
-      s == State::IDLE || s == State::NAV_ROUTE || s == State::TARGET_TRACKING);
+      s == State::IDLE ||
+      s == State::NAV_ROUTE ||
+      s == State::TARGET_TRACKING ||
+      s == State::TEST_REAL_NAV_TO_TARGET ||
+      s == State::TEST_REAL_TARGET_TRACKING);
     state_ = s;
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] " + detail);
@@ -1781,7 +1862,7 @@ private:
       return;
     }
     if (!msg->valid) {
-      if (state_ == State::NAV_ROUTE) {
+      if (is_nav_route_like_state(state_)) {
         reset_target_recognition_stability();
       }
       return;
@@ -1793,7 +1874,7 @@ private:
     }
 
     if (rec_id != current_target_cabinet_) {
-      if (state_ == State::NAV_ROUTE) {
+      if (is_nav_route_like_state(state_)) {
         reset_target_recognition_stability();
       }
       return;
@@ -1807,8 +1888,12 @@ private:
     last_target_seen_time_ = this->now();
     target_visible_ = true;
 
-    if (state_ == State::NAV_ROUTE) {
+    if (is_nav_route_like_state(state_)) {
       if (update_target_recognition_stability(rec_id)) {
+        if (test_real_motion_active_ && !test_real_target_recognized_logged_) {
+          publish_test_real_log("recognized target cabinet=" + std::to_string(rec_id));
+          test_real_target_recognized_logged_ = true;
+        }
         target_found_pending_ = true;
         begin_target_found_stop_hold();
       }
@@ -2268,7 +2353,10 @@ private:
     return true;
   }
 
-  bool begin_nav_route_for_current_target(const std::string & detail, std::string & fail_reason)
+  bool begin_nav_route_for_current_target(
+    const std::string & detail,
+    std::string & fail_reason,
+    State nav_state = State::NAV_ROUTE)
   {
     fail_reason.clear();
     if (current_route_.waypoints.empty()) {
@@ -2282,14 +2370,18 @@ private:
     request_recognizer_enable(true);
     has_distance_ = false;
     target_visible_ = false;
-    set_state(State::NAV_ROUTE, detail);
+    set_state(nav_state, detail);
     set_recognizer_topic_enabled(true, true);
 
     if (!send_current_route_waypoint(fail_reason)) {
       mission_active_ = false;
       publish_stop();
       request_recognizer_enable(false);
-      set_state(State::ERROR, "启动巡航路线失败: " + fail_reason);
+      if (test_real_motion_active_) {
+        fail_test_real_motion("启动巡航路线失败: " + fail_reason);
+      } else {
+        set_state(State::ERROR, "启动巡航路线失败: " + fail_reason);
+      }
       return false;
     }
     return true;
@@ -2315,6 +2407,11 @@ private:
     publish_stop();
     request_recognizer_enable(false);
 
+    if (test_real_motion_active_) {
+      fail_test_real_motion(reason);
+      return;
+    }
+
     if (route_search_failure_policy_ == "return") {
       switch_to_returning(ReturnMode::SEARCH_TARGET, reason);
       return;
@@ -2339,7 +2436,12 @@ private:
         nav2_route_cancel_requested_ = false;
         has_distance_ = false;
         tracking_stable_start_ = zero_time(get_clock());
-        set_state(State::TARGET_TRACKING, "停车完成，进入目标跟踪");
+        if (test_real_motion_active_) {
+          publish_test_real_log("enter real target tracking cabinet=" + std::to_string(current_target_cabinet_));
+          set_test_real_state(State::TEST_REAL_TARGET_TRACKING, "停车完成，进入目标跟踪");
+        } else {
+          set_state(State::TARGET_TRACKING, "停车完成，进入目标跟踪");
+        }
       }
       return;
     }
@@ -2872,6 +2974,12 @@ private:
     publish_log("[" + state_to_string(state_) + "] [mission_manager][test_scan] " + detail);
   }
 
+  void set_test_real_state(State s, const std::string & detail)
+  {
+    test_state_enter_time_ = this->now();
+    set_state(s, "[mission_manager][test_real] " + detail);
+  }
+
   bool find_configured_test_cabinets(
     const std::string & gap_id,
     std::vector<int> & cabinets) const
@@ -2912,6 +3020,21 @@ private:
       }
     }
     return true;
+  }
+
+  bool is_valid_test_real_motion_request(
+    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  {
+    if (request.run_all_configured) {
+      return false;
+    }
+    if (wheeltec_inventory_system::trim(request.gap_id) != test_real_motion_target_gap_) {
+      return false;
+    }
+    if (request.scan_cabinets.size() != 1U) {
+      return false;
+    }
+    return request.scan_cabinets[0] == test_real_motion_target_cabinet_;
   }
 
   bool build_test_gap_scan_plans(
@@ -2965,6 +3088,33 @@ private:
     return true;
   }
 
+  bool load_configs_and_prepare_current_target(std::string & reason)
+  {
+    routes_loaded_ = load_route_config(reason);
+    if (!routes_loaded_) {
+      return false;
+    }
+    warehouse_layout_loaded_ = load_warehouse_layout_config(reason);
+    if (!warehouse_layout_loaded_) {
+      return false;
+    }
+
+    if (!prepare_current_target(reason)) {
+      return false;
+    }
+    if (!resolve_current_route(reason)) {
+      return false;
+    }
+    if (!configure_current_entry_profile(reason)) {
+      return false;
+    }
+    if (!resolve_current_gap_plan(reason)) {
+      return false;
+    }
+    log_current_target_entry_plan();
+    return true;
+  }
+
   const TestGapScanPlan * current_test_gap_scan_plan() const
   {
     if (test_current_gap_index_ >= test_gap_scan_queue_.size()) {
@@ -2982,6 +3132,26 @@ private:
   {
     test_gap_scan_error_reason_ = reason;
     set_test_state(State::TEST_ERROR, reason);
+  }
+
+  void stop_test_real_motion_controls()
+  {
+    cancel_nav2_route_goal("测试真实运动停止");
+    cancel_nav2_return_goal("测试真实运动停止");
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_gap_detector_enabled(false);
+  }
+
+  void fail_test_real_motion(const std::string & reason)
+  {
+    publish_test_real_log("failed: " + reason);
+    stop_test_real_motion_controls();
+    mission_active_ = false;
+    test_gap_scan_error_reason_ = reason;
+    set_test_real_state(State::TEST_ERROR, reason);
   }
 
   void start_test_gap_scan_callback(
@@ -3013,6 +3183,40 @@ private:
     if (!enable_test_gap_scan_) {
       response->success = false;
       response->message = "enable_test_gap_scan=false，测试盘库入口未启用";
+      return;
+    }
+
+    if (test_real_motion_enabled_) {
+      publish_test_real_log("real motion enabled");
+      if (!is_valid_test_real_motion_request(*request)) {
+        response->success = false;
+        response->message = real_motion_reject_message();
+        publish_test_real_log(response->message);
+        return;
+      }
+
+      TestGapScanPlan plan;
+      plan.gap_id = test_real_motion_target_gap_;
+      plan.scan_cabinets = {test_real_motion_target_cabinet_};
+      test_gap_scan_queue_ = {plan};
+      test_current_gap_index_ = 0;
+      test_gap_scan_error_reason_.clear();
+      test_gap_scan_active_ = true;
+      test_real_motion_active_ = true;
+      test_real_gap_searching_ = false;
+      test_real_target_recognized_logged_ = false;
+      test_real_close_requested_ = false;
+
+      publish_test_real_log(
+        "accepted single cabinet test gap=" + plan.gap_id +
+        " cabinet=" + std::to_string(test_real_motion_target_cabinet_));
+      set_test_state(
+        State::TEST_REQUESTING_OPEN_GAP,
+        "测试真实运动任务已启动 gap=" + plan.gap_id +
+        " cabinets=" + cabinet_unit_to_string(plan.scan_cabinets));
+
+      response->success = true;
+      response->message = "测试真实运动任务已接收";
       return;
     }
 
@@ -3071,41 +3275,11 @@ private:
     current_target_index_ = 0;
 
     std::string reason;
-    routes_loaded_ = load_route_config(reason);
-    if (!routes_loaded_) {
+    if (!load_configs_and_prepare_current_target(reason)) {
       response->accepted = false;
       response->message = reason;
       return;
     }
-    warehouse_layout_loaded_ = load_warehouse_layout_config(reason);
-    if (!warehouse_layout_loaded_) {
-      response->accepted = false;
-      response->message = reason;
-      return;
-    }
-
-    if (!prepare_current_target(reason)) {
-      response->accepted = false;
-      response->message = reason;
-      return;
-    }
-
-    if (!resolve_current_route(reason)) {
-      response->accepted = false;
-      response->message = reason;
-      return;
-    }
-    if (!configure_current_entry_profile(reason)) {
-      response->accepted = false;
-      response->message = reason;
-      return;
-    }
-    if (!resolve_current_gap_plan(reason)) {
-      response->accepted = false;
-      response->message = reason;
-      return;
-    }
-    log_current_target_entry_plan();
 
     mission_active_ = true;
     cancel_requested_ = false;
@@ -3179,9 +3353,14 @@ private:
     (void)request;
 
     if (test_gap_scan_active_) {
-      fail_test_gap_scan("收到取消请求，停止测试盘库空跑");
+      if (test_real_motion_active_) {
+        fail_test_real_motion("收到取消请求，停止测试真实运动");
+        response->message = "测试真实运动已请求停止";
+      } else {
+        fail_test_gap_scan("收到取消请求，停止测试盘库空跑");
+        response->message = "测试盘库空跑已请求停止";
+      }
       response->success = true;
-      response->message = "测试盘库空跑已请求停止";
       return;
     }
 
@@ -3328,11 +3507,17 @@ private:
     search_gap_start_ = this->now();
     reset_segment_distance();
     publish_entry_side();
-    set_state(
-      State::SEARCH_GAP,
+    const std::string detail =
       "跟踪稳定，按物理单元找缝 direction=" +
       search_direction_to_string(current_gap_plan_.search_direction) +
-      " gap=" + gap_plan_to_string(current_gap_plan_));
+      " gap=" + gap_plan_to_string(current_gap_plan_);
+    if (test_real_motion_active_) {
+      test_real_gap_searching_ = true;
+      publish_test_real_log("waiting/searching gap=" + test_real_motion_target_gap_);
+      set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
+    } else {
+      set_state(State::SEARCH_GAP, detail);
+    }
     publish_gap_context();
   }
 
@@ -3341,7 +3526,12 @@ private:
     latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
     set_wait_gap_phase(WaitGapPhase::STOP_BEFORE_DETECT);
     publish_entry_side();
-    set_state(State::WAITING_GAP, detail);
+    if (test_real_motion_active_) {
+      test_real_gap_searching_ = false;
+      set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
+    } else {
+      set_state(State::WAITING_GAP, detail);
+    }
     publish_gap_context();
   }
 
@@ -3353,7 +3543,12 @@ private:
     reset_segment_distance();
     set_wait_gap_phase(WaitGapPhase::RETREATING);
     publish_entry_side();
-    set_state(State::WAITING_GAP, detail);
+    if (test_real_motion_active_) {
+      test_real_gap_searching_ = false;
+      set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
+    } else {
+      set_state(State::WAITING_GAP, detail);
+    }
     publish_gap_context();
   }
 
@@ -3439,6 +3634,10 @@ private:
   void fail_entering_gap(const std::string & reason)
   {
     publish_stop();
+    if (test_real_motion_active_) {
+      fail_test_real_motion(reason);
+      return;
+    }
     mission_active_ = false;
     set_state(State::ERROR, reason);
   }
@@ -3480,10 +3679,15 @@ private:
       "entry_turn_start_yaw=" + std::to_string(entry_turn_start_yaw_) +
       " target_gap_yaw=" + std::to_string(target_gap_yaw_) +
       " direction=" + entry_turn_direction_text());
-    set_state(
-      State::ENTERING_GAP,
+    const std::string state_detail =
       detail + "，开始转入缝隙 target_straight_distance=" +
-      std::to_string(target_straight_distance_) + "m");
+      std::to_string(target_straight_distance_) + "m";
+    if (test_real_motion_active_) {
+      publish_test_real_log("entering gap for cabinet=" + std::to_string(current_target_cabinet_));
+      set_test_real_state(State::TEST_REAL_ENTERING_GAP, state_detail);
+    } else {
+      set_state(State::ENTERING_GAP, state_detail);
+    }
   }
 
   bool run_wait_gap_linear_motion(double direction, double speed, double target_distance)
@@ -3627,7 +3831,11 @@ private:
             if (!start_next_adjust_motion()) {
               mission_active_ = false;
               publish_stop();
-              set_state(State::ERROR, "缝隙检测失败且调整序列耗尽");
+              if (test_real_motion_active_) {
+                fail_test_real_motion("缝隙检测失败且调整序列耗尽");
+              } else {
+                set_state(State::ERROR, "缝隙检测失败且调整序列耗尽");
+              }
             }
           }
         }
@@ -3858,7 +4066,13 @@ private:
           straight_done = true;
           publish_stop();
           log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, true);
-          set_state(State::INVENTORYING, "已直行到目标深度格中心，盘库流程预留");
+          if (test_real_motion_active_) {
+            set_test_real_state(
+              State::TEST_REAL_IN_GAP_SCAN,
+              "已直行到目标深度格中心，开始测试占位扫描");
+          } else {
+            set_state(State::INVENTORYING, "已直行到目标深度格中心，盘库流程预留");
+          }
           return;
         }
 
@@ -3897,6 +4111,107 @@ private:
     }
   }
 
+  void handle_target_tracking_state()
+  {
+    if (!target_visible_ || !recognition_is_fresh() || !latest_recognition_) {
+      target_visible_ = false;
+      has_distance_ = false;
+      set_corridor_mode(false, false);
+      publish_stop();
+      request_recognizer_enable(false);
+      if (test_real_motion_active_) {
+        fail_test_real_motion("跟踪阶段目标丢失，安全停车并终止测试真实运动");
+      } else {
+        mission_active_ = false;
+        set_state(State::ERROR, "跟踪阶段目标丢失，安全停车并终止任务");
+      }
+      return;
+    }
+
+    if (!has_distance_) {
+      return;
+    }
+
+    const double distance_error = latest_distance_ - follow_distance_;
+    const double heading_error = -static_cast<double>(latest_recognition_->horizontal_offset) /
+      std::max(1.0, tracking_offset_scale_px_);
+
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = std::clamp(
+      tracking_kp_distance_ * distance_error,
+      -tracking_speed_,
+      tracking_speed_);
+    cmd.angular.z = std::clamp(
+      tracking_kp_heading_ * heading_error,
+      -tracking_max_angular_,
+      tracking_max_angular_);
+    cmd_pub_->publish(cmd);
+
+    if (std::abs(distance_error) <= distance_tolerance_) {
+      if (tracking_stable_start_.nanoseconds() == 0) {
+        tracking_stable_start_ = this->now();
+      }
+      if ((this->now() - tracking_stable_start_).seconds() >= distance_stable_time_sec_) {
+        publish_stop();
+        begin_search_gap_flow();
+      }
+    } else {
+      tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    }
+  }
+
+  bool execute_placeholder_scan_for_cabinet(int cabinet_id, bool test_real_log)
+  {
+    if (test_real_log) {
+      publish_test_real_log("in gap, start placeholder scan cabinet=" + std::to_string(cabinet_id));
+    } else {
+      publish_test_scan_log("scanning cabinet=" + std::to_string(cabinet_id));
+    }
+
+    const auto steps = scan_sequence_generator_.generateCabinetSnakeSequence(
+      cabinet_id,
+      test_scan_layers_,
+      test_scan_depth_count_);
+    if (steps.empty()) {
+      const std::string reason = "生成扫描序列为空: cabinet=" + std::to_string(cabinet_id);
+      if (test_real_log) {
+        fail_test_real_motion(reason);
+      } else {
+        fail_test_gap_scan(reason);
+      }
+      return false;
+    }
+
+    bool report_ok = true;
+    const bool execute_ok = scan_sequence_executor_.execute(
+      steps,
+      [this, &report_ok](const wheeltec_inventory_system::ScanStep & step) {
+        if (step.step_type != wheeltec_inventory_system::ScanStepType::SCAN_PLACEHOLDER) {
+          return;
+        }
+        if (!web_api_client_.reportInventoryResult(
+            step.cabinet_id,
+            step.layer_index,
+            step.depth_index,
+            "placeholder_ok"))
+        {
+          report_ok = false;
+        }
+      });
+
+    if (!execute_ok || !report_ok) {
+      const std::string reason =
+        "占位扫描执行或结果上报失败: cabinet=" + std::to_string(cabinet_id);
+      if (test_real_log) {
+        fail_test_real_motion(reason);
+      } else {
+        fail_test_gap_scan(reason);
+      }
+      return false;
+    }
+    return true;
+  }
+
   void handle_test_gap_scan_state()
   {
     const TestGapScanPlan * plan = current_test_gap_scan_plan();
@@ -3912,6 +4227,9 @@ private:
           "start gap=" + plan->gap_id +
           " cabinets=" + cabinet_unit_to_string(plan->scan_cabinets));
         publish_test_scan_log("requesting open gap=" + plan->gap_id);
+        if (test_real_motion_active_) {
+          publish_test_real_log("mock open gap=" + plan->gap_id);
+        }
         (void)web_api_client_.reportRobotStatus("TEST_REQUESTING_OPEN_GAP");
         if (!web_api_client_.requestOpenGap(plan->gap_id)) {
           fail_test_gap_scan("mock/网页开柜请求失败: gap=" + plan->gap_id);
@@ -3928,7 +4246,13 @@ private:
 
       case State::TEST_WAITING_OPEN_DELAY: {
         if (test_state_elapsed(test_open_gap_wait_sec_)) {
-          set_test_state(State::TEST_SCANNING_PLACEHOLDER, "开始占位扫描");
+          if (test_real_motion_active_) {
+            set_test_real_state(
+              State::TEST_REAL_PREPARE_NAV,
+              "prepare nav target_cabinet=" + std::to_string(test_real_motion_target_cabinet_));
+          } else {
+            set_test_state(State::TEST_SCANNING_PLACEHOLDER, "开始占位扫描");
+          }
         }
         break;
       }
@@ -3941,36 +4265,7 @@ private:
 
         (void)web_api_client_.reportRobotStatus("SCANNING_PLACEHOLDER");
         for (const auto cabinet_id : plan->scan_cabinets) {
-          publish_test_scan_log("scanning cabinet=" + std::to_string(cabinet_id));
-
-          const auto steps = scan_sequence_generator_.generateCabinetSnakeSequence(
-            cabinet_id,
-            test_scan_layers_,
-            test_scan_depth_count_);
-          if (steps.empty()) {
-            fail_test_gap_scan("生成扫描序列为空: cabinet=" + std::to_string(cabinet_id));
-            return;
-          }
-
-          bool report_ok = true;
-          const bool execute_ok = scan_sequence_executor_.execute(
-            steps,
-            [this, &report_ok](const wheeltec_inventory_system::ScanStep & step) {
-              if (step.step_type != wheeltec_inventory_system::ScanStepType::SCAN_PLACEHOLDER) {
-                return;
-              }
-              if (!web_api_client_.reportInventoryResult(
-                  step.cabinet_id,
-                  step.layer_index,
-                  step.depth_index,
-                  "placeholder_ok"))
-              {
-                report_ok = false;
-              }
-            });
-
-          if (!execute_ok || !report_ok) {
-            fail_test_gap_scan("占位扫描执行或结果上报失败: cabinet=" + std::to_string(cabinet_id));
+          if (!execute_placeholder_scan_for_cabinet(cabinet_id, false)) {
             return;
           }
         }
@@ -4026,19 +4321,117 @@ private:
         break;
       }
 
+      case State::TEST_REAL_PREPARE_NAV: {
+        publish_test_real_log(
+          "prepare nav target_cabinet=" + std::to_string(test_real_motion_target_cabinet_));
+
+        targets_ = {std::to_string(test_real_motion_target_cabinet_)};
+        current_target_index_ = 0;
+
+        std::string reason;
+        if (!load_configs_and_prepare_current_target(reason)) {
+          fail_test_real_motion("准备真实运动目标失败: " + reason);
+          return;
+        }
+
+        mission_active_ = true;
+        cancel_requested_ = false;
+        mission_return_home_on_finish_ = false;
+        target_visible_ = false;
+        has_distance_ = false;
+        latest_distance_ = 0.0;
+        return_mode_ = ReturnMode::NONE;
+        return_target_distance_ = 0.0;
+        return_using_nav2_ = false;
+        nav2_return_in_progress_ = false;
+        nav2_result_ready_ = false;
+        fallback_phase_ = FallbackPhase::IDLE;
+        fallback_drive_mode_ = FallbackDriveMode::NONE;
+        reset_wait_gap_runtime();
+        reset_entry_gap_runtime();
+        publish_gap_context();
+        tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+        last_target_seen_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+        mission_start_distance_ = odom_cumulative_distance_;
+        reset_segment_distance();
+        mission_start_pose_ = current_pose_2d();
+        mission_start_pose_nav2_ = Pose2D{};
+
+        publish_test_real_log(
+          "enter real nav to target cabinet=" + std::to_string(current_target_cabinet_));
+        publish_test_real_log(
+          "requested gap=" + test_real_motion_target_gap_ +
+          " existing_gap_plan=" + gap_plan_to_string(current_gap_plan_));
+
+        std::string nav_route_fail_reason;
+        if (!begin_nav_route_for_current_target(
+            "[mission_manager][test_real] enter real nav to target cabinet=" +
+            std::to_string(current_target_cabinet_),
+            nav_route_fail_reason,
+            State::TEST_REAL_NAV_TO_TARGET))
+        {
+          fail_test_real_motion(nav_route_fail_reason);
+        }
+        break;
+      }
+
+      case State::TEST_REAL_IN_GAP_SCAN: {
+        if (!execute_placeholder_scan_for_cabinet(test_real_motion_target_cabinet_, true)) {
+          return;
+        }
+        publish_test_real_log("scan finished, stop after scan");
+        set_test_real_state(
+          State::TEST_REAL_STOP_AFTER_SCAN,
+          "scan finished, stop after scan, no exit motion in this test step");
+        break;
+      }
+
+      case State::TEST_REAL_STOP_AFTER_SCAN: {
+        stop_test_real_motion_controls();
+        mission_active_ = false;
+        publish_test_real_log("scan finished, stop after scan, no exit motion in this test step");
+        if (!test_real_close_requested_) {
+          publish_test_real_log("mock close gap=" + test_real_motion_target_gap_);
+          (void)web_api_client_.requestCloseGap(test_real_motion_target_gap_);
+          test_real_close_requested_ = true;
+        }
+        publish_test_real_log("done, back to IDLE");
+        set_test_state(State::TEST_DONE, "测试真实运动单柜扫描完成");
+        break;
+      }
+
       case State::TEST_DONE: {
         (void)web_api_client_.reportRobotStatus("TEST_DONE");
-        publish_test_scan_log("all test gaps finished");
+        if (test_real_motion_active_) {
+          publish_test_real_log("done, back to IDLE");
+        } else {
+          publish_test_scan_log("all test gaps finished");
+        }
+        mission_active_ = false;
+        test_real_motion_active_ = false;
+        test_real_gap_searching_ = false;
+        test_real_target_recognized_logged_ = false;
+        test_real_close_requested_ = false;
         test_gap_scan_active_ = false;
         test_gap_scan_queue_.clear();
         test_current_gap_index_ = 0;
-        set_state(State::IDLE, "测试盘库空跑完成，系统待机");
+        set_state(State::IDLE, "测试盘库任务完成，系统待机");
         break;
       }
 
       case State::TEST_ERROR: {
         (void)web_api_client_.reportRobotStatus("TEST_ERROR");
-        publish_test_scan_log("test gap scan failed: " + test_gap_scan_error_reason_);
+        if (test_real_motion_active_) {
+          stop_test_real_motion_controls();
+          publish_test_real_log("test real motion failed: " + test_gap_scan_error_reason_);
+        } else {
+          publish_test_scan_log("test gap scan failed: " + test_gap_scan_error_reason_);
+        }
+        mission_active_ = false;
+        test_real_motion_active_ = false;
+        test_real_gap_searching_ = false;
+        test_real_target_recognized_logged_ = false;
+        test_real_close_requested_ = false;
         test_gap_scan_active_ = false;
         test_gap_scan_queue_.clear();
         test_current_gap_index_ = 0;
@@ -4067,8 +4460,35 @@ private:
       case State::TEST_WAITING_CLOSE_DELAY:
       case State::TEST_NEXT_GAP:
       case State::TEST_DONE:
-      case State::TEST_ERROR: {
+      case State::TEST_ERROR:
+      case State::TEST_REAL_PREPARE_NAV:
+      case State::TEST_REAL_IN_GAP_SCAN:
+      case State::TEST_REAL_STOP_AFTER_SCAN: {
         handle_test_gap_scan_state();
+        break;
+      }
+
+      case State::TEST_REAL_NAV_TO_TARGET: {
+        handle_nav_route_state();
+        break;
+      }
+
+      case State::TEST_REAL_TARGET_TRACKING: {
+        handle_target_tracking_state();
+        break;
+      }
+
+      case State::TEST_REAL_WAITING_GAP: {
+        if (test_real_gap_searching_) {
+          handle_search_gap_state();
+        } else {
+          handle_waiting_gap_state();
+        }
+        break;
+      }
+
+      case State::TEST_REAL_ENTERING_GAP: {
+        handle_entering_gap_state();
         break;
       }
 
@@ -4085,48 +4505,7 @@ private:
       }
 
       case State::TARGET_TRACKING: {
-        if (!target_visible_ || !recognition_is_fresh() || !latest_recognition_) {
-          mission_active_ = false;
-          target_visible_ = false;
-          has_distance_ = false;
-          set_corridor_mode(false, false);
-          publish_stop();
-          request_recognizer_enable(false);
-          set_state(State::ERROR, "跟踪阶段目标丢失，安全停车并终止任务");
-          break;
-        }
-
-        if (!has_distance_) {
-          break;
-        }
-
-        const double distance_error = latest_distance_ - follow_distance_;
-        const double heading_error = -static_cast<double>(latest_recognition_->horizontal_offset) /
-          std::max(1.0, tracking_offset_scale_px_);
-
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = std::clamp(
-          tracking_kp_distance_ * distance_error,
-          -tracking_speed_,
-          tracking_speed_);
-        cmd.angular.z = std::clamp(
-          tracking_kp_heading_ * heading_error,
-          -tracking_max_angular_,
-          tracking_max_angular_);
-        cmd_pub_->publish(cmd);
-
-        if (std::abs(distance_error) <= distance_tolerance_) {
-          if (tracking_stable_start_.nanoseconds() == 0) {
-            tracking_stable_start_ = this->now();
-          }
-          if ((this->now() - tracking_stable_start_).seconds() >= distance_stable_time_sec_) {
-            publish_stop();
-            begin_search_gap_flow();
-          }
-        } else {
-          tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-        }
-
+        handle_target_tracking_state();
         break;
       }
 
@@ -4164,6 +4543,10 @@ private:
       case State::IDLE:
       case State::DONE:
       case State::ERROR:
+        if (test_real_motion_active_) {
+          fail_test_real_motion("正式流程进入 ERROR，停止测试真实运动");
+        }
+        break;
       default:
         break;
     }
@@ -4334,6 +4717,11 @@ private:
   double test_lift_placeholder_wait_sec_{3.0};
   double test_move_grid_placeholder_wait_sec_{1.0};
   std::string test_motion_mode_{"ackermann_reentry_test"};
+  bool test_real_motion_enabled_{false};
+  bool test_real_motion_single_cabinet_only_{true};
+  int test_real_motion_target_cabinet_{3};
+  std::string test_real_motion_target_gap_{"gap_03_02"};
+  bool test_real_motion_stop_after_scan_{true};
   int test_scan_layers_{2};
   int test_scan_depth_count_{3};
   std::string test_default_scan_side_{"left"};
@@ -4347,6 +4735,10 @@ private:
   std::size_t test_current_gap_index_{0};
   std::string test_gap_scan_error_reason_;
   rclcpp::Time test_state_enter_time_{0, 0, RCL_ROS_TIME};
+  bool test_real_motion_active_{false};
+  bool test_real_gap_searching_{false};
+  bool test_real_target_recognized_logged_{false};
+  bool test_real_close_requested_{false};
   wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   wheeltec_inventory_system::ScanSequenceExecutor scan_sequence_executor_;
   wheeltec_inventory_system::WebApiClient web_api_client_;
