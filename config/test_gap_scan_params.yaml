@@ -1,0 +1,27 @@
+enable_test_gap_scan: true
+web_client_mode: mock
+
+open_gap_wait_sec: 5.0
+close_gap_wait_sec: 3.0
+scan_placeholder_wait_sec: 2.0
+lift_placeholder_wait_sec: 3.0
+move_grid_placeholder_wait_sec: 1.0
+
+test_motion_mode: ackermann_reentry_test
+
+scan_layers: 2
+scan_depth_count: 3
+default_scan_side: left
+
+web_base_url: ""
+web_open_gap_endpoint: "/api/gap/open"
+web_close_gap_endpoint: "/api/gap/close"
+web_status_endpoint: "/api/robot/status"
+web_result_endpoint: "/api/inventory/result"
+
+test_inventory_plan:
+  - gap_id: gap_03_02
+    scan_cabinets: [3, 2, 1]
+
+  - gap_id: gap_04_05
+    scan_cabinets: [4, 5, 6]
