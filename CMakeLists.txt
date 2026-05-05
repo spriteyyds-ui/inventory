@@ -38,6 +38,7 @@ set(msg_files
 
 set(srv_files
   "srv/StartMission.srv"
+  "srv/StartTestGapScan.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -98,6 +99,12 @@ ament_target_dependencies(gap_detector_node
 )
 target_link_libraries(gap_detector_node ${cpp_typesupport_target})
 
+add_library(inventory_test_scan_modules STATIC
+  src/scan_sequence_generator.cpp
+  src/scan_sequence_executor.cpp
+  src/web_api_client.cpp
+)
+
 add_executable(mission_manager_node src/mission_manager_node.cpp)
 ament_target_dependencies(mission_manager_node
   rclcpp
@@ -113,16 +120,18 @@ ament_target_dependencies(mission_manager_node
   ament_index_cpp
 )
 if(TARGET yaml-cpp::yaml-cpp)
-  target_link_libraries(mission_manager_node ${cpp_typesupport_target} yaml-cpp::yaml-cpp)
+  target_link_libraries(
+    mission_manager_node
+    ${cpp_typesupport_target}
+    inventory_test_scan_modules
+    yaml-cpp::yaml-cpp)
 else()
-  target_link_libraries(mission_manager_node ${cpp_typesupport_target} yaml-cpp)
+  target_link_libraries(
+    mission_manager_node
+    ${cpp_typesupport_target}
+    inventory_test_scan_modules
+    yaml-cpp)
 endif()
-
-add_library(inventory_test_scan_modules STATIC
-  src/scan_sequence_generator.cpp
-  src/scan_sequence_executor.cpp
-  src/web_api_client.cpp
-)
 
 add_executable(offline_test
   test/offline_test.cpp

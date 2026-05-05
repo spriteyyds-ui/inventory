@@ -1,6 +1,7 @@
 #ifndef WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_EXECUTOR_HPP_
 #define WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_EXECUTOR_HPP_
 
+#include <functional>
 #include <vector>
 
 #include "wheeltec_inventory_system/scan_sequence_generator.hpp"
@@ -24,6 +25,9 @@ public:
   const ScanExecutionParams & params() const;
 
   bool execute(const std::vector<ScanStep> & steps) const;
+  bool execute(
+    const std::vector<ScanStep> & steps,
+    const std::function<void(const ScanStep &)> & step_callback) const;
 
 private:
   static void sleepSeconds(double seconds);

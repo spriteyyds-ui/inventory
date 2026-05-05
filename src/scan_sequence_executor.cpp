@@ -24,6 +24,13 @@ const ScanExecutionParams & ScanSequenceExecutor::params() const
 
 bool ScanSequenceExecutor::execute(const std::vector<ScanStep> & steps) const
 {
+  return execute(steps, nullptr);
+}
+
+bool ScanSequenceExecutor::execute(
+  const std::vector<ScanStep> & steps,
+  const std::function<void(const ScanStep &)> & step_callback) const
+{
   std::cout << "[scan_executor] execute placeholder step_count=" << steps.size() << std::endl;
 
   for (const auto & step : steps) {
@@ -51,6 +58,10 @@ bool ScanSequenceExecutor::execute(const std::vector<ScanStep> & steps) const
         std::cout << "[scan_executor] lower placeholder" << std::endl;
         sleepSeconds(params_.lift_placeholder_wait_sec);
         break;
+    }
+
+    if (step_callback) {
+      step_callback(step);
     }
   }
 

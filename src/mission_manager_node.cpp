@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <iomanip>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -33,7 +34,11 @@
 #include "wheeltec_inventory_system/id_utils.hpp"
 #include "wheeltec_inventory_system/msg/gap_status.hpp"
 #include "wheeltec_inventory_system/msg/recognized_number.hpp"
+#include "wheeltec_inventory_system/scan_sequence_executor.hpp"
+#include "wheeltec_inventory_system/scan_sequence_generator.hpp"
 #include "wheeltec_inventory_system/srv/start_mission.hpp"
+#include "wheeltec_inventory_system/srv/start_test_gap_scan.hpp"
+#include "wheeltec_inventory_system/web_api_client.hpp"
 #include "yaml-cpp/yaml.h"
 
 class MissionManagerNode : public rclcpp::Node
@@ -71,12 +76,18 @@ public:
     cancel_service_name_ = declare_parameter<std::string>("cancel_service_name", "/inventory/cancel_mission");
     recognizer_trigger_service_ =
       declare_parameter<std::string>("recognizer_trigger_service", "/inventory/trigger_recognition");
+    start_test_gap_scan_service_name_ =
+      declare_parameter<std::string>("start_test_gap_scan_service_name", "/inventory/start_test_gap_scan");
 
     target_list_param_ = declare_parameter<std::vector<std::string>>("target_list", std::vector<std::string>{});
     route_waypoints_file_ =
       declare_parameter<std::string>("route_waypoints_file", "config/route_waypoints.yaml");
     warehouse_layout_file_ =
       declare_parameter<std::string>("warehouse_layout_file", "config/warehouse_layout.yaml");
+    test_gap_scan_params_file_ =
+      declare_parameter<std::string>("test_gap_scan_params_file", "config/test_gap_scan_params.yaml");
+    gap_scan_map_file_ =
+      declare_parameter<std::string>("gap_scan_map_file", "config/gap_scan_map.yaml");
     route_search_failure_policy_ =
       declare_parameter<std::string>("route_search_failure_policy", "error");
 
@@ -208,6 +219,30 @@ public:
     entry_left_align_distance_ = declare_parameter<double>("entry_left_align_distance", 0.22);
     entry_left_turn_angular_ = declare_parameter<double>("entry_left_turn_angular", 0.35);
 
+    enable_test_gap_scan_ = declare_parameter<bool>("enable_test_gap_scan", true);
+    test_web_client_mode_ = declare_parameter<std::string>("web_client_mode", "mock");
+    test_open_gap_wait_sec_ = declare_parameter<double>("open_gap_wait_sec", 5.0);
+    test_close_gap_wait_sec_ = declare_parameter<double>("close_gap_wait_sec", 3.0);
+    test_scan_placeholder_wait_sec_ =
+      declare_parameter<double>("scan_placeholder_wait_sec", 2.0);
+    test_lift_placeholder_wait_sec_ =
+      declare_parameter<double>("lift_placeholder_wait_sec", 3.0);
+    test_move_grid_placeholder_wait_sec_ =
+      declare_parameter<double>("move_grid_placeholder_wait_sec", 1.0);
+    test_motion_mode_ = declare_parameter<std::string>("test_motion_mode", "ackermann_reentry_test");
+    test_scan_layers_ = declare_parameter<int>("scan_layers", 2);
+    test_scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
+    test_default_scan_side_ = declare_parameter<std::string>("default_scan_side", "left");
+    test_web_base_url_ = declare_parameter<std::string>("web_base_url", "");
+    test_web_open_gap_endpoint_ =
+      declare_parameter<std::string>("web_open_gap_endpoint", "/api/gap/open");
+    test_web_close_gap_endpoint_ =
+      declare_parameter<std::string>("web_close_gap_endpoint", "/api/gap/close");
+    test_web_status_endpoint_ =
+      declare_parameter<std::string>("web_status_endpoint", "/api/robot/status");
+    test_web_result_endpoint_ =
+      declare_parameter<std::string>("web_result_endpoint", "/api/inventory/result");
+
     recognized_sub_ = create_subscription<wheeltec_inventory_system::msg::RecognizedNumber>(
       recognized_topic_,
       10,
@@ -309,6 +344,15 @@ public:
         std::placeholders::_1,
         std::placeholders::_2));
 
+    start_test_gap_scan_srv_ =
+      create_service<wheeltec_inventory_system::srv::StartTestGapScan>(
+      start_test_gap_scan_service_name_,
+      std::bind(
+        &MissionManagerNode::start_test_gap_scan_callback,
+        this,
+        std::placeholders::_1,
+        std::placeholders::_2));
+
     recognizer_trigger_client_ = create_client<std_srvs::srv::SetBool>(
       recognizer_trigger_service_);
     nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
@@ -324,6 +368,11 @@ public:
     warehouse_layout_loaded_ = load_warehouse_layout_config(layout_load_error);
     if (!warehouse_layout_loaded_) {
       RCLCPP_ERROR(get_logger(), "仓库布局配置加载失败: %s", layout_load_error.c_str());
+    }
+    std::string test_scan_load_error;
+    test_gap_scan_config_loaded_ = load_test_gap_scan_config(test_scan_load_error);
+    if (!test_gap_scan_config_loaded_) {
+      RCLCPP_WARN(get_logger(), "测试盘库配置加载失败: %s", test_scan_load_error.c_str());
     }
 
     const double period = 1.0 / std::max(1.0, control_rate_hz_);
@@ -358,6 +407,15 @@ private:
     RETURNING,
     DONE,
     ERROR,
+    TEST_IDLE,
+    TEST_REQUESTING_OPEN_GAP,
+    TEST_WAITING_OPEN_DELAY,
+    TEST_SCANNING_PLACEHOLDER,
+    TEST_REQUESTING_CLOSE_GAP,
+    TEST_WAITING_CLOSE_DELAY,
+    TEST_NEXT_GAP,
+    TEST_DONE,
+    TEST_ERROR,
   };
 
   enum class ReturnMode
@@ -453,6 +511,12 @@ private:
     bool depth_defaulted{false};
   };
 
+  struct TestGapScanPlan
+  {
+    std::string gap_id;
+    std::vector<int> scan_cabinets;
+  };
+
   struct EnteringSafetyEval
   {
     double front_min_dist{std::numeric_limits<double>::infinity()};
@@ -508,6 +572,24 @@ private:
         return "DONE";
       case State::ERROR:
         return "ERROR";
+      case State::TEST_IDLE:
+        return "TEST_IDLE";
+      case State::TEST_REQUESTING_OPEN_GAP:
+        return "TEST_REQUESTING_OPEN_GAP";
+      case State::TEST_WAITING_OPEN_DELAY:
+        return "TEST_WAITING_OPEN_DELAY";
+      case State::TEST_SCANNING_PLACEHOLDER:
+        return "TEST_SCANNING_PLACEHOLDER";
+      case State::TEST_REQUESTING_CLOSE_GAP:
+        return "TEST_REQUESTING_CLOSE_GAP";
+      case State::TEST_WAITING_CLOSE_DELAY:
+        return "TEST_WAITING_CLOSE_DELAY";
+      case State::TEST_NEXT_GAP:
+        return "TEST_NEXT_GAP";
+      case State::TEST_DONE:
+        return "TEST_DONE";
+      case State::TEST_ERROR:
+        return "TEST_ERROR";
       default:
         return "UNKNOWN";
     }
@@ -648,6 +730,18 @@ private:
       " 之间";
   }
 
+  static std::string format_seconds(double seconds)
+  {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2) << seconds;
+    return oss.str();
+  }
+
+  void publish_test_scan_log(const std::string & text)
+  {
+    publish_log("[mission_manager][test_scan] " + text);
+  }
+
   bool transform_pose_2d(
     const Pose2D & input,
     const std::string & target_frame_raw,
@@ -763,6 +857,194 @@ private:
       return source_candidate;
     }
     return cwd_candidate;
+  }
+
+  void apply_test_gap_scan_runtime_params()
+  {
+    wheeltec_inventory_system::ScanExecutionParams execution_params;
+    execution_params.scan_placeholder_wait_sec = std::max(0.0, test_scan_placeholder_wait_sec_);
+    execution_params.lift_placeholder_wait_sec = std::max(0.0, test_lift_placeholder_wait_sec_);
+    execution_params.move_grid_placeholder_wait_sec =
+      std::max(0.0, test_move_grid_placeholder_wait_sec_);
+    scan_sequence_executor_.setParams(execution_params);
+
+    wheeltec_inventory_system::WebApiClientParams web_params;
+    web_params.web_client_mode = test_web_client_mode_;
+    web_params.web_base_url = test_web_base_url_;
+    web_params.web_open_gap_endpoint = test_web_open_gap_endpoint_;
+    web_params.web_close_gap_endpoint = test_web_close_gap_endpoint_;
+    web_params.web_status_endpoint = test_web_status_endpoint_;
+    web_params.web_result_endpoint = test_web_result_endpoint_;
+    web_api_client_.setParams(web_params);
+  }
+
+  bool load_gap_scan_map_config(std::string & reason)
+  {
+    reason.clear();
+    std::map<std::string, std::vector<int>> gap_map;
+
+    try {
+      const auto map_path = resolve_route_config_path(gap_scan_map_file_);
+      if (!std::filesystem::exists(map_path)) {
+        reason = "gap_scan_map.yaml 不存在: " + map_path.string();
+        return false;
+      }
+
+      const YAML::Node root = YAML::LoadFile(map_path.string());
+      const YAML::Node gaps = root["gaps"];
+      if (!gaps || !gaps.IsMap()) {
+        reason = "gap_scan_map.yaml 缺少 gaps 映射";
+        return false;
+      }
+
+      for (const auto gap_item : gaps) {
+        const std::string gap_id = gap_item.first.as<std::string>();
+        const YAML::Node gap_node = gap_item.second;
+        std::vector<int> cabinets;
+
+        if (gap_node["first_scan_cabinet"]) {
+          cabinets.push_back(gap_node["first_scan_cabinet"].as<int>());
+        }
+        const YAML::Node second_cabinets = gap_node["second_scan_cabinets"];
+        if (second_cabinets && second_cabinets.IsSequence()) {
+          for (std::size_t i = 0; i < second_cabinets.size(); ++i) {
+            cabinets.push_back(second_cabinets[i].as<int>());
+          }
+        }
+
+        if (!cabinets.empty()) {
+          gap_map[gap_id] = cabinets;
+        }
+      }
+
+      test_gap_scan_map_cabinets_by_gap_id_ = gap_map;
+      RCLCPP_INFO(
+        get_logger(),
+        "已加载测试 gap 扫描映射: %s gaps=%zu",
+        map_path.string().c_str(),
+        test_gap_scan_map_cabinets_by_gap_id_.size());
+      return true;
+    } catch (const std::exception & ex) {
+      reason = "解析 gap_scan_map.yaml 失败: " + std::string(ex.what());
+      return false;
+    }
+  }
+
+  bool load_test_gap_scan_config(std::string & reason)
+  {
+    reason.clear();
+    apply_test_gap_scan_runtime_params();
+
+    try {
+      const auto params_path = resolve_route_config_path(test_gap_scan_params_file_);
+      if (!std::filesystem::exists(params_path)) {
+        reason = "test_gap_scan_params.yaml 不存在: " + params_path.string();
+        return false;
+      }
+
+      const YAML::Node root = YAML::LoadFile(params_path.string());
+      if (root["enable_test_gap_scan"]) {
+        enable_test_gap_scan_ = root["enable_test_gap_scan"].as<bool>();
+      }
+      if (root["web_client_mode"]) {
+        test_web_client_mode_ = root["web_client_mode"].as<std::string>();
+      }
+      if (root["open_gap_wait_sec"]) {
+        test_open_gap_wait_sec_ = root["open_gap_wait_sec"].as<double>();
+      }
+      if (root["close_gap_wait_sec"]) {
+        test_close_gap_wait_sec_ = root["close_gap_wait_sec"].as<double>();
+      }
+      if (root["scan_placeholder_wait_sec"]) {
+        test_scan_placeholder_wait_sec_ = root["scan_placeholder_wait_sec"].as<double>();
+      }
+      if (root["lift_placeholder_wait_sec"]) {
+        test_lift_placeholder_wait_sec_ = root["lift_placeholder_wait_sec"].as<double>();
+      }
+      if (root["move_grid_placeholder_wait_sec"]) {
+        test_move_grid_placeholder_wait_sec_ = root["move_grid_placeholder_wait_sec"].as<double>();
+      }
+      if (root["test_motion_mode"]) {
+        test_motion_mode_ = root["test_motion_mode"].as<std::string>();
+      }
+      if (root["scan_layers"]) {
+        test_scan_layers_ = root["scan_layers"].as<int>();
+      }
+      if (root["scan_depth_count"]) {
+        test_scan_depth_count_ = root["scan_depth_count"].as<int>();
+      }
+      if (root["default_scan_side"]) {
+        test_default_scan_side_ = root["default_scan_side"].as<std::string>();
+      }
+      if (root["web_base_url"]) {
+        test_web_base_url_ = root["web_base_url"].as<std::string>();
+      }
+      if (root["web_open_gap_endpoint"]) {
+        test_web_open_gap_endpoint_ = root["web_open_gap_endpoint"].as<std::string>();
+      }
+      if (root["web_close_gap_endpoint"]) {
+        test_web_close_gap_endpoint_ = root["web_close_gap_endpoint"].as<std::string>();
+      }
+      if (root["web_status_endpoint"]) {
+        test_web_status_endpoint_ = root["web_status_endpoint"].as<std::string>();
+      }
+      if (root["web_result_endpoint"]) {
+        test_web_result_endpoint_ = root["web_result_endpoint"].as<std::string>();
+      }
+
+      const YAML::Node plan_root = root["test_inventory_plan"];
+      if (!plan_root || !plan_root.IsSequence() || plan_root.size() == 0U) {
+        reason = "test_gap_scan_params.yaml 缺少非空 test_inventory_plan";
+        return false;
+      }
+
+      std::vector<TestGapScanPlan> loaded_plans;
+      for (std::size_t i = 0; i < plan_root.size(); ++i) {
+        const YAML::Node item = plan_root[i];
+        if (!item || !item.IsMap() || !item["gap_id"] || !item["scan_cabinets"]) {
+          reason = "test_inventory_plan 条目必须包含 gap_id 和 scan_cabinets";
+          return false;
+        }
+
+        TestGapScanPlan plan;
+        plan.gap_id = item["gap_id"].as<std::string>();
+        const YAML::Node cabinets = item["scan_cabinets"];
+        if (!cabinets.IsSequence() || cabinets.size() == 0U) {
+          reason = "scan_cabinets 必须为非空序列: " + plan.gap_id;
+          return false;
+        }
+        for (std::size_t j = 0; j < cabinets.size(); ++j) {
+          plan.scan_cabinets.push_back(cabinets[j].as<int>());
+        }
+        loaded_plans.push_back(plan);
+      }
+
+      configured_test_inventory_plan_ = loaded_plans;
+      test_inventory_plan_by_gap_id_.clear();
+      for (const auto & plan : configured_test_inventory_plan_) {
+        test_inventory_plan_by_gap_id_[plan.gap_id] = plan.scan_cabinets;
+      }
+
+      std::string gap_map_reason;
+      if (!load_gap_scan_map_config(gap_map_reason)) {
+        RCLCPP_WARN(get_logger(), "测试 gap 映射加载失败，先使用 test_inventory_plan: %s", gap_map_reason.c_str());
+      }
+
+      apply_test_gap_scan_runtime_params();
+      RCLCPP_INFO(
+        get_logger(),
+        "已加载测试盘库配置: %s enable=%s mode=%s plan_count=%zu layers=%d depth_count=%d",
+        params_path.string().c_str(),
+        enable_test_gap_scan_ ? "true" : "false",
+        test_web_client_mode_.c_str(),
+        configured_test_inventory_plan_.size(),
+        test_scan_layers_,
+        test_scan_depth_count_);
+      return true;
+    } catch (const std::exception & ex) {
+      reason = "解析 test_gap_scan_params.yaml 失败: " + std::string(ex.what());
+      return false;
+    }
   }
 
   bool load_route_config(std::string & reason)
@@ -2582,11 +2864,184 @@ private:
     }
   }
 
+  void set_test_state(State s, const std::string & detail)
+  {
+    test_state_enter_time_ = this->now();
+    state_ = s;
+    publish_state_text(state_to_string(state_));
+    publish_log("[" + state_to_string(state_) + "] [mission_manager][test_scan] " + detail);
+  }
+
+  bool find_configured_test_cabinets(
+    const std::string & gap_id,
+    std::vector<int> & cabinets) const
+  {
+    cabinets.clear();
+    const auto plan_it = test_inventory_plan_by_gap_id_.find(gap_id);
+    if (plan_it != test_inventory_plan_by_gap_id_.end()) {
+      cabinets = plan_it->second;
+      return true;
+    }
+
+    const auto map_it = test_gap_scan_map_cabinets_by_gap_id_.find(gap_id);
+    if (map_it != test_gap_scan_map_cabinets_by_gap_id_.end()) {
+      cabinets = map_it->second;
+      return true;
+    }
+
+    return false;
+  }
+
+  bool validate_test_gap_scan_plan(const TestGapScanPlan & plan, std::string & reason) const
+  {
+    reason.clear();
+    if (wheeltec_inventory_system::trim(plan.gap_id).empty()) {
+      reason = "测试 gap_id 为空";
+      return false;
+    }
+    if (plan.scan_cabinets.empty()) {
+      reason = "测试 scan_cabinets 为空: gap=" + plan.gap_id;
+      return false;
+    }
+    for (const auto cabinet_id : plan.scan_cabinets) {
+      if (cabinet_id <= 0) {
+        reason =
+          "测试柜号必须大于 0: gap=" + plan.gap_id +
+          " cabinet=" + std::to_string(cabinet_id);
+        return false;
+      }
+    }
+    return true;
+  }
+
+  bool build_test_gap_scan_plans(
+    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request,
+    std::vector<TestGapScanPlan> & plans,
+    std::string & reason) const
+  {
+    plans.clear();
+    reason.clear();
+
+    if (test_scan_layers_ <= 0 || test_scan_depth_count_ <= 0) {
+      reason =
+        "scan_layers/scan_depth_count 必须为正数: layers=" +
+        std::to_string(test_scan_layers_) +
+        " depth_count=" + std::to_string(test_scan_depth_count_);
+      return false;
+    }
+
+    if (request.run_all_configured) {
+      plans = configured_test_inventory_plan_;
+      if (plans.empty()) {
+        reason = "test_inventory_plan 为空";
+        return false;
+      }
+    } else {
+      TestGapScanPlan plan;
+      plan.gap_id = wheeltec_inventory_system::trim(request.gap_id);
+      if (plan.gap_id.empty()) {
+        reason = "run_all_configured=false 时 gap_id 不能为空";
+        return false;
+      }
+
+      for (const auto cabinet_id : request.scan_cabinets) {
+        plan.scan_cabinets.push_back(static_cast<int>(cabinet_id));
+      }
+
+      if (plan.scan_cabinets.empty() &&
+        !find_configured_test_cabinets(plan.gap_id, plan.scan_cabinets))
+      {
+        reason = "未找到 gap_id 对应测试柜号: " + plan.gap_id;
+        return false;
+      }
+      plans.push_back(plan);
+    }
+
+    for (const auto & plan : plans) {
+      if (!validate_test_gap_scan_plan(plan, reason)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  const TestGapScanPlan * current_test_gap_scan_plan() const
+  {
+    if (test_current_gap_index_ >= test_gap_scan_queue_.size()) {
+      return nullptr;
+    }
+    return &test_gap_scan_queue_[test_current_gap_index_];
+  }
+
+  bool test_state_elapsed(double seconds) const
+  {
+    return (this->now() - test_state_enter_time_).seconds() >= std::max(0.0, seconds);
+  }
+
+  void fail_test_gap_scan(const std::string & reason)
+  {
+    test_gap_scan_error_reason_ = reason;
+    set_test_state(State::TEST_ERROR, reason);
+  }
+
+  void start_test_gap_scan_callback(
+    const std::shared_ptr<wheeltec_inventory_system::srv::StartTestGapScan::Request> request,
+    std::shared_ptr<wheeltec_inventory_system::srv::StartTestGapScan::Response> response)
+  {
+    publish_test_scan_log(
+      "received test request run_all_configured=" +
+      std::string(request->run_all_configured ? "true" : "false"));
+
+    if (mission_active_) {
+      response->success = false;
+      response->message = "正式任务正在运行，拒绝测试盘库任务";
+      return;
+    }
+    if (test_gap_scan_active_) {
+      response->success = false;
+      response->message = "测试盘库任务已在运行";
+      return;
+    }
+
+    std::string load_reason;
+    test_gap_scan_config_loaded_ = load_test_gap_scan_config(load_reason);
+    if (!test_gap_scan_config_loaded_) {
+      response->success = false;
+      response->message = load_reason;
+      return;
+    }
+    if (!enable_test_gap_scan_) {
+      response->success = false;
+      response->message = "enable_test_gap_scan=false，测试盘库入口未启用";
+      return;
+    }
+
+    std::vector<TestGapScanPlan> plans;
+    std::string reason;
+    if (!build_test_gap_scan_plans(*request, plans, reason)) {
+      response->success = false;
+      response->message = reason;
+      return;
+    }
+
+    test_gap_scan_queue_ = plans;
+    test_current_gap_index_ = 0;
+    test_gap_scan_error_reason_.clear();
+    test_gap_scan_active_ = true;
+
+    set_test_state(
+      State::TEST_REQUESTING_OPEN_GAP,
+      "测试盘库空跑任务已启动 gaps=" + std::to_string(test_gap_scan_queue_.size()));
+
+    response->success = true;
+    response->message = "测试盘库空跑任务已接收";
+  }
+
   void start_service_callback(
     const std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Request> request,
     std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Response> response)
   {
-    if (mission_active_) {
+    if (mission_active_ || test_gap_scan_active_) {
       response->accepted = false;
       response->message = "任务已在运行";
       return;
@@ -2722,6 +3177,13 @@ private:
     std::shared_ptr<std_srvs::srv::Trigger::Response> response)
   {
     (void)request;
+
+    if (test_gap_scan_active_) {
+      fail_test_gap_scan("收到取消请求，停止测试盘库空跑");
+      response->success = true;
+      response->message = "测试盘库空跑已请求停止";
+      return;
+    }
 
     if (!mission_active_ && state_ == State::IDLE) {
       publish_stop();
@@ -3435,13 +3897,181 @@ private:
     }
   }
 
+  void handle_test_gap_scan_state()
+  {
+    const TestGapScanPlan * plan = current_test_gap_scan_plan();
+
+    switch (state_) {
+      case State::TEST_REQUESTING_OPEN_GAP: {
+        if (plan == nullptr) {
+          set_test_state(State::TEST_DONE, "没有待执行测试 gap");
+          return;
+        }
+
+        publish_test_scan_log(
+          "start gap=" + plan->gap_id +
+          " cabinets=" + cabinet_unit_to_string(plan->scan_cabinets));
+        publish_test_scan_log("requesting open gap=" + plan->gap_id);
+        (void)web_api_client_.reportRobotStatus("TEST_REQUESTING_OPEN_GAP");
+        if (!web_api_client_.requestOpenGap(plan->gap_id)) {
+          fail_test_gap_scan("mock/网页开柜请求失败: gap=" + plan->gap_id);
+          return;
+        }
+
+        publish_test_scan_log(
+          "waiting open delay " + format_seconds(test_open_gap_wait_sec_) + " sec");
+        set_test_state(
+          State::TEST_WAITING_OPEN_DELAY,
+          "等待开柜延时 " + format_seconds(test_open_gap_wait_sec_) + " sec");
+        break;
+      }
+
+      case State::TEST_WAITING_OPEN_DELAY: {
+        if (test_state_elapsed(test_open_gap_wait_sec_)) {
+          set_test_state(State::TEST_SCANNING_PLACEHOLDER, "开始占位扫描");
+        }
+        break;
+      }
+
+      case State::TEST_SCANNING_PLACEHOLDER: {
+        if (plan == nullptr) {
+          fail_test_gap_scan("当前测试 gap 为空");
+          return;
+        }
+
+        (void)web_api_client_.reportRobotStatus("SCANNING_PLACEHOLDER");
+        for (const auto cabinet_id : plan->scan_cabinets) {
+          publish_test_scan_log("scanning cabinet=" + std::to_string(cabinet_id));
+
+          const auto steps = scan_sequence_generator_.generateCabinetSnakeSequence(
+            cabinet_id,
+            test_scan_layers_,
+            test_scan_depth_count_);
+          if (steps.empty()) {
+            fail_test_gap_scan("生成扫描序列为空: cabinet=" + std::to_string(cabinet_id));
+            return;
+          }
+
+          bool report_ok = true;
+          const bool execute_ok = scan_sequence_executor_.execute(
+            steps,
+            [this, &report_ok](const wheeltec_inventory_system::ScanStep & step) {
+              if (step.step_type != wheeltec_inventory_system::ScanStepType::SCAN_PLACEHOLDER) {
+                return;
+              }
+              if (!web_api_client_.reportInventoryResult(
+                  step.cabinet_id,
+                  step.layer_index,
+                  step.depth_index,
+                  "placeholder_ok"))
+              {
+                report_ok = false;
+              }
+            });
+
+          if (!execute_ok || !report_ok) {
+            fail_test_gap_scan("占位扫描执行或结果上报失败: cabinet=" + std::to_string(cabinet_id));
+            return;
+          }
+        }
+
+        set_test_state(State::TEST_REQUESTING_CLOSE_GAP, "当前 gap 占位扫描完成");
+        break;
+      }
+
+      case State::TEST_REQUESTING_CLOSE_GAP: {
+        if (plan == nullptr) {
+          fail_test_gap_scan("当前测试 gap 为空，无法请求关柜");
+          return;
+        }
+
+        publish_test_scan_log("requesting close gap=" + plan->gap_id);
+        (void)web_api_client_.reportRobotStatus("TEST_REQUESTING_CLOSE_GAP");
+        if (!web_api_client_.requestCloseGap(plan->gap_id)) {
+          fail_test_gap_scan("mock/网页关柜请求失败: gap=" + plan->gap_id);
+          return;
+        }
+
+        publish_test_scan_log(
+          "waiting close delay " + format_seconds(test_close_gap_wait_sec_) + " sec");
+        set_test_state(
+          State::TEST_WAITING_CLOSE_DELAY,
+          "等待关柜延时 " + format_seconds(test_close_gap_wait_sec_) + " sec");
+        break;
+      }
+
+      case State::TEST_WAITING_CLOSE_DELAY: {
+        if (!test_state_elapsed(test_close_gap_wait_sec_)) {
+          break;
+        }
+        if (plan != nullptr) {
+          publish_test_scan_log("finished gap=" + plan->gap_id);
+        }
+
+        if (test_current_gap_index_ + 1 < test_gap_scan_queue_.size()) {
+          set_test_state(State::TEST_NEXT_GAP, "切换下一个测试 gap");
+        } else {
+          set_test_state(State::TEST_DONE, "全部测试 gap 已完成");
+        }
+        break;
+      }
+
+      case State::TEST_NEXT_GAP: {
+        if (test_current_gap_index_ + 1 >= test_gap_scan_queue_.size()) {
+          set_test_state(State::TEST_DONE, "没有更多测试 gap");
+          return;
+        }
+        ++test_current_gap_index_;
+        set_test_state(State::TEST_REQUESTING_OPEN_GAP, "开始下一个测试 gap");
+        break;
+      }
+
+      case State::TEST_DONE: {
+        (void)web_api_client_.reportRobotStatus("TEST_DONE");
+        publish_test_scan_log("all test gaps finished");
+        test_gap_scan_active_ = false;
+        test_gap_scan_queue_.clear();
+        test_current_gap_index_ = 0;
+        set_state(State::IDLE, "测试盘库空跑完成，系统待机");
+        break;
+      }
+
+      case State::TEST_ERROR: {
+        (void)web_api_client_.reportRobotStatus("TEST_ERROR");
+        publish_test_scan_log("test gap scan failed: " + test_gap_scan_error_reason_);
+        test_gap_scan_active_ = false;
+        test_gap_scan_queue_.clear();
+        test_current_gap_index_ = 0;
+        set_state(State::IDLE, "测试盘库空跑已停止，系统待机");
+        break;
+      }
+
+      case State::TEST_IDLE:
+      default:
+        break;
+    }
+  }
+
   void on_timer()
   {
-    if (!mission_active_) {
+    if (!mission_active_ && !test_gap_scan_active_) {
       return;
     }
 
     switch (state_) {
+      case State::TEST_IDLE:
+      case State::TEST_REQUESTING_OPEN_GAP:
+      case State::TEST_WAITING_OPEN_DELAY:
+      case State::TEST_SCANNING_PLACEHOLDER:
+      case State::TEST_REQUESTING_CLOSE_GAP:
+      case State::TEST_WAITING_CLOSE_DELAY:
+      case State::TEST_NEXT_GAP:
+      case State::TEST_DONE:
+      case State::TEST_ERROR: {
+        handle_test_gap_scan_state();
+        break;
+      }
+
       case State::NAV_ROUTE: {
         handle_nav_route_state();
         break;
@@ -3559,21 +4189,34 @@ private:
   std::string start_service_name_;
   std::string cancel_service_name_;
   std::string recognizer_trigger_service_;
+  std::string start_test_gap_scan_service_name_;
 
   std::vector<std::string> target_list_param_;
   std::string route_waypoints_file_{"config/route_waypoints.yaml"};
   std::string warehouse_layout_file_{"config/warehouse_layout.yaml"};
+  std::string test_gap_scan_params_file_{"config/test_gap_scan_params.yaml"};
+  std::string gap_scan_map_file_{"config/gap_scan_map.yaml"};
   std::string route_search_failure_policy_{"error"};
   std::map<std::string, RouteConfig> route_configs_;
   std::map<std::string, std::string> side_route_map_;
   std::map<int, std::string> cabinet_side_map_;
   std::map<std::string, WarehouseRowLayout> warehouse_rows_by_side_;
+  std::vector<TestGapScanPlan> configured_test_inventory_plan_{
+    TestGapScanPlan{"gap_03_02", std::vector<int>{3, 2, 1}},
+    TestGapScanPlan{"gap_04_05", std::vector<int>{4, 5, 6}}};
+  std::map<std::string, std::vector<int>> test_inventory_plan_by_gap_id_{
+    {"gap_03_02", std::vector<int>{3, 2, 1}},
+    {"gap_04_05", std::vector<int>{4, 5, 6}}};
+  std::map<std::string, std::vector<int>> test_gap_scan_map_cabinets_by_gap_id_{
+    {"gap_03_02", std::vector<int>{3, 2, 1}},
+    {"gap_04_05", std::vector<int>{4, 5, 6}}};
   RouteConfig current_route_;
   TargetGapPlan current_gap_plan_;
   std::string current_route_name_;
   std::string current_target_side_{"left"};
   bool routes_loaded_{false};
   bool warehouse_layout_loaded_{false};
+  bool test_gap_scan_config_loaded_{false};
   std::vector<std::string> targets_;
   std::size_t current_target_index_{0};
   int current_target_cabinet_{-1};
@@ -3682,6 +4325,31 @@ private:
   double max_ultrasonic_age_sec_{0.8};
   double entry_left_align_distance_{0.22};
   double entry_left_turn_angular_{0.35};
+
+  bool enable_test_gap_scan_{true};
+  std::string test_web_client_mode_{"mock"};
+  double test_open_gap_wait_sec_{5.0};
+  double test_close_gap_wait_sec_{3.0};
+  double test_scan_placeholder_wait_sec_{2.0};
+  double test_lift_placeholder_wait_sec_{3.0};
+  double test_move_grid_placeholder_wait_sec_{1.0};
+  std::string test_motion_mode_{"ackermann_reentry_test"};
+  int test_scan_layers_{2};
+  int test_scan_depth_count_{3};
+  std::string test_default_scan_side_{"left"};
+  std::string test_web_base_url_;
+  std::string test_web_open_gap_endpoint_{"/api/gap/open"};
+  std::string test_web_close_gap_endpoint_{"/api/gap/close"};
+  std::string test_web_status_endpoint_{"/api/robot/status"};
+  std::string test_web_result_endpoint_{"/api/inventory/result"};
+  bool test_gap_scan_active_{false};
+  std::vector<TestGapScanPlan> test_gap_scan_queue_;
+  std::size_t test_current_gap_index_{0};
+  std::string test_gap_scan_error_reason_;
+  rclcpp::Time test_state_enter_time_{0, 0, RCL_ROS_TIME};
+  wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
+  wheeltec_inventory_system::ScanSequenceExecutor scan_sequence_executor_;
+  wheeltec_inventory_system::WebApiClient web_api_client_;
 
   State state_{State::IDLE};
   ReturnMode return_mode_{ReturnMode::NONE};
@@ -3795,6 +4463,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr gap_detector_enable_pub_;
 
   rclcpp::Service<wheeltec_inventory_system::srv::StartMission>::SharedPtr start_srv_;
+  rclcpp::Service<wheeltec_inventory_system::srv::StartTestGapScan>::SharedPtr
+    start_test_gap_scan_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_srv_;
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr recognizer_trigger_client_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
