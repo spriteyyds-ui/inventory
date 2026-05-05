@@ -118,6 +118,12 @@ else()
   target_link_libraries(mission_manager_node ${cpp_typesupport_target} yaml-cpp)
 endif()
 
+add_library(inventory_test_scan_modules STATIC
+  src/scan_sequence_generator.cpp
+  src/scan_sequence_executor.cpp
+  src/web_api_client.cpp
+)
+
 add_executable(offline_test
   test/offline_test.cpp
   src/a4_detector.cpp
@@ -129,6 +135,11 @@ ament_target_dependencies(offline_test
 )
 target_link_libraries(offline_test ${OpenCV_LIBS})
 
+add_executable(test_scan_sequence_generator
+  test/test_scan_sequence_generator.cpp
+)
+target_link_libraries(test_scan_sequence_generator inventory_test_scan_modules)
+
 install(TARGETS
   corridor_follower_node
   number_recognizer_node
@@ -136,6 +147,7 @@ install(TARGETS
   gap_detector_node
   mission_manager_node
   offline_test
+  test_scan_sequence_generator
   DESTINATION lib/${PROJECT_NAME}
 )
 
