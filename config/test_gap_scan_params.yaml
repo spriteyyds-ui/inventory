@@ -13,8 +13,39 @@ test_real_motion_enabled: true
 test_real_motion_single_cabinet_only: true
 test_real_motion_target_cabinet: 4
 test_real_motion_target_gap: gap_02_03_04
-test_real_motion_stop_after_scan: true
+test_real_motion_stop_after_scan: false
 test_real_final_recognition_wait_sec: 8.0
+
+test_real_side_row_enabled: true
+test_real_side_row_name: row_01_02_03_04
+
+test_real_side_row_first_gap: gap_02_03_04
+test_real_side_row_first_gap_scan_sequence: [4, 3]
+
+test_real_side_row_second_gap: gap_01_02_03
+test_real_side_row_second_gap_scan_sequence: [2, 1]
+
+test_real_side_row_corridor_transfer_enabled: true
+test_real_side_row_corridor_transfer_target_cabinet: 2
+test_real_side_row_corridor_transfer_direction: toward_cabinet_1
+
+test_real_exit_after_each_scan: true
+test_real_exit_mode: reverse
+test_real_exit_speed: 0.05
+test_real_exit_extra_distance_m: 0.10
+test_real_exit_timeout_sec: 40.0
+test_real_exit_distance_m: 1.20
+
+test_real_reentry_for_position_adjustment: true
+test_real_reentry_comment: "Use reverse-exit and re-enter as a temporary replacement for in-gap orientation/position adjustment."
+
+test_real_grid_motion_enabled: true
+test_real_grid_spacing_m: 0.30
+test_real_grid_move_speed: 0.04
+test_real_grid_move_timeout_sec: 10.0
+test_real_grid_move_return_between_layers: false
+
+test_real_close_gap_after_final_exit: true
 
 scan_layers: 2
 scan_depth_count: 3
