@@ -9,11 +9,12 @@ move_grid_placeholder_wait_sec: 1.0
 
 test_motion_mode: ackermann_reentry_test
 
-test_real_motion_enabled: false
+test_real_motion_enabled: true
 test_real_motion_single_cabinet_only: true
-test_real_motion_target_cabinet: 3
-test_real_motion_target_gap: gap_03_02
+test_real_motion_target_cabinet: 4
+test_real_motion_target_gap: gap_02_03_04
 test_real_motion_stop_after_scan: true
+test_real_final_recognition_wait_sec: 8.0
 
 scan_layers: 2
 scan_depth_count: 3
@@ -26,8 +27,14 @@ web_status_endpoint: "/api/robot/status"
 web_result_endpoint: "/api/inventory/result"
 
 test_inventory_plan:
-  - gap_id: gap_03_02
-    scan_cabinets: [3, 2, 1]
+  - gap_id: gap_01_02_03
+    scan_cabinets: [1, 2, 3]
 
-  - gap_id: gap_04_05
-    scan_cabinets: [4, 5, 6]
+  - gap_id: gap_02_03_04
+    scan_cabinets: [4, 3, 2]
+
+  - gap_id: gap_05_06_07
+    scan_cabinets: [5, 6, 7]
+
+  - gap_id: gap_06_07_08
+    scan_cabinets: [8, 7, 6]

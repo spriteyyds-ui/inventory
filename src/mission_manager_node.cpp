@@ -103,7 +103,7 @@ public:
     enter_left_angular_multiplier_ = declare_parameter<double>("enter_left_angular_multiplier", 1.0);
     enter_right_angular_multiplier_ = declare_parameter<double>("enter_right_angular_multiplier", -1.0);
     enable_grid_center_entry_ = declare_parameter<bool>("enable_grid_center_entry", true);
-    grid_depth_m_ = declare_parameter<double>("grid_depth_m", 2.4);
+    grid_depth_m_ = declare_parameter<double>("grid_depth_m", 1);
     left_max_depth_index_ = declare_parameter<int>("left_max_depth_index", 4);
     right_max_depth_index_ = declare_parameter<int>("right_max_depth_index", 3);
     entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
@@ -239,6 +239,8 @@ public:
       declare_parameter<std::string>("test_real_motion_target_gap", "gap_03_02");
     test_real_motion_stop_after_scan_ =
       declare_parameter<bool>("test_real_motion_stop_after_scan", true);
+    test_real_final_recognition_wait_sec_ =
+      declare_parameter<double>("test_real_final_recognition_wait_sec", 8.0);
     test_scan_layers_ = declare_parameter<int>("scan_layers", 2);
     test_scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
     test_default_scan_side_ = declare_parameter<std::string>("default_scan_side", "left");
@@ -428,6 +430,7 @@ private:
     TEST_REAL_PREPARE_NAV,
     TEST_REAL_NAV_TO_TARGET,
     TEST_REAL_TARGET_TRACKING,
+    TEST_REAL_FINAL_RECOGNITION_WAIT,
     TEST_REAL_WAITING_GAP,
     TEST_REAL_ENTERING_GAP,
     TEST_REAL_IN_GAP_SCAN,
@@ -612,6 +615,8 @@ private:
         return "TEST_REAL_NAV_TO_TARGET";
       case State::TEST_REAL_TARGET_TRACKING:
         return "TEST_REAL_TARGET_TRACKING";
+      case State::TEST_REAL_FINAL_RECOGNITION_WAIT:
+        return "TEST_REAL_FINAL_RECOGNITION_WAIT";
       case State::TEST_REAL_WAITING_GAP:
         return "TEST_REAL_WAITING_GAP";
       case State::TEST_REAL_ENTERING_GAP:
@@ -790,6 +795,15 @@ private:
   bool is_target_tracking_like_state(State s) const
   {
     return s == State::TARGET_TRACKING || s == State::TEST_REAL_TARGET_TRACKING;
+  }
+
+  bool is_test_real_recognition_state(State s) const
+  {
+    return
+      test_real_motion_active_ &&
+      (s == State::TEST_REAL_NAV_TO_TARGET ||
+      s == State::TEST_REAL_TARGET_TRACKING ||
+      s == State::TEST_REAL_FINAL_RECOGNITION_WAIT);
   }
 
   bool transform_pose_2d(
@@ -1033,6 +1047,10 @@ private:
       if (root["test_real_motion_stop_after_scan"]) {
         test_real_motion_stop_after_scan_ = root["test_real_motion_stop_after_scan"].as<bool>();
       }
+      if (root["test_real_final_recognition_wait_sec"]) {
+        test_real_final_recognition_wait_sec_ =
+          root["test_real_final_recognition_wait_sec"].as<double>();
+      }
       if (root["scan_layers"]) {
         test_scan_layers_ = root["scan_layers"].as<int>();
       }
@@ -1108,12 +1126,14 @@ private:
         test_scan_depth_count_);
       RCLCPP_INFO(
         get_logger(),
-        "测试真实运动配置: enabled=%s target_gap=%s target_cabinet=%d single_only=%s stop_after_scan=%s",
+        "测试真实运动配置: enabled=%s target_gap=%s target_cabinet=%d single_only=%s "
+        "stop_after_scan=%s final_recognition_wait=%.2f",
         test_real_motion_enabled_ ? "true" : "false",
         test_real_motion_target_gap_.c_str(),
         test_real_motion_target_cabinet_,
         test_real_motion_single_cabinet_only_ ? "true" : "false",
-        test_real_motion_stop_after_scan_ ? "true" : "false");
+        test_real_motion_stop_after_scan_ ? "true" : "false",
+        test_real_final_recognition_wait_sec_);
       return true;
     } catch (const std::exception & ex) {
       reason = "解析 test_gap_scan_params.yaml 失败: " + std::string(ex.what());
@@ -1553,7 +1573,8 @@ private:
       s == State::NAV_ROUTE ||
       s == State::TARGET_TRACKING ||
       s == State::TEST_REAL_NAV_TO_TARGET ||
-      s == State::TEST_REAL_TARGET_TRACKING);
+      s == State::TEST_REAL_TARGET_TRACKING ||
+      s == State::TEST_REAL_FINAL_RECOGNITION_WAIT);
     state_ = s;
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] " + detail);
@@ -1853,16 +1874,115 @@ private:
     return (this->now() - latest_recognition_time_).seconds() <= recognition_timeout_sec_;
   }
 
+  void switch_test_real_to_waiting_gap_after_recognition(int rec_id)
+  {
+    if (state_ == State::TEST_REAL_FINAL_RECOGNITION_WAIT) {
+      publish_test_real_log(
+        "final recognition success cabinet=" + std::to_string(rec_id) +
+        ", switch to TEST_REAL_WAITING_GAP");
+    } else {
+      publish_test_real_log(
+        "recognized target cabinet=" + std::to_string(rec_id) +
+        ", switch to TEST_REAL_WAITING_GAP");
+    }
+
+    cancel_nav2_route_goal("测试真实运动稳定识别到目标货柜");
+    nav2_route_stop_hold_active_ = false;
+    nav2_route_cancel_requested_ = false;
+    target_found_pending_ = false;
+    set_corridor_mode(false, false);
+    publish_stop();
+    has_distance_ = false;
+    tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    begin_search_gap_flow();
+  }
+
+  void begin_test_real_final_recognition_wait()
+  {
+    cancel_nav2_route_goal("测试真实运动巡航路线已走完，进入末端识别等待");
+    nav2_route_goal_in_progress_ = false;
+    nav2_route_result_ready_ = false;
+    nav2_route_stop_hold_active_ = false;
+    nav2_route_cancel_requested_ = false;
+    target_found_pending_ = false;
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true, true);
+    has_distance_ = false;
+    target_visible_ = false;
+    test_real_final_recognition_wait_start_ = this->now();
+    publish_test_real_log(
+      "route finished, wait final recognition target=" +
+      std::to_string(current_target_cabinet_) +
+      " timeout=" + format_seconds(test_real_final_recognition_wait_sec_));
+    set_test_real_state(
+      State::TEST_REAL_FINAL_RECOGNITION_WAIT,
+      "route finished, wait final recognition target=" +
+      std::to_string(current_target_cabinet_) +
+      " timeout=" + format_seconds(test_real_final_recognition_wait_sec_) + " sec");
+  }
+
+  bool handle_test_real_recognition(int rec_id)
+  {
+    if (!is_test_real_recognition_state(state_)) {
+      return false;
+    }
+
+    const bool matched = rec_id == current_target_cabinet_;
+    if (!matched) {
+      reset_target_recognition_stability();
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][test_real][recognition] target_mismatch recognized=%d target=%d",
+        rec_id,
+        current_target_cabinet_);
+      return true;
+    }
+
+    const bool stable_ready = update_target_recognition_stability(rec_id);
+    const int required_count = std::max(1, target_recognition_stable_frames_);
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][test_real][recognition] state=%s target=%d recognized=%d "
+      "stable_count=%d required=%d matched=true ready=%s",
+      state_to_string(state_).c_str(),
+      current_target_cabinet_,
+      rec_id,
+      target_recognition_stable_count_,
+      required_count,
+      stable_ready ? "true" : "false");
+
+    last_target_seen_time_ = this->now();
+    target_visible_ = true;
+
+    if (stable_ready) {
+      switch_test_real_to_waiting_gap_after_recognition(rec_id);
+    }
+    return true;
+  }
+
   void recognized_callback(
     const wheeltec_inventory_system::msg::RecognizedNumber::SharedPtr msg)
   {
     latest_recognition_ = msg;
     latest_recognition_time_ = this->now();
+    if (test_real_motion_active_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][test_real][recognition_rx] state=%s target=%d raw_number=%s "
+        "valid=%s conf=%.3f",
+        state_to_string(state_).c_str(),
+        current_target_cabinet_,
+        msg->number.c_str(),
+        msg->valid ? "true" : "false",
+        static_cast<double>(msg->confidence));
+    }
     if (!mission_active_) {
       return;
     }
     if (!msg->valid) {
-      if (is_nav_route_like_state(state_)) {
+      if (is_nav_route_like_state(state_) || is_test_real_recognition_state(state_)) {
         reset_target_recognition_stability();
       }
       return;
@@ -1870,6 +1990,10 @@ private:
 
     int rec_id = -1;
     if (!wheeltec_inventory_system::safe_to_int(msg->number, rec_id)) {
+      return;
+    }
+
+    if (handle_test_real_recognition(rec_id)) {
       return;
     }
 
@@ -2466,6 +2590,10 @@ private:
 
     ++current_route_waypoint_index_;
     if (current_route_waypoint_index_ >= current_route_.waypoints.size()) {
+      if (test_real_motion_active_) {
+        begin_test_real_final_recognition_wait();
+        return;
+      }
       handle_route_search_failed("巡航路线已走完，仍未识别到目标货柜");
       return;
     }
@@ -3206,6 +3334,7 @@ private:
       test_real_gap_searching_ = false;
       test_real_target_recognized_logged_ = false;
       test_real_close_requested_ = false;
+      test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
       publish_test_real_log(
         "accepted single cabinet test gap=" + plan.gap_id +
@@ -4412,6 +4541,7 @@ private:
         test_real_gap_searching_ = false;
         test_real_target_recognized_logged_ = false;
         test_real_close_requested_ = false;
+        test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
         test_gap_scan_active_ = false;
         test_gap_scan_queue_.clear();
         test_current_gap_index_ = 0;
@@ -4432,6 +4562,7 @@ private:
         test_real_gap_searching_ = false;
         test_real_target_recognized_logged_ = false;
         test_real_close_requested_ = false;
+        test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
         test_gap_scan_active_ = false;
         test_gap_scan_queue_.clear();
         test_current_gap_index_ = 0;
@@ -4475,6 +4606,22 @@ private:
 
       case State::TEST_REAL_TARGET_TRACKING: {
         handle_target_tracking_state();
+        break;
+      }
+
+      case State::TEST_REAL_FINAL_RECOGNITION_WAIT: {
+        publish_stop();
+        request_recognizer_enable(true);
+        if (test_real_final_recognition_wait_start_.nanoseconds() == 0) {
+          test_real_final_recognition_wait_start_ = this->now();
+        }
+        if ((this->now() - test_real_final_recognition_wait_start_).seconds() >=
+          std::max(0.0, test_real_final_recognition_wait_sec_))
+        {
+          fail_test_real_motion(
+            "final recognition timeout, target cabinet=" +
+            std::to_string(current_target_cabinet_) + " not recognized");
+        }
         break;
       }
 
@@ -4722,6 +4869,7 @@ private:
   int test_real_motion_target_cabinet_{3};
   std::string test_real_motion_target_gap_{"gap_03_02"};
   bool test_real_motion_stop_after_scan_{true};
+  double test_real_final_recognition_wait_sec_{8.0};
   int test_scan_layers_{2};
   int test_scan_depth_count_{3};
   std::string test_default_scan_side_{"left"};
@@ -4739,6 +4887,7 @@ private:
   bool test_real_gap_searching_{false};
   bool test_real_target_recognized_logged_{false};
   bool test_real_close_requested_{false};
+  rclcpp::Time test_real_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
   wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   wheeltec_inventory_system::ScanSequenceExecutor scan_sequence_executor_;
   wheeltec_inventory_system::WebApiClient web_api_client_;

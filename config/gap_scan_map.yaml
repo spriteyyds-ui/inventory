@@ -1,18 +1,36 @@
 gaps:
-  gap_03_02:
-    left_cabinet: 3
+  gap_01_02_03:
+    left_cabinet: 1
     right_cabinet: 2
-    first_scan_cabinet: 3
-    second_scan_cabinets: [2, 1]
-    open_command_id: gap_03_02
-    close_command_id: gap_03_02
+    first_scan_cabinet: 1
+    second_scan_cabinets: [2, 3]
+    open_command_id: gap_01_02_03
+    close_command_id: gap_01_02_03
     motion_mode: ackermann_reentry_test
 
-  gap_04_05:
+  gap_02_03_04:
     left_cabinet: 4
-    right_cabinet: 5
+    right_cabinet: 3
     first_scan_cabinet: 4
-    second_scan_cabinets: [5, 6]
-    open_command_id: gap_04_05
-    close_command_id: gap_04_05
+    second_scan_cabinets: [3, 2]
+    open_command_id: gap_02_03_04
+    close_command_id: gap_02_03_04
+    motion_mode: ackermann_reentry_test
+
+  gap_05_06_07:
+    left_cabinet: 5
+    right_cabinet: 6
+    first_scan_cabinet: 5
+    second_scan_cabinets: [6, 7]
+    open_command_id: gap_05_06_07
+    close_command_id: gap_05_06_07
+    motion_mode: ackermann_reentry_test
+
+  gap_06_07_08:
+    left_cabinet: 8
+    right_cabinet: 7
+    first_scan_cabinet: 8
+    second_scan_cabinets: [7, 6]
+    open_command_id: gap_06_07_08
+    close_command_id: gap_06_07_08
     motion_mode: ackermann_reentry_test
