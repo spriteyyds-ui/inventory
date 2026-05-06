@@ -2,8 +2,8 @@ gaps:
   gap_01_02_03:
     left_cabinet: 1
     right_cabinet: 2
-    first_scan_cabinet: 1
-    second_scan_cabinets: [2, 3]
+    first_scan_cabinet: 2
+    second_scan_cabinets: [1]
     open_command_id: gap_01_02_03
     close_command_id: gap_01_02_03
     motion_mode: ackermann_reentry_test
@@ -12,7 +12,7 @@ gaps:
     left_cabinet: 4
     right_cabinet: 3
     first_scan_cabinet: 4
-    second_scan_cabinets: [3, 2]
+    second_scan_cabinets: [3]
     open_command_id: gap_02_03_04
     close_command_id: gap_02_03_04
     motion_mode: ackermann_reentry_test
