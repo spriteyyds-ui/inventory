@@ -74,7 +74,7 @@ ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
 cd ~/wheeltec_ros2
 source /opt/ros/humble/setup.bash
 source ~/wheeltec_ros2/install/setup.bash
-ros2 launch wheeltec_inventory_system inventory_system.launch.py 2>&1 | tee "$HOME/Desktop/inventory_system_log.txt"
+RCUTILS_COLORIZED_OUTPUT=0 ros2 launch wheeltec_inventory_system inventory_system.launch.py 2>&1 | tee "$HOME/Desktop/inventory_system_log.txt"
 ```
 
 完整盘库系统和单独数字识别节点都使用同一份参数文件：
@@ -89,7 +89,7 @@ ros2 launch wheeltec_inventory_system inventory_system.launch.py 2>&1 | tee "$HO
 - `mission_manager_node`
 
 
-ros2 service call /inventory/start_test_gap_scan wheeltec_inventory_system/srv/StartTestGapScan "{gap_id: 'gap_02_03_04', scan_cabinets: [4,3], run_all_configured: false}"
+RCUTILS_COLORIZED_OUTPUT=0 ros2 service call /inventory/start_test_gap_scan wheeltec_inventory_system/srv/StartTestGapScan "{gap_id: 'gap_02_03_04', scan_cabinets: [4,3], run_all_configured: false}"
 
 
 5. 启动后健康检查（T3）

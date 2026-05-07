@@ -277,6 +277,13 @@ public:
       declare_parameter<double>("test_real_exit_extra_distance_m", 0.10);
     test_real_exit_timeout_sec_ = declare_parameter<double>("test_real_exit_timeout_sec", 40.0);
     test_real_exit_distance_m_ = declare_parameter<double>("test_real_exit_distance_m", 1.20);
+    test_real_exit_turn_enabled_ = declare_parameter<bool>("test_real_exit_turn_enabled", true);
+    test_real_exit_turn_angular_speed_ =
+      declare_parameter<double>("test_real_exit_turn_angular_speed", 0.25);
+    test_real_exit_turn_yaw_tolerance_rad_ =
+      declare_parameter<double>("test_real_exit_turn_yaw_tolerance_rad", 0.08);
+    test_real_exit_turn_timeout_sec_ =
+      declare_parameter<double>("test_real_exit_turn_timeout_sec", 8.0);
     test_real_reentry_for_position_adjustment_ =
       declare_parameter<bool>("test_real_reentry_for_position_adjustment", true);
     test_real_reentry_comment_ =
@@ -554,6 +561,12 @@ private:
     CORRIDOR_TRANSFER,
     CLOSE_AND_DONE,
     FINAL_CLOSE_AND_DONE,
+  };
+
+  enum class TestRealExitPhase
+  {
+    STRAIGHT_REVERSE,
+    ARC_REVERSE,
   };
 
   enum class EntryGapPhase
@@ -851,6 +864,18 @@ private:
       case EntryGapPhase::IDLE:
       default:
         return "IDLE";
+    }
+  }
+
+  static std::string test_real_exit_phase_to_string(TestRealExitPhase phase)
+  {
+    switch (phase) {
+      case TestRealExitPhase::STRAIGHT_REVERSE:
+        return "STRAIGHT_REVERSE";
+      case TestRealExitPhase::ARC_REVERSE:
+        return "ARC_REVERSE";
+      default:
+        return "STRAIGHT_REVERSE";
     }
   }
 
@@ -1248,6 +1273,19 @@ private:
       if (root["test_real_exit_distance_m"]) {
         test_real_exit_distance_m_ = root["test_real_exit_distance_m"].as<double>();
       }
+      if (root["test_real_exit_turn_enabled"]) {
+        test_real_exit_turn_enabled_ = root["test_real_exit_turn_enabled"].as<bool>();
+      }
+      if (root["test_real_exit_turn_angular_speed"]) {
+        test_real_exit_turn_angular_speed_ = root["test_real_exit_turn_angular_speed"].as<double>();
+      }
+      if (root["test_real_exit_turn_yaw_tolerance_rad"]) {
+        test_real_exit_turn_yaw_tolerance_rad_ =
+          root["test_real_exit_turn_yaw_tolerance_rad"].as<double>();
+      }
+      if (root["test_real_exit_turn_timeout_sec"]) {
+        test_real_exit_turn_timeout_sec_ = root["test_real_exit_turn_timeout_sec"].as<double>();
+      }
       if (root["test_real_reentry_for_position_adjustment"]) {
         test_real_reentry_for_position_adjustment_ =
           root["test_real_reentry_for_position_adjustment"].as<bool>();
@@ -1362,7 +1400,8 @@ private:
         get_logger(),
         "测试侧排流程配置: enabled=%s name=%s first_gap=%s first_seq=%s "
         "second_gap=%s second_seq=%s transfer_target=%d exit_distance=%.2f exit_speed=%.3f "
-        "exit_timeout=%.2f grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
+        "exit_timeout=%.2f exit_turn=%s exit_turn_angular=%.3f exit_turn_tolerance=%.3f "
+        "exit_turn_timeout=%.2f grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
         test_real_side_row_enabled_ ? "true" : "false",
         test_real_side_row_name_.c_str(),
         test_real_side_row_first_gap_.c_str(),
@@ -1373,6 +1412,10 @@ private:
         test_real_exit_distance_m_,
         test_real_exit_speed_,
         test_real_exit_timeout_sec_,
+        test_real_exit_turn_enabled_ ? "true" : "false",
+        test_real_exit_turn_angular_speed_,
+        test_real_exit_turn_yaw_tolerance_rad_,
+        test_real_exit_turn_timeout_sec_,
         test_real_grid_motion_enabled_ ? "true" : "false",
         test_real_grid_spacing_m_,
         test_real_grid_move_speed_,
@@ -3536,6 +3579,8 @@ private:
     test_real_exit_target_distance_ = test_real_exit_distance_m_;
     test_real_exit_effective_timeout_sec_ = test_real_exit_timeout_sec_;
     test_real_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    test_real_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
     reset_test_real_scan_runtime();
   }
 
@@ -4064,6 +4109,8 @@ private:
   {
     publish_stop();
     test_real_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    test_real_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
     test_real_exit_effective_timeout_sec_ = test_real_exit_timeout_sec_;
 
     const auto action = test_real_after_exit_action_;
@@ -4142,35 +4189,25 @@ private:
       }
       reset_segment_distance();
       test_real_exit_start_time_ = this->now();
+      test_real_exit_phase_start_time_ = test_real_exit_start_time_;
+      test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][exit_gap] start reverse exit distance=%.2f speed=%.3f timeout=%.2f",
+        "[mission_manager][test_real][exit_gap] start reverse exit phase=%s distance=%.2f "
+        "speed=%.3f timeout=%.2f turn_enabled=%s",
+        test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
         test_real_exit_target_distance_,
         speed,
-        test_real_exit_effective_timeout_sec_);
+        test_real_exit_effective_timeout_sec_,
+        test_real_exit_turn_enabled_ ? "true" : "false");
       publish_test_real_log(
-        "[exit_gap] start reverse exit distance=" +
+        "[exit_gap] start reverse exit phase=" +
+        test_real_exit_phase_to_string(test_real_exit_phase_) +
+        " distance=" +
         format_seconds(test_real_exit_target_distance_) +
         " speed=" + format_seconds(speed) +
-        " timeout=" + format_seconds(test_real_exit_effective_timeout_sec_));
-    }
-
-    const double elapsed = (this->now() - test_real_exit_start_time_).seconds();
-    const double traveled = segment_distance();
-    if (elapsed > std::max(0.1, test_real_exit_effective_timeout_sec_)) {
-      publish_stop();
-      RCLCPP_ERROR(
-        get_logger(),
-        "[mission_manager][test_real][exit_gap] timeout traveled=%.2f target=%.2f elapsed=%.2f",
-        traveled,
-        test_real_exit_target_distance_,
-        elapsed);
-      publish_test_real_log(
-        "[exit_gap] timeout traveled=" + format_seconds(traveled) +
-        " target=" + format_seconds(test_real_exit_target_distance_) +
-        " elapsed=" + format_seconds(elapsed));
-      fail_test_real_motion("倒退出缝超时");
-      return;
+        " timeout=" + format_seconds(test_real_exit_effective_timeout_sec_) +
+        " turn_enabled=" + (test_real_exit_turn_enabled_ ? "true" : "false"));
     }
 
     const double ultrasonic_range = min_ultrasonic_range();
@@ -4181,29 +4218,238 @@ private:
       return;
     }
 
-    if (traveled >= test_real_exit_target_distance_) {
-      publish_stop();
-      RCLCPP_INFO(
+    if (test_real_exit_phase_ == TestRealExitPhase::STRAIGHT_REVERSE) {
+      const double elapsed = (this->now() - test_real_exit_phase_start_time_).seconds();
+      const double traveled = segment_distance();
+      if (elapsed > std::max(0.1, test_real_exit_effective_timeout_sec_)) {
+        publish_stop();
+        RCLCPP_ERROR(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] phase=%s timeout traveled=%.2f "
+          "target_distance=%.2f elapsed=%.2f",
+          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          traveled,
+          test_real_exit_target_distance_,
+          elapsed);
+        publish_test_real_log(
+          "[exit_gap] phase=" + test_real_exit_phase_to_string(test_real_exit_phase_) +
+          " timeout traveled=" + format_seconds(traveled) +
+          " target_distance=" + format_seconds(test_real_exit_target_distance_) +
+          " elapsed=" + format_seconds(elapsed));
+        fail_test_real_motion("倒退出缝直线阶段超时");
+        return;
+      }
+
+      if (traveled >= test_real_exit_target_distance_) {
+        publish_stop();
+        if (!test_real_exit_turn_enabled_) {
+          RCLCPP_INFO(
+            get_logger(),
+            "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse only traveled=%.2f",
+            traveled);
+          publish_test_real_log(
+            "[exit_gap] 出缝完成：straight_reverse only traveled=" + format_seconds(traveled));
+          finish_test_real_exit_gap();
+          return;
+        }
+
+        const double turn_speed = std::isfinite(test_real_exit_turn_angular_speed_) ?
+          std::abs(test_real_exit_turn_angular_speed_) : 0.0;
+        if (turn_speed <= 1e-4) {
+          RCLCPP_WARN(
+            get_logger(),
+            "[mission_manager][test_real][exit_gap] 弧线出缝角速度非法，降级为直线出缝完成: %.3f",
+            test_real_exit_turn_angular_speed_);
+          publish_test_real_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
+          finish_test_real_exit_gap();
+          return;
+        }
+
+        std::string yaw_reason;
+        if (!current_odom_ready_for_entry(yaw_reason)) {
+          RCLCPP_WARN(
+            get_logger(),
+            "[mission_manager][test_real][exit_gap] 弧线出缝无法获取有效yaw，降级完成: %s",
+            yaw_reason.c_str());
+          publish_test_real_log("[exit_gap] yaw invalid before arc_reverse, finish straight_reverse only");
+          finish_test_real_exit_gap();
+          return;
+        }
+
+        const Pose2D current = current_pose_2d();
+        if (!current.valid || !std::isfinite(current.yaw) || !std::isfinite(entry_turn_start_yaw_)) {
+          RCLCPP_WARN(
+            get_logger(),
+            "[mission_manager][test_real][exit_gap] 弧线出缝yaw数据无效，降级完成");
+          publish_test_real_log("[exit_gap] yaw data invalid before arc_reverse, finish straight_reverse only");
+          finish_test_real_exit_gap();
+          return;
+        }
+
+        const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
+        const double yaw_error = normalize_angle(target_exit_yaw - current.yaw);
+        const double yaw_tolerance =
+          std::isfinite(test_real_exit_turn_yaw_tolerance_rad_) ?
+          std::max(0.001, std::abs(test_real_exit_turn_yaw_tolerance_rad_)) : 0.08;
+        if (std::abs(yaw_error) <= yaw_tolerance) {
+          RCLCPP_INFO(
+            get_logger(),
+            "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse + arc_reverse "
+            "yaw already aligned current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f",
+            current.yaw,
+            target_exit_yaw,
+            yaw_error);
+          publish_test_real_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse yaw already aligned");
+          finish_test_real_exit_gap();
+          return;
+        }
+
+        test_real_exit_phase_ = TestRealExitPhase::ARC_REVERSE;
+        test_real_exit_phase_start_time_ = this->now();
+        RCLCPP_INFO(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] switch phase=%s entry_side=%s current_yaw=%.3f "
+          "target_exit_yaw=%.3f yaw_error=%.3f",
+          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          current_entry_side_.c_str(),
+          current.yaw,
+          target_exit_yaw,
+          yaw_error);
+        publish_test_real_log(
+          "[exit_gap] switch phase=" + test_real_exit_phase_to_string(test_real_exit_phase_) +
+          " entry_side=" + current_entry_side_);
+        return;
+      }
+
+      geometry_msgs::msg::Twist cmd;
+      cmd.linear.x = -speed;
+      cmd.angular.z = 0.0;
+      cmd_pub_->publish(cmd);
+      RCLCPP_INFO_THROTTLE(
         get_logger(),
-        "[mission_manager][test_real][exit_gap] exit finished traveled=%.2f",
-        traveled);
-      publish_test_real_log("[exit_gap] exit finished traveled=" + format_seconds(traveled));
-      finish_test_real_exit_gap();
+        *get_clock(),
+        1000,
+        "[mission_manager][test_real][exit_gap] phase=%s traveled=%.2f target_distance=%.2f "
+        "cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
+        test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+        traveled,
+        test_real_exit_target_distance_,
+        cmd.linear.x,
+        cmd.angular.z,
+        elapsed);
       return;
     }
 
-    geometry_msgs::msg::Twist cmd;
-    cmd.linear.x = -speed;
-    cmd.angular.z = 0.0;
-    cmd_pub_->publish(cmd);
-    RCLCPP_INFO_THROTTLE(
+    if (test_real_exit_phase_ == TestRealExitPhase::ARC_REVERSE) {
+      std::string yaw_reason;
+      if (!current_odom_ready_for_entry(yaw_reason)) {
+        publish_stop();
+        RCLCPP_WARN(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] phase=%s yaw无效，结束出缝避免卡死: %s",
+          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          yaw_reason.c_str());
+        publish_test_real_log("[exit_gap] arc_reverse yaw invalid, finish to avoid blocking");
+        finish_test_real_exit_gap();
+        return;
+      }
+
+      const Pose2D current = current_pose_2d();
+      if (!current.valid || !std::isfinite(current.yaw) || !std::isfinite(entry_turn_start_yaw_)) {
+        publish_stop();
+        RCLCPP_WARN(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] phase=%s yaw数据无效，结束出缝避免卡死",
+          test_real_exit_phase_to_string(test_real_exit_phase_).c_str());
+        publish_test_real_log("[exit_gap] arc_reverse yaw data invalid, finish to avoid blocking");
+        finish_test_real_exit_gap();
+        return;
+      }
+
+      const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
+      const double yaw_error = normalize_angle(target_exit_yaw - current.yaw);
+      const double yaw_tolerance =
+        std::isfinite(test_real_exit_turn_yaw_tolerance_rad_) ?
+        std::max(0.001, std::abs(test_real_exit_turn_yaw_tolerance_rad_)) : 0.08;
+      const double expected_error_sign = current_entry_side_ == "right" ? 1.0 : -1.0;
+      const bool crossed_exit_yaw = expected_error_sign * yaw_error <= 0.0;
+      if (std::abs(yaw_error) <= yaw_tolerance || crossed_exit_yaw) {
+        publish_stop();
+        RCLCPP_INFO(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse + arc_reverse "
+          "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f crossed=%s",
+          current_entry_side_.c_str(),
+          current.yaw,
+          target_exit_yaw,
+          yaw_error,
+          crossed_exit_yaw ? "true" : "false");
+        publish_test_real_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse");
+        finish_test_real_exit_gap();
+        return;
+      }
+
+      const double elapsed = (this->now() - test_real_exit_phase_start_time_).seconds();
+      const double turn_timeout =
+        std::isfinite(test_real_exit_turn_timeout_sec_) ?
+        std::max(0.1, test_real_exit_turn_timeout_sec_) : 8.0;
+      if (elapsed > turn_timeout) {
+        publish_stop();
+        RCLCPP_WARN(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] phase=%s timeout entry_side=%s current_yaw=%.3f "
+          "target_exit_yaw=%.3f yaw_error=%.3f elapsed=%.2f",
+          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          current_entry_side_.c_str(),
+          current.yaw,
+          target_exit_yaw,
+          yaw_error,
+          elapsed);
+        publish_test_real_log("[exit_gap] arc_reverse timeout, finish to avoid blocking");
+        finish_test_real_exit_gap();
+        return;
+      }
+
+      const double turn_speed = std::isfinite(test_real_exit_turn_angular_speed_) ?
+        std::abs(test_real_exit_turn_angular_speed_) : 0.0;
+      if (turn_speed <= 1e-4) {
+        publish_stop();
+        RCLCPP_WARN(
+          get_logger(),
+          "[mission_manager][test_real][exit_gap] phase=%s angular speed invalid, finish to avoid blocking",
+          test_real_exit_phase_to_string(test_real_exit_phase_).c_str());
+        publish_test_real_log("[exit_gap] arc_reverse angular speed invalid, finish to avoid blocking");
+        finish_test_real_exit_gap();
+        return;
+      }
+
+      geometry_msgs::msg::Twist cmd;
+      cmd.linear.x = -speed;
+      cmd.angular.z = current_entry_side_ == "right" ? turn_speed : -turn_speed;
+      cmd_pub_->publish(cmd);
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][test_real][exit_gap] phase=%s entry_side=%s current_yaw=%.3f "
+        "target_exit_yaw=%.3f yaw_error=%.3f cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
+        test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+        current_entry_side_.c_str(),
+        current.yaw,
+        target_exit_yaw,
+        yaw_error,
+        cmd.linear.x,
+        cmd.angular.z,
+        elapsed);
+      return;
+    }
+
+    publish_stop();
+    RCLCPP_WARN(
       get_logger(),
-      *get_clock(),
-      1000,
-      "[mission_manager][test_real][exit_gap] reversing traveled=%.2f target=%.2f elapsed=%.2f",
-      traveled,
-      test_real_exit_target_distance_,
-      elapsed);
+      "[mission_manager][test_real][exit_gap] unknown exit phase, reset to STRAIGHT_REVERSE");
+    test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
+    test_real_exit_phase_start_time_ = this->now();
   }
 
   void handle_test_real_side_row_scan_finished(int cabinet_id)
@@ -6254,6 +6500,10 @@ private:
   double test_real_exit_extra_distance_m_{0.10};
   double test_real_exit_timeout_sec_{40.0};
   double test_real_exit_distance_m_{1.20};
+  bool test_real_exit_turn_enabled_{true};
+  double test_real_exit_turn_angular_speed_{0.25};
+  double test_real_exit_turn_yaw_tolerance_rad_{0.08};
+  double test_real_exit_turn_timeout_sec_{8.0};
   bool test_real_reentry_for_position_adjustment_{true};
   std::string test_real_reentry_comment_{
     "Use reverse-exit and re-enter as a temporary replacement for in-gap orientation/position adjustment."};
@@ -6294,6 +6544,8 @@ private:
   double test_real_exit_target_distance_{1.20};
   double test_real_exit_effective_timeout_sec_{40.0};
   rclcpp::Time test_real_exit_start_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time test_real_exit_phase_start_time_{0, 0, RCL_ROS_TIME};
+  TestRealExitPhase test_real_exit_phase_{TestRealExitPhase::STRAIGHT_REVERSE};
   std::vector<wheeltec_inventory_system::ScanStep> test_real_scan_steps_;
   std::size_t test_real_scan_step_index_{0};
   int test_real_scan_cabinet_{-1};

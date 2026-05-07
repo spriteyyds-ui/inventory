@@ -35,6 +35,10 @@ test_real_exit_speed: 0.05
 test_real_exit_extra_distance_m: 0.10
 test_real_exit_timeout_sec: 40.0
 test_real_exit_distance_m: 1.20
+test_real_exit_turn_enabled: true
+test_real_exit_turn_angular_speed: 0.25
+test_real_exit_turn_yaw_tolerance_rad: 0.08
+test_real_exit_turn_timeout_sec: 8.0
 
 test_real_reentry_for_position_adjustment: true
 test_real_reentry_comment: "Use reverse-exit and re-enter as a temporary replacement for in-gap orientation/position adjustment."
