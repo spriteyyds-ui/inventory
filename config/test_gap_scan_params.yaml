@@ -51,6 +51,28 @@ test_real_grid_move_return_between_layers: false
 
 test_real_close_gap_after_final_exit: true
 
+# Overall inventory test queue. When /inventory/start_test_gap_scan is called with
+# run_all_configured=true and empty gap_id, this sequence is executed target by target.
+overall_test_enabled: true
+overall_test_sequence: [4, 3, 8, 7]
+
+# Route names used for each cabinet side during the overall test.
+overall_test_left_route: left_route
+overall_test_right_route: right_route
+
+# Return to the recorded start pose when the next target changes side, and after the last target.
+overall_test_return_home_between_sides: true
+overall_test_return_home_after_done: true
+
+# Same-side next target search after exiting a gap. This drives slowly while recognition is enabled.
+overall_test_same_side_next_search_enabled: true
+overall_test_same_side_search_speed: 0.04
+overall_test_same_side_search_timeout_sec: 20.0
+
+# After a side route finishes without a stable target recognition, stop and keep recognition
+# enabled for this long before failing the overall test.
+overall_test_final_recognition_wait_sec: 20.0
+
 scan_layers: 2
 scan_depth_count: 3
 default_scan_side: left
