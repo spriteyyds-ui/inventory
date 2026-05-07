@@ -26,6 +26,25 @@ def generate_launch_description():
         parameters=[params_file]
     )
 
+    c100_right_camera_node = Node(
+        package='usb_cam',
+        executable='usb_cam_node_exe',
+        name='c100_right_camera',
+        output='screen',
+        parameters=[{
+            'video_device': '/dev/video0',
+            'camera_name': 'c100_right',
+            'image_width': 640,
+            'image_height': 480,
+            'framerate': 30.0,
+            'pixel_format': 'mjpeg2rgb',
+        }],
+        remappings=[
+            ('image_raw', '/c100_right/image_raw'),
+            ('camera_info', '/c100_right/camera_info'),
+        ]
+    )
+
     number_recognizer_node = Node(
         package='wheeltec_inventory_system',
         executable='number_recognizer_node',
@@ -61,6 +80,7 @@ def generate_launch_description():
     return LaunchDescription([
         params_file_arg,
         corridor_follower_node,
+        c100_right_camera_node,
         number_recognizer_node,
         distance_estimator_node,
         gap_detector_node,
