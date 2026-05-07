@@ -40,7 +40,7 @@ corridor_follower_node:
 number_recognizer_node:
   ros__parameters:
     # Camera image topic name (topic name).
-    camera_topic: /camera/color/image_raw
+    camera_topic: /c100_right/image_raw
     # Recognition output topic for cabinet number (topic name).
     recognized_topic: /inventory/recognized_number
     # Debug topic: A4 detection / warped view image (topic name).
