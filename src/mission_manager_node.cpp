@@ -162,7 +162,10 @@ public:
     retreat_speed_ = declare_parameter<double>("retreat_speed", 0.08);
     wait_gap_stop_settle_sec_ = declare_parameter<double>("wait_gap_stop_settle_sec", 0.25);
     search_gap_speed_ = declare_parameter<double>("search_gap_speed", 0.06);
-    search_gap_timeout_sec_ = declare_parameter<double>("search_gap_timeout_sec", 4.0);
+    search_gap_forward_timeout_sec_ =
+      declare_parameter<double>("search_gap_forward_timeout_sec", 4.0);
+    search_gap_backward_timeout_sec_ =
+      declare_parameter<double>("search_gap_backward_timeout_sec", 6.0);
     gap_detect_cycle_timeout_sec_ = declare_parameter<double>("gap_detect_cycle_timeout_sec", 2.5);
     gap_failures_before_adjust_ = declare_parameter<int>("gap_failures_before_adjust", 3);
     gap_adjust_speed_ = declare_parameter<double>("gap_adjust_speed", 0.08);
@@ -5167,6 +5170,17 @@ private:
       }
       log_current_target_entry_plan();
     }
+    std::string timeout_reason;
+    if (!validate_search_gap_timeout_config(timeout_reason)) {
+      if (test_real_motion_active_) {
+        fail_test_real_motion("SEARCH_GAP超时参数非法: " + timeout_reason);
+      } else {
+        mission_active_ = false;
+        publish_stop();
+        set_state(State::ERROR, "SEARCH_GAP超时参数非法: " + timeout_reason);
+      }
+      return;
+    }
 
     latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
     search_gap_start_ = this->now();
@@ -5397,6 +5411,28 @@ private:
     return true;
   }
 
+  bool validate_search_gap_timeout_config(std::string & reason) const
+  {
+    reason.clear();
+    if (!std::isfinite(search_gap_forward_timeout_sec_) || search_gap_forward_timeout_sec_ <= 0.0) {
+      reason = "search_gap_forward_timeout_sec 必须为正数";
+      return false;
+    }
+    if (!std::isfinite(search_gap_backward_timeout_sec_) || search_gap_backward_timeout_sec_ <= 0.0) {
+      reason = "search_gap_backward_timeout_sec 必须为正数";
+      return false;
+    }
+    return true;
+  }
+
+  double get_current_search_gap_timeout_sec() const
+  {
+    if (current_gap_plan_.search_direction == SearchDirection::BACKWARD) {
+      return search_gap_backward_timeout_sec_;
+    }
+    return search_gap_forward_timeout_sec_;
+  }
+
   void handle_search_gap_state()
   {
     publish_entry_side();
@@ -5414,10 +5450,15 @@ private:
       search_gap_start_ = this->now();
     }
 
-    if ((this->now() - search_gap_start_).seconds() >= std::max(0.1, search_gap_timeout_sec_)) {
+    const double timeout_sec = get_current_search_gap_timeout_sec();
+    const double elapsed_sec = (this->now() - search_gap_start_).seconds();
+    if (elapsed_sec >= std::max(0.1, timeout_sec)) {
       publish_stop();
       begin_waiting_gap_fallback_flow(
-        "SEARCH_GAP超时未检测到目标间隙，执行原固定回退序列作为fallback微调");
+        "SEARCH_GAP超时未检测到目标间隙，执行原固定回退序列作为fallback微调 direction=" +
+        search_direction_to_string(current_gap_plan_.search_direction) +
+        " timeout=" + format_seconds(timeout_sec) +
+        " elapsed=" + format_seconds(elapsed_sec));
       return;
     }
 
@@ -5432,10 +5473,14 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "search_gap: target_side=%s entry_side=%s direction=%s expected_gap=%s speed=%.3f",
+      "search_gap: target_cabinet=%d target_side=%s entry_side=%s gap_search_direction=%s "
+      "timeout_sec=%.2f elapsed_sec=%.2f expected_gap=%s cmd.linear.x=%.3f",
+      current_target_cabinet_,
       current_target_side_.c_str(),
       current_entry_side_.c_str(),
       search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      timeout_sec,
+      elapsed_sec,
       gap_plan_to_string(current_gap_plan_).c_str(),
       cmd.linear.x);
   }
@@ -6428,7 +6473,8 @@ private:
   double retreat_speed_{0.08};
   double wait_gap_stop_settle_sec_{0.25};
   double search_gap_speed_{0.06};
-  double search_gap_timeout_sec_{4.0};
+  double search_gap_forward_timeout_sec_{4.0};
+  double search_gap_backward_timeout_sec_{6.0};
   double gap_detect_cycle_timeout_sec_{2.5};
   int gap_failures_before_adjust_{3};
   double gap_adjust_speed_{0.08};

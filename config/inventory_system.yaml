@@ -546,8 +546,10 @@ mission_manager_node:
     wait_gap_stop_settle_sec: 0.25
     # Low speed used while SEARCH_GAP moves toward the expected physical-unit gap (meters/second).
     search_gap_speed: 0.10
-    # SEARCH_GAP timeout before falling back to the legacy micro-adjust sequence (seconds).
-    search_gap_timeout_sec: 4.0
+    # SEARCH_GAP timeout for forward search before falling back to the micro-adjust sequence (seconds).
+    search_gap_forward_timeout_sec: 4.0
+    # SEARCH_GAP timeout for backward search before falling back to the micro-adjust sequence (seconds).
+    search_gap_backward_timeout_sec: 6.0
     # Timeout of one WAITING_GAP detection cycle (seconds).
     gap_detect_cycle_timeout_sec: 2.5
     # Number of failed detect cycles before one pose adjustment (count).
