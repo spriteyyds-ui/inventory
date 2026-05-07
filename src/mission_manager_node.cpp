@@ -822,6 +822,23 @@ private:
     return direction == SearchDirection::BACKWARD ? "backward" : "forward";
   }
 
+  static bool try_parse_search_direction(std::string direction, SearchDirection & parsed)
+  {
+    direction = wheeltec_inventory_system::trim(direction);
+    std::transform(direction.begin(), direction.end(), direction.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (direction == "forward" || direction == "f") {
+      parsed = SearchDirection::FORWARD;
+      return true;
+    }
+    if (direction == "backward" || direction == "back" || direction == "b") {
+      parsed = SearchDirection::BACKWARD;
+      return true;
+    }
+    return false;
+  }
+
   static std::string entry_gap_phase_to_string(EntryGapPhase phase)
   {
     switch (phase) {
@@ -1374,6 +1391,7 @@ private:
     std::map<std::string, std::string> side_route_map;
     std::map<int, std::string> cabinet_side_map;
     std::map<int, std::string> cabinet_entry_side_map;
+    std::map<int, SearchDirection> cabinet_gap_search_direction_map;
 
     try {
       const auto route_path = resolve_route_config_path(route_waypoints_file_);
@@ -1387,6 +1405,7 @@ private:
       const YAML::Node side_route_root = root["side_route_map"];
       const YAML::Node cabinet_side_root = root["cabinet_side_map"];
       const YAML::Node cabinet_entry_side_root = root["cabinet_entry_side_map"];
+      const YAML::Node cabinet_gap_search_direction_root = root["cabinet_gap_search_direction_map"];
       if (!route_root || !route_root.IsMap()) {
         reason = "route_waypoints.yaml 缺少 routes 映射";
         return false;
@@ -1525,18 +1544,56 @@ private:
         }
       }
 
+      if (cabinet_gap_search_direction_root) {
+        if (!cabinet_gap_search_direction_root.IsMap()) {
+          reason = "route_waypoints.yaml cabinet_gap_search_direction_map 必须为映射";
+          return false;
+        }
+        for (const auto map_item : cabinet_gap_search_direction_root) {
+          int cabinet_id = -1;
+          const std::string cabinet_text = map_item.first.as<std::string>();
+          if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
+            reason = "cabinet_gap_search_direction_map 货柜号非法: " + cabinet_text;
+            return false;
+          }
+          if (!map_item.second.IsScalar()) {
+            reason =
+              "cabinet_gap_search_direction_map 条目必须直接映射到 forward/backward: " +
+              cabinet_text;
+            return false;
+          }
+          SearchDirection direction{SearchDirection::FORWARD};
+          if (!MissionManagerNode::try_parse_search_direction(
+              map_item.second.as<std::string>(), direction))
+          {
+            reason =
+              "cabinet_gap_search_direction_map direction 必须为 forward/backward: " +
+              cabinet_text;
+            return false;
+          }
+          cabinet_gap_search_direction_map[cabinet_id] = direction;
+        }
+      } else {
+        RCLCPP_WARN(
+          get_logger(),
+          "route_waypoints.yaml 缺少 cabinet_gap_search_direction_map，SEARCH_GAP 将默认 forward");
+      }
+
       route_configs_ = routes;
       side_route_map_ = side_route_map;
       cabinet_side_map_ = cabinet_side_map;
       cabinet_entry_side_map_ = cabinet_entry_side_map;
+      cabinet_gap_search_direction_map_ = cabinet_gap_search_direction_map;
       RCLCPP_INFO(
         get_logger(),
-        "已加载巡航路线配置: %s routes=%zu side_route_map=%zu cabinet_side_map=%zu cabinet_entry_side_map=%zu",
+        "已加载巡航路线配置: %s routes=%zu side_route_map=%zu cabinet_side_map=%zu "
+        "cabinet_entry_side_map=%zu cabinet_gap_search_direction_map=%zu",
         route_path.string().c_str(),
         route_configs_.size(),
         side_route_map_.size(),
         cabinet_side_map_.size(),
-        cabinet_entry_side_map_.size());
+        cabinet_entry_side_map_.size(),
+        cabinet_gap_search_direction_map_.size());
       return true;
     } catch (const std::exception & ex) {
       reason = "解析路线配置失败: " + std::string(ex.what());
@@ -1639,6 +1696,17 @@ private:
       return false;
     }
 
+    SearchDirection configured_direction{SearchDirection::FORWARD};
+    const auto direction_it = cabinet_gap_search_direction_map_.find(current_target_cabinet_);
+    if (direction_it == cabinet_gap_search_direction_map_.end()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "目标货柜%d未配置 gap_search_direction，默认使用 forward",
+        current_target_cabinet_);
+    } else {
+      configured_direction = direction_it->second;
+    }
+
     const auto & units = row_it->second.physical_units;
     for (std::size_t unit_index = 0; unit_index < units.size(); ++unit_index) {
       const auto & unit = units[unit_index];
@@ -1657,21 +1725,18 @@ private:
       plan.physical_unit = unit;
       plan.unit_index = unit_index;
       plan.cabinet_index_in_unit = cabinet_index;
+      plan.search_direction = configured_direction;
 
       if (cabinet_index + 1 == unit.size() && has_next) {
-        plan.search_direction = SearchDirection::FORWARD;
         plan.gap_before_unit = unit;
         plan.gap_after_unit = units[unit_index + 1];
       } else if (cabinet_index == 0 && has_prev) {
-        plan.search_direction = SearchDirection::BACKWARD;
         plan.gap_before_unit = units[unit_index - 1];
         plan.gap_after_unit = unit;
       } else if (has_next) {
-        plan.search_direction = SearchDirection::FORWARD;
         plan.gap_before_unit = unit;
         plan.gap_after_unit = units[unit_index + 1];
       } else if (has_prev) {
-        plan.search_direction = SearchDirection::BACKWARD;
         plan.gap_before_unit = units[unit_index - 1];
         plan.gap_after_unit = unit;
       } else {
@@ -1682,9 +1747,11 @@ private:
       current_gap_plan_ = plan;
       RCLCPP_INFO(
         get_logger(),
-        "目标货柜%d找缝规划: side=%s physical_unit=%s expected_gap=%s search_direction=%s",
+        "目标货柜%d找缝规划: target_side=%s entry_side=%s physical_unit=%s expected_gap=%s "
+        "gap_search_direction=%s",
         current_target_cabinet_,
         current_gap_plan_.side.c_str(),
+        current_entry_side_.c_str(),
         cabinet_unit_to_string(current_gap_plan_.physical_unit).c_str(),
         gap_plan_to_string(current_gap_plan_).c_str(),
         search_direction_to_string(current_gap_plan_.search_direction).c_str());
@@ -1763,7 +1830,7 @@ private:
       "目标任务解析: target_cabinet=%d target_side=%s entry_side=%s target_level_index=%d "
       "target_depth_index=%d target_depth_center_m=%.3f entry_center_offset_m=%.3f "
       "target_straight_distance=%.3f physical_unit=%s expected_gap=%s "
-      "search_direction=%s entry_turn_direction=%s grid_center_entry=%s",
+      "gap_search_direction=%s entry_turn_direction=%s grid_center_entry=%s",
       current_target_cabinet_,
       current_target_side_.c_str(),
       current_entry_side_.c_str(),
@@ -6030,6 +6097,7 @@ private:
   std::map<std::string, std::string> side_route_map_;
   std::map<int, std::string> cabinet_side_map_;
   std::map<int, std::string> cabinet_entry_side_map_;
+  std::map<int, SearchDirection> cabinet_gap_search_direction_map_;
   std::map<std::string, WarehouseRowLayout> warehouse_rows_by_side_;
   std::vector<TestGapScanPlan> configured_test_inventory_plan_{
     TestGapScanPlan{"gap_03_02", std::vector<int>{3, 2, 1}},
