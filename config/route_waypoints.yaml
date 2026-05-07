@@ -96,3 +96,41 @@ cabinet_entry_side_map:
   "34": left
   "35": left
   "36": left
+
+cabinet_gap_search_direction_map:
+  "1": backward
+  "2": forward
+  "3": backward
+  "4": forward
+  "5": backward
+  "6": forward
+  "7": backward
+  "8": forward
+  "9": backward
+  "10": forward
+  "11": backward
+  "12": forward
+  "13": backward
+  "14": forward
+  "15": backward
+  "16": forward
+  "17": backward
+  "18": forward
+  "19": backward
+  "20": forward
+  "21": backward
+  "22": forward
+  "23": backward
+  "24": forward
+  "25": backward
+  "26": forward
+  "27": backward
+  "28": forward
+  "29": backward
+  "30": forward
+  "31": backward
+  "32": forward
+  "33": backward
+  "34": forward
+  "35": backward
+  "36": forward
