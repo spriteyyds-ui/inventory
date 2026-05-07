@@ -305,6 +305,30 @@ public:
       declare_parameter<bool>("test_real_grid_move_return_between_layers", false);
     test_real_close_gap_after_final_exit_ =
       declare_parameter<bool>("test_real_close_gap_after_final_exit", true);
+    overall_test_enabled_ = declare_parameter<bool>("overall_test_enabled", true);
+    const auto overall_test_sequence_param =
+      declare_parameter<std::vector<int64_t>>(
+      "overall_test_sequence",
+      std::vector<int64_t>{4, 3, 8, 7});
+    overall_test_sequence_.assign(
+      overall_test_sequence_param.begin(),
+      overall_test_sequence_param.end());
+    overall_test_left_route_ =
+      declare_parameter<std::string>("overall_test_left_route", "left_route");
+    overall_test_right_route_ =
+      declare_parameter<std::string>("overall_test_right_route", "right_route");
+    overall_test_return_home_between_sides_ =
+      declare_parameter<bool>("overall_test_return_home_between_sides", true);
+    overall_test_return_home_after_done_ =
+      declare_parameter<bool>("overall_test_return_home_after_done", true);
+    overall_test_same_side_next_search_enabled_ =
+      declare_parameter<bool>("overall_test_same_side_next_search_enabled", true);
+    overall_test_same_side_search_speed_ =
+      declare_parameter<double>("overall_test_same_side_search_speed", 0.04);
+    overall_test_same_side_search_timeout_sec_ =
+      declare_parameter<double>("overall_test_same_side_search_timeout_sec", 20.0);
+    overall_test_final_recognition_wait_sec_ =
+      declare_parameter<double>("overall_test_final_recognition_wait_sec", 8.0);
     test_scan_layers_ = declare_parameter<int>("scan_layers", 2);
     test_scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
     test_default_scan_side_ = declare_parameter<std::string>("default_scan_side", "left");
@@ -507,6 +531,18 @@ private:
     TEST_REAL_REENTER_NEXT_GAP,
     TEST_REAL_NEXT_GAP_SCAN,
     TEST_REAL_FINAL_EXIT_GAP,
+    OVERALL_TEST_PREPARE_TARGET,
+    OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE,
+    OVERALL_TEST_FINAL_RECOGNITION_WAIT,
+    OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH,
+    OVERALL_TEST_TARGET_RECOGNITION,
+    OVERALL_TEST_WAITING_GAP,
+    OVERALL_TEST_ENTERING_GAP,
+    OVERALL_TEST_SCAN_PLACEHOLDER,
+    OVERALL_TEST_EXIT_GAP,
+    OVERALL_TEST_ADVANCE_NEXT_TARGET,
+    OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES,
+    OVERALL_TEST_DONE,
   };
 
   enum class ReturnMode
@@ -570,6 +606,13 @@ private:
   {
     STRAIGHT_REVERSE,
     ARC_REVERSE,
+  };
+
+  enum class OverallTestReturnReason
+  {
+    NONE,
+    BETWEEN_SIDES,
+    FINAL_DONE,
   };
 
   enum class EntryGapPhase
@@ -739,6 +782,30 @@ private:
         return "TEST_REAL_NEXT_GAP_SCAN";
       case State::TEST_REAL_FINAL_EXIT_GAP:
         return "TEST_REAL_FINAL_EXIT_GAP";
+      case State::OVERALL_TEST_PREPARE_TARGET:
+        return "OVERALL_TEST_PREPARE_TARGET";
+      case State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE:
+        return "OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE";
+      case State::OVERALL_TEST_FINAL_RECOGNITION_WAIT:
+        return "OVERALL_TEST_FINAL_RECOGNITION_WAIT";
+      case State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH:
+        return "OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH";
+      case State::OVERALL_TEST_TARGET_RECOGNITION:
+        return "OVERALL_TEST_TARGET_RECOGNITION";
+      case State::OVERALL_TEST_WAITING_GAP:
+        return "OVERALL_TEST_WAITING_GAP";
+      case State::OVERALL_TEST_ENTERING_GAP:
+        return "OVERALL_TEST_ENTERING_GAP";
+      case State::OVERALL_TEST_SCAN_PLACEHOLDER:
+        return "OVERALL_TEST_SCAN_PLACEHOLDER";
+      case State::OVERALL_TEST_EXIT_GAP:
+        return "OVERALL_TEST_EXIT_GAP";
+      case State::OVERALL_TEST_ADVANCE_NEXT_TARGET:
+        return "OVERALL_TEST_ADVANCE_NEXT_TARGET";
+      case State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES:
+        return "OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES";
+      case State::OVERALL_TEST_DONE:
+        return "OVERALL_TEST_DONE";
       default:
         return "UNKNOWN";
     }
@@ -925,6 +992,20 @@ private:
     publish_log("[mission_manager][test_real] " + text);
   }
 
+  void publish_overall_test_log(const std::string & text)
+  {
+    publish_log("[mission_manager][OVERALL_TEST] " + text);
+  }
+
+  void publish_motion_test_log(const std::string & text)
+  {
+    if (overall_test_active_) {
+      publish_overall_test_log(text);
+    } else {
+      publish_test_real_log(text);
+    }
+  }
+
   std::string real_motion_reject_message() const
   {
     return
@@ -934,12 +1015,18 @@ private:
 
   bool is_nav_route_like_state(State s) const
   {
-    return s == State::NAV_ROUTE || s == State::TEST_REAL_NAV_TO_TARGET;
+    return
+      s == State::NAV_ROUTE ||
+      s == State::TEST_REAL_NAV_TO_TARGET ||
+      s == State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE;
   }
 
   bool is_target_tracking_like_state(State s) const
   {
-    return s == State::TARGET_TRACKING || s == State::TEST_REAL_TARGET_TRACKING;
+    return
+      s == State::TARGET_TRACKING ||
+      s == State::TEST_REAL_TARGET_TRACKING ||
+      s == State::OVERALL_TEST_TARGET_RECOGNITION;
   }
 
   bool is_test_real_recognition_state(State s) const
@@ -949,6 +1036,16 @@ private:
       (s == State::TEST_REAL_NAV_TO_TARGET ||
       s == State::TEST_REAL_TARGET_TRACKING ||
       s == State::TEST_REAL_FINAL_RECOGNITION_WAIT);
+  }
+
+  bool is_overall_test_recognition_state(State s) const
+  {
+    return
+      overall_test_active_ &&
+      (s == State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE ||
+      s == State::OVERALL_TEST_FINAL_RECOGNITION_WAIT ||
+      s == State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH ||
+      s == State::OVERALL_TEST_TARGET_RECOGNITION);
   }
 
   static std::string side_row_phase_to_string(TestRealSideRowPhase phase)
@@ -1316,6 +1413,45 @@ private:
         test_real_close_gap_after_final_exit_ =
           root["test_real_close_gap_after_final_exit"].as<bool>();
       }
+      if (root["overall_test_enabled"]) {
+        overall_test_enabled_ = root["overall_test_enabled"].as<bool>();
+      }
+      if (root["overall_test_sequence"]) {
+        overall_test_sequence_.clear();
+        for (const auto cabinet_node : root["overall_test_sequence"]) {
+          overall_test_sequence_.push_back(cabinet_node.as<int>());
+        }
+      }
+      if (root["overall_test_left_route"]) {
+        overall_test_left_route_ = root["overall_test_left_route"].as<std::string>();
+      }
+      if (root["overall_test_right_route"]) {
+        overall_test_right_route_ = root["overall_test_right_route"].as<std::string>();
+      }
+      if (root["overall_test_return_home_between_sides"]) {
+        overall_test_return_home_between_sides_ =
+          root["overall_test_return_home_between_sides"].as<bool>();
+      }
+      if (root["overall_test_return_home_after_done"]) {
+        overall_test_return_home_after_done_ =
+          root["overall_test_return_home_after_done"].as<bool>();
+      }
+      if (root["overall_test_same_side_next_search_enabled"]) {
+        overall_test_same_side_next_search_enabled_ =
+          root["overall_test_same_side_next_search_enabled"].as<bool>();
+      }
+      if (root["overall_test_same_side_search_speed"]) {
+        overall_test_same_side_search_speed_ =
+          root["overall_test_same_side_search_speed"].as<double>();
+      }
+      if (root["overall_test_same_side_search_timeout_sec"]) {
+        overall_test_same_side_search_timeout_sec_ =
+          root["overall_test_same_side_search_timeout_sec"].as<double>();
+      }
+      if (root["overall_test_final_recognition_wait_sec"]) {
+        overall_test_final_recognition_wait_sec_ =
+          root["overall_test_final_recognition_wait_sec"].as<double>();
+      }
       if (root["scan_layers"]) {
         test_scan_layers_ = root["scan_layers"].as<int>();
       }
@@ -1423,6 +1559,21 @@ private:
         test_real_grid_spacing_m_,
         test_real_grid_move_speed_,
         test_real_grid_move_timeout_sec_);
+      RCLCPP_INFO(
+        get_logger(),
+        "整体盘库测试配置: enabled=%s sequence=%s left_route=%s right_route=%s "
+        "return_between_sides=%s return_after_done=%s same_side_search=%s speed=%.3f "
+        "timeout=%.2f final_recognition_wait=%.2f",
+        overall_test_enabled_ ? "true" : "false",
+        cabinet_unit_to_string(overall_test_sequence_).c_str(),
+        overall_test_left_route_.c_str(),
+        overall_test_right_route_.c_str(),
+        overall_test_return_home_between_sides_ ? "true" : "false",
+        overall_test_return_home_after_done_ ? "true" : "false",
+        overall_test_same_side_next_search_enabled_ ? "true" : "false",
+        overall_test_same_side_search_speed_,
+        overall_test_same_side_search_timeout_sec_,
+        overall_test_final_recognition_wait_sec_);
       return true;
     } catch (const std::exception & ex) {
       reason = "解析 test_gap_scan_params.yaml 失败: " + std::string(ex.what());
@@ -1952,7 +2103,8 @@ private:
     set_gap_detector_enabled(
       s == State::SEARCH_GAP ||
       s == State::WAITING_GAP ||
-      s == State::TEST_REAL_WAITING_GAP);
+      s == State::TEST_REAL_WAITING_GAP ||
+      s == State::OVERALL_TEST_WAITING_GAP);
     // 识别启停严格由状态机控制：
     // IDLE/NAV_ROUTE/TARGET_TRACKING 开启；进入找缝/回退观测后及后续状态关闭。
     set_recognizer_topic_enabled(
@@ -1961,7 +2113,11 @@ private:
       s == State::TARGET_TRACKING ||
       s == State::TEST_REAL_NAV_TO_TARGET ||
       s == State::TEST_REAL_TARGET_TRACKING ||
-      s == State::TEST_REAL_FINAL_RECOGNITION_WAIT);
+      s == State::TEST_REAL_FINAL_RECOGNITION_WAIT ||
+      s == State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE ||
+      s == State::OVERALL_TEST_FINAL_RECOGNITION_WAIT ||
+      s == State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH ||
+      s == State::OVERALL_TEST_TARGET_RECOGNITION);
     state_ = s;
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] " + detail);
@@ -2407,6 +2563,10 @@ private:
 
     int rec_id = -1;
     if (!wheeltec_inventory_system::safe_to_int(msg->number, rec_id)) {
+      return;
+    }
+
+    if (handle_overall_test_recognition(rec_id)) {
       return;
     }
 
@@ -2918,7 +3078,9 @@ private:
       mission_active_ = false;
       publish_stop();
       request_recognizer_enable(false);
-      if (test_real_motion_active_) {
+      if (overall_test_active_) {
+        fail_overall_test("启动巡航路线失败: " + fail_reason);
+      } else if (test_real_motion_active_) {
         fail_test_real_motion("启动巡航路线失败: " + fail_reason);
       } else {
         set_state(State::ERROR, "启动巡航路线失败: " + fail_reason);
@@ -2953,6 +3115,11 @@ private:
       return;
     }
 
+    if (overall_test_active_) {
+      fail_overall_test(reason);
+      return;
+    }
+
     if (route_search_failure_policy_ == "return") {
       switch_to_returning(ReturnMode::SEARCH_TARGET, reason);
       return;
@@ -2977,7 +3144,13 @@ private:
         nav2_route_cancel_requested_ = false;
         has_distance_ = false;
         tracking_stable_start_ = zero_time(get_clock());
-        if (test_real_motion_active_) {
+        if (overall_test_active_) {
+          publish_overall_test_log(
+            "enter target tracking cabinet=" + std::to_string(current_target_cabinet_));
+          set_state(
+            State::OVERALL_TEST_TARGET_RECOGNITION,
+            "[OVERALL_TEST] stop hold finished, enter target tracking");
+        } else if (test_real_motion_active_) {
           publish_test_real_log("enter real target tracking cabinet=" + std::to_string(current_target_cabinet_));
           set_test_real_state(State::TEST_REAL_TARGET_TRACKING, "停车完成，进入目标跟踪");
         } else {
@@ -3007,6 +3180,10 @@ private:
 
     ++current_route_waypoint_index_;
     if (current_route_waypoint_index_ >= current_route_.waypoints.size()) {
+      if (overall_test_active_) {
+        begin_overall_test_final_recognition_wait();
+        return;
+      }
       if (test_real_motion_active_) {
         begin_test_real_final_recognition_wait();
         return;
@@ -3186,6 +3363,10 @@ private:
     request_recognizer_enable(false);
 
     if (!latest_odom_ || !has_yaw_) {
+      if (overall_test_active_) {
+        fail_overall_test("返航失败：无可用里程计/航向");
+        return false;
+      }
       mission_active_ = false;
       set_state(State::ERROR, "返航失败：无可用里程计/航向");
       return false;
@@ -3202,6 +3383,10 @@ private:
 
     const Pose2D current = current_pose_2d();
     if (!current.valid) {
+      if (overall_test_active_) {
+        fail_overall_test("返航失败：当前位姿不可用");
+        return false;
+      }
       mission_active_ = false;
       set_state(State::ERROR, "返航失败：当前位姿不可用");
       return false;
@@ -3241,6 +3426,11 @@ private:
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
     publish_gap_context();
+
+    if (overall_test_active_ && overall_test_return_reason_ != OverallTestReturnReason::NONE) {
+      on_return_home_finished_continue_overall_test();
+      return;
+    }
 
     if (return_mode_ == ReturnMode::CANCEL_HOME) {
       mission_active_ = false;
@@ -3361,6 +3551,10 @@ private:
     Pose2D target_pose;
     std::string target_mode_text;
     if (!resolve_return_pose(mode, target_pose, target_mode_text)) {
+      if (overall_test_active_) {
+        fail_overall_test("无法确定返航目标：" + target_mode_text);
+        return;
+      }
       mission_active_ = false;
       set_state(State::ERROR, "无法确定返航目标：" + target_mode_text);
       return;
@@ -3587,6 +3781,697 @@ private:
     reset_test_real_scan_runtime();
   }
 
+  void reset_overall_test_context()
+  {
+    overall_test_active_ = false;
+    overall_test_index_ = 0;
+    overall_test_current_target_ = -1;
+    overall_test_next_target_ = -1;
+    overall_test_current_side_.clear();
+    overall_test_current_route_.clear();
+    overall_test_return_reason_ = OverallTestReturnReason::NONE;
+    overall_test_waiting_return_home_for_side_switch_ = false;
+    overall_test_waiting_return_home_for_done_ = false;
+    overall_test_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_final_recognition_wait_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+  }
+
+  std::string overall_return_reason_to_string(OverallTestReturnReason reason) const
+  {
+    switch (reason) {
+      case OverallTestReturnReason::BETWEEN_SIDES:
+        return "BETWEEN_SIDES";
+      case OverallTestReturnReason::FINAL_DONE:
+        return "FINAL_DONE";
+      case OverallTestReturnReason::NONE:
+      default:
+        return "NONE";
+    }
+  }
+
+  bool apply_overall_test_route_overrides(std::string & reason)
+  {
+    reason.clear();
+    if (!overall_test_left_route_.empty()) {
+      if (route_configs_.find(overall_test_left_route_) == route_configs_.end()) {
+        reason = "overall_test_left_route 不存在: " + overall_test_left_route_;
+        return false;
+      }
+      side_route_map_["left"] = overall_test_left_route_;
+    }
+    if (!overall_test_right_route_.empty()) {
+      if (route_configs_.find(overall_test_right_route_) == route_configs_.end()) {
+        reason = "overall_test_right_route 不存在: " + overall_test_right_route_;
+        return false;
+      }
+      side_route_map_["right"] = overall_test_right_route_;
+    }
+    return true;
+  }
+
+  bool get_cabinet_side(int cabinet_id, std::string & side, std::string & reason) const
+  {
+    reason.clear();
+    const auto side_it = cabinet_side_map_.find(cabinet_id);
+    if (side_it == cabinet_side_map_.end()) {
+      reason = "货柜未配置 cabinet_side_map: " + std::to_string(cabinet_id);
+      return false;
+    }
+    side = normalize_entry_side(side_it->second);
+    return true;
+  }
+
+  bool get_cabinet_entry_side(int cabinet_id, std::string & side, std::string & reason) const
+  {
+    reason.clear();
+    const auto side_it = cabinet_entry_side_map_.find(cabinet_id);
+    if (side_it == cabinet_entry_side_map_.end()) {
+      reason = "货柜未配置 cabinet_entry_side_map: " + std::to_string(cabinet_id);
+      return false;
+    }
+    side = normalize_entry_side(side_it->second);
+    return true;
+  }
+
+  bool get_cabinet_gap_search_direction(
+    int cabinet_id,
+    SearchDirection & direction,
+    std::string & reason) const
+  {
+    reason.clear();
+    const auto direction_it = cabinet_gap_search_direction_map_.find(cabinet_id);
+    if (direction_it == cabinet_gap_search_direction_map_.end()) {
+      reason = "货柜未配置 cabinet_gap_search_direction_map: " + std::to_string(cabinet_id);
+      return false;
+    }
+    direction = direction_it->second;
+    return true;
+  }
+
+  bool get_route_for_side(const std::string & side, std::string & route_name, std::string & reason) const
+  {
+    reason.clear();
+    const std::string normalized_side = normalize_entry_side(side);
+    const auto route_it = side_route_map_.find(normalized_side);
+    if (route_it == side_route_map_.end()) {
+      reason = "side_route_map 未配置侧路线: " + normalized_side;
+      return false;
+    }
+    if (route_configs_.find(route_it->second) == route_configs_.end()) {
+      reason = "side_route_map 引用的路线不存在: " + route_it->second;
+      return false;
+    }
+    route_name = route_it->second;
+    return true;
+  }
+
+  bool validate_overall_test_sequence(
+    const std::vector<int> & sequence,
+    std::string & reason) const
+  {
+    reason.clear();
+    if (sequence.empty()) {
+      reason = "overall_test_sequence 为空";
+      return false;
+    }
+    for (const auto cabinet_id : sequence) {
+      if (cabinet_id <= 0) {
+        reason = "overall_test_sequence 中货柜号必须大于0: " + std::to_string(cabinet_id);
+        return false;
+      }
+    }
+    if (test_scan_layers_ <= 0 || test_scan_depth_count_ <= 0) {
+      reason =
+        "scan_layers/scan_depth_count 必须为正数: layers=" +
+        std::to_string(test_scan_layers_) +
+        " depth_count=" + std::to_string(test_scan_depth_count_);
+      return false;
+    }
+    return true;
+  }
+
+  std::vector<int> overall_test_sequence_from_request(
+    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  {
+    std::vector<int> sequence;
+    for (const auto cabinet_id : request.scan_cabinets) {
+      sequence.push_back(static_cast<int>(cabinet_id));
+    }
+    if (!sequence.empty()) {
+      return sequence;
+    }
+    return overall_test_sequence_;
+  }
+
+  bool should_start_overall_test(
+    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  {
+    if (!overall_test_enabled_) {
+      return false;
+    }
+    const bool gap_empty = wheeltec_inventory_system::trim(request.gap_id).empty();
+    return (request.run_all_configured && gap_empty) || (!request.scan_cabinets.empty() && gap_empty);
+  }
+
+  void record_overall_test_start_pose()
+  {
+    mission_start_distance_ = odom_cumulative_distance_;
+    reset_segment_distance();
+    mission_start_pose_ = current_pose_2d();
+    mission_start_pose_nav2_ = Pose2D{};
+    if (!mission_start_pose_.valid) {
+      RCLCPP_WARN(get_logger(), "[OVERALL_TEST] 启动时未获取到有效里程计位姿，返航将无法使用起点模式");
+      return;
+    }
+
+    publish_overall_test_log(
+      "record start pose x=" + std::to_string(mission_start_pose_.x) +
+      " y=" + std::to_string(mission_start_pose_.y) +
+      " yaw=" + std::to_string(mission_start_pose_.yaw) +
+      " frame=" + mission_start_pose_.frame_id);
+
+    std::string tf_error;
+    if (transform_pose_2d(mission_start_pose_, nav2_goal_frame_, mission_start_pose_nav2_, tf_error)) {
+      publish_overall_test_log(
+        "record Nav2 start pose x=" + std::to_string(mission_start_pose_nav2_.x) +
+        " y=" + std::to_string(mission_start_pose_nav2_.y) +
+        " yaw=" + std::to_string(mission_start_pose_nav2_.yaw) +
+        " frame=" + mission_start_pose_nav2_.frame_id);
+    } else {
+      RCLCPP_WARN(
+        get_logger(),
+        "[OVERALL_TEST] 记录Nav2全局起点失败，将回退到里程计起点：%s",
+        tf_error.c_str());
+    }
+  }
+
+  bool prepare_overall_test_target(int cabinet_id, std::string & reason)
+  {
+    reason.clear();
+    if (!routes_loaded_) {
+      routes_loaded_ = load_route_config(reason);
+      if (!routes_loaded_) {
+        return false;
+      }
+    }
+    if (!apply_overall_test_route_overrides(reason)) {
+      return false;
+    }
+    if (!warehouse_layout_loaded_) {
+      warehouse_layout_loaded_ = load_warehouse_layout_config(reason);
+      if (!warehouse_layout_loaded_) {
+        return false;
+      }
+    }
+
+    SearchDirection search_direction{SearchDirection::FORWARD};
+    if (!get_cabinet_gap_search_direction(cabinet_id, search_direction, reason)) {
+      return false;
+    }
+    (void)search_direction;
+
+    targets_ = {std::to_string(cabinet_id)};
+    current_target_index_ = 0;
+    if (!prepare_current_target(reason)) {
+      return false;
+    }
+    if (!resolve_current_route(reason)) {
+      return false;
+    }
+    if (!configure_current_entry_profile(reason)) {
+      return false;
+    }
+    if (!resolve_current_gap_plan(reason)) {
+      return false;
+    }
+
+    overall_test_current_target_ = cabinet_id;
+    overall_test_current_side_ = current_target_side_;
+    overall_test_current_route_ = current_route_name_;
+    log_current_target_entry_plan();
+    publish_overall_test_log(
+      "current_target=" + std::to_string(overall_test_current_target_) +
+      " index=" + std::to_string(overall_test_index_) +
+      "/" + std::to_string(overall_test_sequence_.size()) +
+      " side=" + overall_test_current_side_ +
+      " route=" + overall_test_current_route_ +
+      " entry_side=" + current_entry_side_ +
+      " search_direction=" + search_direction_to_string(current_gap_plan_.search_direction));
+    return true;
+  }
+
+  bool start_overall_test_target_route(const std::string & context)
+  {
+    mission_active_ = true;
+    cancel_requested_ = false;
+    mission_return_home_on_finish_ = false;
+    target_visible_ = false;
+    has_distance_ = false;
+    latest_distance_ = 0.0;
+    return_mode_ = ReturnMode::NONE;
+    return_target_distance_ = 0.0;
+    return_using_nav2_ = false;
+    nav2_return_in_progress_ = false;
+    nav2_result_ready_ = false;
+    fallback_phase_ = FallbackPhase::IDLE;
+    fallback_drive_mode_ = FallbackDriveMode::NONE;
+    reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
+    publish_gap_context();
+    tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    last_target_seen_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    reset_segment_distance();
+
+    std::string fail_reason;
+    if (!begin_nav_route_for_current_target(
+        "[OVERALL_TEST] " + context +
+        " current_target=" + std::to_string(current_target_cabinet_) +
+        " side=" + current_target_side_ +
+        " route=" + current_route_name_,
+        fail_reason,
+        State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE))
+    {
+      fail_overall_test("启动目标侧路径失败: " + fail_reason);
+      return false;
+    }
+    return true;
+  }
+
+  bool start_overall_test_sequence(
+    const std::vector<int> & sequence,
+    std::string & reason)
+  {
+    reason.clear();
+    if (!validate_overall_test_sequence(sequence, reason)) {
+      return false;
+    }
+
+    overall_test_sequence_ = sequence;
+    overall_test_active_ = true;
+    overall_test_index_ = 0;
+    overall_test_current_target_ = -1;
+    overall_test_next_target_ =
+      overall_test_sequence_.size() > 1U ? overall_test_sequence_[1] : -1;
+    overall_test_return_reason_ = OverallTestReturnReason::NONE;
+    overall_test_waiting_return_home_for_side_switch_ = false;
+    overall_test_waiting_return_home_for_done_ = false;
+    overall_test_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_final_recognition_wait_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+
+    test_gap_scan_queue_.clear();
+    test_current_gap_index_ = 0;
+    test_gap_scan_error_reason_.clear();
+    test_gap_scan_active_ = true;
+    test_real_motion_active_ = false;
+    test_real_gap_searching_ = false;
+    test_real_target_recognized_logged_ = false;
+    test_real_close_requested_ = false;
+    reset_test_real_side_row_context();
+    reset_test_real_scan_runtime();
+    record_overall_test_start_pose();
+
+    publish_overall_test_log(
+      "START sequence=" + cabinet_unit_to_string(overall_test_sequence_));
+    set_test_state(
+      State::OVERALL_TEST_PREPARE_TARGET,
+      "[OVERALL_TEST] prepare first target");
+
+    if (!prepare_overall_test_target(overall_test_sequence_[overall_test_index_], reason)) {
+      reset_overall_test_context();
+      test_gap_scan_active_ = false;
+      return false;
+    }
+    return start_overall_test_target_route("start target route");
+  }
+
+  void fail_overall_test(const std::string & reason)
+  {
+    publish_overall_test_log("FAILED: " + reason);
+    cancel_nav2_route_goal("整体盘库测试失败");
+    cancel_nav2_return_goal("整体盘库测试失败");
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_gap_detector_enabled(false);
+    reset_test_real_scan_runtime();
+    test_gap_scan_error_reason_ = reason;
+    set_test_state(State::TEST_ERROR, "[OVERALL_TEST] " + reason);
+  }
+
+  void begin_overall_test_final_recognition_wait()
+  {
+    cancel_nav2_route_goal("整体盘库测试巡航路线已走完，进入末端识别等待");
+    nav2_route_goal_in_progress_ = false;
+    nav2_route_result_ready_ = false;
+    nav2_route_stop_hold_active_ = false;
+    nav2_route_cancel_requested_ = false;
+    target_found_pending_ = false;
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true, true);
+    reset_target_recognition_stability();
+    has_distance_ = false;
+    target_visible_ = false;
+    overall_test_final_recognition_wait_start_ = this->now();
+    publish_overall_test_log(
+      "route finished before recognizing target=" +
+      std::to_string(current_target_cabinet_) +
+      ", entering final recognition wait, timeout=" +
+      format_seconds(overall_test_final_recognition_wait_sec_) + "s");
+    set_state(
+      State::OVERALL_TEST_FINAL_RECOGNITION_WAIT,
+      "[OVERALL_TEST] route finished before recognizing target=" +
+      std::to_string(current_target_cabinet_) +
+      ", entering final recognition wait, timeout=" +
+      format_seconds(overall_test_final_recognition_wait_sec_) + "s");
+  }
+
+  void switch_overall_to_tracking_after_recognition(int rec_id)
+  {
+    const bool from_final_wait = state_ == State::OVERALL_TEST_FINAL_RECOGNITION_WAIT;
+    cancel_nav2_route_goal("整体盘库测试稳定识别到目标货柜");
+    nav2_route_stop_hold_active_ = false;
+    nav2_route_cancel_requested_ = false;
+    target_found_pending_ = false;
+    set_corridor_mode(false, false);
+    publish_stop();
+    has_distance_ = false;
+    overall_test_final_recognition_wait_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    if (from_final_wait) {
+      publish_overall_test_log(
+        "final recognition wait success: target=" + std::to_string(rec_id));
+    }
+    publish_overall_test_log(
+      "recognized target cabinet " + std::to_string(rec_id) +
+      ", switch to target tracking");
+    set_state(
+      State::OVERALL_TEST_TARGET_RECOGNITION,
+      "[OVERALL_TEST] recognized target cabinet=" + std::to_string(rec_id) +
+      " stable, enter target tracking");
+  }
+
+  bool handle_overall_test_recognition(int rec_id)
+  {
+    if (!is_overall_test_recognition_state(state_)) {
+      return false;
+    }
+
+    const bool matched = rec_id == current_target_cabinet_;
+    if (!matched) {
+      reset_target_recognition_stability();
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][OVERALL_TEST][recognition] mismatch recognized=%d target=%d",
+        rec_id,
+        current_target_cabinet_);
+      return true;
+    }
+
+    last_target_seen_time_ = this->now();
+    target_visible_ = true;
+
+    if (state_ == State::OVERALL_TEST_TARGET_RECOGNITION) {
+      return true;
+    }
+
+    const bool stable_ready = update_target_recognition_stability(rec_id);
+    const int required_count = std::max(1, target_recognition_stable_frames_);
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][OVERALL_TEST][recognition] state=%s target=%d recognized=%d "
+      "stable_count=%d required=%d ready=%s",
+      state_to_string(state_).c_str(),
+      current_target_cabinet_,
+      rec_id,
+      target_recognition_stable_count_,
+      required_count,
+      stable_ready ? "true" : "false");
+
+    if (stable_ready) {
+      switch_overall_to_tracking_after_recognition(rec_id);
+    }
+    return true;
+  }
+
+  void start_overall_same_side_recognition_search()
+  {
+    overall_test_same_side_search_start_ = this->now();
+    reset_target_recognition_stability();
+    target_visible_ = false;
+    has_distance_ = false;
+    latest_distance_ = 0.0;
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true, true);
+    set_corridor_mode(false, false);
+    publish_overall_test_log(
+      "next_target=" + std::to_string(overall_test_current_target_) +
+      " same side, continue recognition search speed=" +
+      format_seconds(overall_test_same_side_search_speed_) +
+      " timeout=" + format_seconds(overall_test_same_side_search_timeout_sec_));
+    set_state(
+      State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH,
+      "[OVERALL_TEST] same side continue recognition search target=" +
+      std::to_string(overall_test_current_target_));
+  }
+
+  void handle_overall_same_side_recognition_search_state()
+  {
+    if (overall_test_same_side_search_start_.nanoseconds() == 0) {
+      overall_test_same_side_search_start_ = this->now();
+    }
+    const double elapsed = (this->now() - overall_test_same_side_search_start_).seconds();
+    const double timeout = std::max(0.1, overall_test_same_side_search_timeout_sec_);
+    if (elapsed >= timeout) {
+      publish_stop();
+      fail_overall_test(
+        "same side recognition search timeout target=" +
+        std::to_string(current_target_cabinet_));
+      return;
+    }
+
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = overall_test_same_side_search_speed_;
+    cmd.angular.z = 0.0;
+    cmd_pub_->publish(cmd);
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "[mission_manager][OVERALL_TEST] same_side_search target=%d side=%s speed=%.3f elapsed=%.2f/%.2f",
+      current_target_cabinet_,
+      current_target_side_.c_str(),
+      cmd.linear.x,
+      elapsed,
+      timeout);
+  }
+
+  void handle_overall_test_final_recognition_wait_state()
+  {
+    publish_stop();
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true);
+    if (overall_test_final_recognition_wait_start_.nanoseconds() == 0) {
+      overall_test_final_recognition_wait_start_ = this->now();
+    }
+
+    const double elapsed =
+      (this->now() - overall_test_final_recognition_wait_start_).seconds();
+    const double timeout = std::max(0.0, overall_test_final_recognition_wait_sec_);
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "[mission_manager][OVERALL_TEST] final recognition wait: target=%d elapsed=%.2f/%.2f",
+      current_target_cabinet_,
+      elapsed,
+      timeout);
+
+    if (elapsed >= timeout) {
+      publish_overall_test_log(
+        "final recognition wait timeout: target=" +
+        std::to_string(current_target_cabinet_));
+      fail_overall_test(
+        "final recognition wait timeout: target=" +
+        std::to_string(current_target_cabinet_));
+    }
+  }
+
+  void handle_overall_test_scan_state()
+  {
+    const int cabinet_id = overall_test_current_target_;
+    if (cabinet_id <= 0) {
+      fail_overall_test("整体盘库测试扫描柜号非法");
+      return;
+    }
+    publish_stop();
+    publish_overall_test_log("scan placeholder for cabinet " + std::to_string(cabinet_id));
+    if (!execute_placeholder_scan_for_cabinet(cabinet_id, false)) {
+      return;
+    }
+    publish_overall_test_log("scan placeholder finished for cabinet " + std::to_string(cabinet_id));
+    set_state(
+      State::OVERALL_TEST_EXIT_GAP,
+      "[OVERALL_TEST] scan finished, reverse exit gap cabinet=" + std::to_string(cabinet_id));
+  }
+
+  bool should_return_home_between_targets(
+    int current_target,
+    int next_target,
+    std::string & current_side,
+    std::string & next_side,
+    std::string & reason) const
+  {
+    if (!get_cabinet_side(current_target, current_side, reason)) {
+      return false;
+    }
+    if (!get_cabinet_side(next_target, next_side, reason)) {
+      return false;
+    }
+    return overall_test_return_home_between_sides_ && current_side != next_side;
+  }
+
+  void start_existing_return_home_for_overall_test(OverallTestReturnReason reason)
+  {
+    overall_test_return_reason_ = reason;
+    overall_test_waiting_return_home_for_side_switch_ =
+      reason == OverallTestReturnReason::BETWEEN_SIDES;
+    overall_test_waiting_return_home_for_done_ =
+      reason == OverallTestReturnReason::FINAL_DONE;
+    const std::string reason_text = overall_return_reason_to_string(reason);
+    publish_overall_test_log("start existing return home reason=" + reason_text);
+    set_test_state(
+      State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES,
+      "[OVERALL_TEST] start return home reason=" + reason_text);
+    switch_to_returning(ReturnMode::FINISH_HOME, "[OVERALL_TEST] return home reason=" + reason_text);
+  }
+
+  void finish_overall_test_done_after_return()
+  {
+    publish_overall_test_log("DONE");
+    mission_active_ = false;
+    test_gap_scan_active_ = false;
+    test_real_motion_active_ = false;
+    test_real_gap_searching_ = false;
+    test_real_target_recognized_logged_ = false;
+    test_real_close_requested_ = false;
+    overall_test_return_reason_ = OverallTestReturnReason::NONE;
+    overall_test_waiting_return_home_for_side_switch_ = false;
+    overall_test_waiting_return_home_for_done_ = false;
+    set_state(State::OVERALL_TEST_DONE, "[OVERALL_TEST] done");
+    reset_overall_test_context();
+    test_gap_scan_queue_.clear();
+    test_current_gap_index_ = 0;
+  }
+
+  void on_return_home_finished_continue_overall_test()
+  {
+    const auto reason = overall_test_return_reason_;
+    return_mode_ = ReturnMode::NONE;
+    overall_test_return_reason_ = OverallTestReturnReason::NONE;
+    overall_test_waiting_return_home_for_side_switch_ = false;
+    overall_test_waiting_return_home_for_done_ = false;
+
+    if (reason == OverallTestReturnReason::FINAL_DONE) {
+      finish_overall_test_done_after_return();
+      return;
+    }
+
+    if (reason != OverallTestReturnReason::BETWEEN_SIDES) {
+      fail_overall_test("未知整体盘库测试返航目的");
+      return;
+    }
+
+    if (overall_test_index_ >= overall_test_sequence_.size()) {
+      fail_overall_test("换侧返航后 overall_test_index 越界");
+      return;
+    }
+
+    const int target = overall_test_sequence_[overall_test_index_];
+    std::string prepare_reason;
+    if (!prepare_overall_test_target(target, prepare_reason)) {
+      fail_overall_test("换侧返航后准备目标失败: " + prepare_reason);
+      return;
+    }
+    publish_overall_test_log(
+      "return home finished, switch to side=" + overall_test_current_side_ +
+      " route=" + overall_test_current_route_ +
+      " target=" + std::to_string(target));
+    (void)start_overall_test_target_route("return home finished, switch side");
+  }
+
+  void advance_overall_test_sequence()
+  {
+    if (!overall_test_active_) {
+      fail_overall_test("advance requested while overall test inactive");
+      return;
+    }
+    if (overall_test_index_ >= overall_test_sequence_.size()) {
+      fail_overall_test("overall_test_index 越界");
+      return;
+    }
+
+    const int finished_target = overall_test_sequence_[overall_test_index_];
+    publish_overall_test_log(
+      "exit gap finished for cabinet " + std::to_string(finished_target));
+
+    if (overall_test_index_ + 1U >= overall_test_sequence_.size()) {
+      publish_overall_test_log("all targets completed, final return home");
+      if (overall_test_return_home_after_done_) {
+        start_existing_return_home_for_overall_test(OverallTestReturnReason::FINAL_DONE);
+      } else {
+        finish_overall_test_done_after_return();
+      }
+      return;
+    }
+
+    const int next_target = overall_test_sequence_[overall_test_index_ + 1U];
+    std::string current_side;
+    std::string next_side;
+    std::string side_reason;
+    const bool return_between =
+      should_return_home_between_targets(finished_target, next_target, current_side, next_side, side_reason);
+    if (!side_reason.empty()) {
+      fail_overall_test("判断目标侧失败: " + side_reason);
+      return;
+    }
+
+    ++overall_test_index_;
+    overall_test_next_target_ =
+      overall_test_index_ + 1U < overall_test_sequence_.size() ?
+      overall_test_sequence_[overall_test_index_ + 1U] : -1;
+
+    if (return_between) {
+      publish_overall_test_log(
+        "next_target=" + std::to_string(next_target) +
+        " side changed " + current_side + " -> " + next_side +
+        ", return home first");
+      start_existing_return_home_for_overall_test(OverallTestReturnReason::BETWEEN_SIDES);
+      return;
+    }
+
+    std::string prepare_reason;
+    if (!prepare_overall_test_target(next_target, prepare_reason)) {
+      fail_overall_test("准备同侧下一个目标失败: " + prepare_reason);
+      return;
+    }
+
+    if (current_side == next_side && overall_test_same_side_next_search_enabled_) {
+      start_overall_same_side_recognition_search();
+      return;
+    }
+
+    publish_overall_test_log(
+      "next_target=" + std::to_string(next_target) +
+      " same side route restart side=" + next_side);
+    (void)start_overall_test_target_route("advance next target");
+  }
+
   bool is_side_row_sequence_request(const std::vector<int> & cabinets) const
   {
     std::vector<int> first_gap_full = test_real_side_row_first_gap_scan_sequence_;
@@ -3616,10 +4501,15 @@ private:
 
   std::string side_row_reject_message() const
   {
+    std::vector<int> full = test_real_side_row_first_gap_scan_sequence_;
+    full.insert(
+      full.end(),
+      test_real_side_row_second_gap_scan_sequence_.begin(),
+      test_real_side_row_second_gap_scan_sequence_.end());
     return
       "side row real motion test only supports " + test_real_side_row_name_ +
       " starting from " + test_real_side_row_first_gap_ +
-      " with scan_cabinets=[4,3,2,1]";
+      " with scan_cabinets=" + cabinet_unit_to_string(full);
   }
 
   std::string active_test_real_gap_id() const
@@ -4116,6 +5006,14 @@ private:
     test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
     test_real_exit_effective_timeout_sec_ = test_real_exit_timeout_sec_;
 
+    if (overall_test_active_) {
+      set_state(
+        State::OVERALL_TEST_ADVANCE_NEXT_TARGET,
+        "[OVERALL_TEST] exit gap finished, advance sequence");
+      advance_overall_test_sequence();
+      return;
+    }
+
     const auto action = test_real_after_exit_action_;
     test_real_after_exit_action_ = TestRealAfterExitAction::NONE;
 
@@ -4154,13 +5052,21 @@ private:
       return static_cast<char>(std::tolower(c));
     });
     if (mode != "reverse") {
-      fail_test_real_motion("当前只支持 reverse 出缝模式: " + test_real_exit_mode_);
+      if (overall_test_active_) {
+        fail_overall_test("当前只支持 reverse 出缝模式: " + test_real_exit_mode_);
+      } else {
+        fail_test_real_motion("当前只支持 reverse 出缝模式: " + test_real_exit_mode_);
+      }
       return;
     }
 
     const double speed = std::clamp(std::abs(test_real_exit_speed_), 0.0, 0.05);
     if (speed <= 1e-4) {
-      fail_test_real_motion("倒退出缝速度非法: " + std::to_string(test_real_exit_speed_));
+      if (overall_test_active_) {
+        fail_overall_test("倒退出缝速度非法: " + std::to_string(test_real_exit_speed_));
+      } else {
+        fail_test_real_motion("倒退出缝速度非法: " + std::to_string(test_real_exit_speed_));
+      }
       return;
     }
 
@@ -4185,7 +5091,7 @@ private:
           "required=%.2f configured=%.2f",
           required_time,
           configured_timeout);
-        publish_test_real_log(
+        publish_motion_test_log(
           "[exit_gap] warning: timeout too short for distance/speed, required=" +
           format_seconds(required_time) +
           ", configured=" + format_seconds(configured_timeout));
@@ -4203,7 +5109,7 @@ private:
         speed,
         test_real_exit_effective_timeout_sec_,
         test_real_exit_turn_enabled_ ? "true" : "false");
-      publish_test_real_log(
+      publish_motion_test_log(
         "[exit_gap] start reverse exit phase=" +
         test_real_exit_phase_to_string(test_real_exit_phase_) +
         " distance=" +
@@ -4216,8 +5122,13 @@ private:
     const double ultrasonic_range = min_ultrasonic_range();
     if (std::isfinite(ultrasonic_range) && ultrasonic_range < entry_ultrasonic_stop_distance_) {
       publish_stop();
-      fail_test_real_motion(
-        "倒退出缝被超声波安全策略阻塞 range=" + std::to_string(ultrasonic_range));
+      const std::string reason =
+        "倒退出缝被超声波安全策略阻塞 range=" + std::to_string(ultrasonic_range);
+      if (overall_test_active_) {
+        fail_overall_test(reason);
+      } else {
+        fail_test_real_motion(reason);
+      }
       return;
     }
 
@@ -4234,12 +5145,16 @@ private:
           traveled,
           test_real_exit_target_distance_,
           elapsed);
-        publish_test_real_log(
+        publish_motion_test_log(
           "[exit_gap] phase=" + test_real_exit_phase_to_string(test_real_exit_phase_) +
           " timeout traveled=" + format_seconds(traveled) +
           " target_distance=" + format_seconds(test_real_exit_target_distance_) +
           " elapsed=" + format_seconds(elapsed));
-        fail_test_real_motion("倒退出缝直线阶段超时");
+        if (overall_test_active_) {
+          fail_overall_test("倒退出缝直线阶段超时");
+        } else {
+          fail_test_real_motion("倒退出缝直线阶段超时");
+        }
         return;
       }
 
@@ -4250,7 +5165,7 @@ private:
             get_logger(),
             "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse only traveled=%.2f",
             traveled);
-          publish_test_real_log(
+          publish_motion_test_log(
             "[exit_gap] 出缝完成：straight_reverse only traveled=" + format_seconds(traveled));
           finish_test_real_exit_gap();
           return;
@@ -4263,7 +5178,7 @@ private:
             get_logger(),
             "[mission_manager][test_real][exit_gap] 弧线出缝角速度非法，降级为直线出缝完成: %.3f",
             test_real_exit_turn_angular_speed_);
-          publish_test_real_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
+          publish_motion_test_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
           finish_test_real_exit_gap();
           return;
         }
@@ -4274,7 +5189,7 @@ private:
             get_logger(),
             "[mission_manager][test_real][exit_gap] 弧线出缝无法获取有效yaw，降级完成: %s",
             yaw_reason.c_str());
-          publish_test_real_log("[exit_gap] yaw invalid before arc_reverse, finish straight_reverse only");
+          publish_motion_test_log("[exit_gap] yaw invalid before arc_reverse, finish straight_reverse only");
           finish_test_real_exit_gap();
           return;
         }
@@ -4284,7 +5199,7 @@ private:
           RCLCPP_WARN(
             get_logger(),
             "[mission_manager][test_real][exit_gap] 弧线出缝yaw数据无效，降级完成");
-          publish_test_real_log("[exit_gap] yaw data invalid before arc_reverse, finish straight_reverse only");
+          publish_motion_test_log("[exit_gap] yaw data invalid before arc_reverse, finish straight_reverse only");
           finish_test_real_exit_gap();
           return;
         }
@@ -4302,7 +5217,7 @@ private:
             current.yaw,
             target_exit_yaw,
             yaw_error);
-          publish_test_real_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse yaw already aligned");
+          publish_motion_test_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse yaw already aligned");
           finish_test_real_exit_gap();
           return;
         }
@@ -4318,7 +5233,7 @@ private:
           current.yaw,
           target_exit_yaw,
           yaw_error);
-        publish_test_real_log(
+        publish_motion_test_log(
           "[exit_gap] switch phase=" + test_real_exit_phase_to_string(test_real_exit_phase_) +
           " entry_side=" + current_entry_side_);
         return;
@@ -4352,7 +5267,7 @@ private:
           "[mission_manager][test_real][exit_gap] phase=%s yaw无效，结束出缝避免卡死: %s",
           test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
           yaw_reason.c_str());
-        publish_test_real_log("[exit_gap] arc_reverse yaw invalid, finish to avoid blocking");
+        publish_motion_test_log("[exit_gap] arc_reverse yaw invalid, finish to avoid blocking");
         finish_test_real_exit_gap();
         return;
       }
@@ -4364,7 +5279,7 @@ private:
           get_logger(),
           "[mission_manager][test_real][exit_gap] phase=%s yaw数据无效，结束出缝避免卡死",
           test_real_exit_phase_to_string(test_real_exit_phase_).c_str());
-        publish_test_real_log("[exit_gap] arc_reverse yaw data invalid, finish to avoid blocking");
+        publish_motion_test_log("[exit_gap] arc_reverse yaw data invalid, finish to avoid blocking");
         finish_test_real_exit_gap();
         return;
       }
@@ -4387,7 +5302,7 @@ private:
           target_exit_yaw,
           yaw_error,
           crossed_exit_yaw ? "true" : "false");
-        publish_test_real_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse");
+        publish_motion_test_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse");
         finish_test_real_exit_gap();
         return;
       }
@@ -4408,7 +5323,7 @@ private:
           target_exit_yaw,
           yaw_error,
           elapsed);
-        publish_test_real_log("[exit_gap] arc_reverse timeout, finish to avoid blocking");
+        publish_motion_test_log("[exit_gap] arc_reverse timeout, finish to avoid blocking");
         finish_test_real_exit_gap();
         return;
       }
@@ -4421,7 +5336,7 @@ private:
           get_logger(),
           "[mission_manager][test_real][exit_gap] phase=%s angular speed invalid, finish to avoid blocking",
           test_real_exit_phase_to_string(test_real_exit_phase_).c_str());
-        publish_test_real_log("[exit_gap] arc_reverse angular speed invalid, finish to avoid blocking");
+        publish_motion_test_log("[exit_gap] arc_reverse angular speed invalid, finish to avoid blocking");
         finish_test_real_exit_gap();
         return;
       }
@@ -4471,7 +5386,9 @@ private:
         test_real_side_row_phase_ = TestRealSideRowPhase::FIRST_ADJUSTED_SCAN;
         test_real_current_scan_cabinet_ = test_real_adjusted_scan_cabinet_;
         test_real_after_exit_action_ = TestRealAfterExitAction::REENTER_ADJUSTED;
-        set_test_real_state(State::TEST_REAL_EXIT_GAP, "4号柜扫描完成，倒退出缝");
+        set_test_real_state(
+          State::TEST_REAL_EXIT_GAP,
+          "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，倒退出缝");
         return;
 
       case TestRealSideRowPhase::FIRST_ADJUSTED_SCAN:
@@ -4482,7 +5399,9 @@ private:
         } else {
           test_real_after_exit_action_ = TestRealAfterExitAction::CLOSE_AND_DONE;
         }
-        set_test_real_state(State::TEST_REAL_EXIT_GAP, "3号柜扫描完成，倒退出缝");
+        set_test_real_state(
+          State::TEST_REAL_EXIT_GAP,
+          "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，倒退出缝");
         return;
 
       case TestRealSideRowPhase::SECOND_PRIMARY_SCAN:
@@ -4493,7 +5412,9 @@ private:
         test_real_side_row_phase_ = TestRealSideRowPhase::SECOND_ADJUSTED_SCAN;
         test_real_current_scan_cabinet_ = test_real_adjusted_scan_cabinet_;
         test_real_after_exit_action_ = TestRealAfterExitAction::REENTER_ADJUSTED;
-        set_test_real_state(State::TEST_REAL_EXIT_GAP, "2号柜扫描完成，倒退出缝");
+        set_test_real_state(
+          State::TEST_REAL_EXIT_GAP,
+          "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，倒退出缝");
         return;
 
       case TestRealSideRowPhase::SECOND_ADJUSTED_SCAN:
@@ -4501,7 +5422,9 @@ private:
           "cabinet=" + std::to_string(cabinet_id) + " scan finished, final exit");
         test_real_side_row_phase_ = TestRealSideRowPhase::COMPLETE;
         test_real_after_exit_action_ = TestRealAfterExitAction::FINAL_CLOSE_AND_DONE;
-        set_test_real_state(State::TEST_REAL_FINAL_EXIT_GAP, "1号柜扫描完成，最终倒退出缝");
+        set_test_real_state(
+          State::TEST_REAL_FINAL_EXIT_GAP,
+          "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，最终倒退出缝");
         return;
 
       case TestRealSideRowPhase::NONE:
@@ -4808,6 +5731,21 @@ private:
       return;
     }
 
+    if (should_start_overall_test(*request)) {
+      const auto sequence = overall_test_sequence_from_request(*request);
+      std::string overall_reason;
+      if (!start_overall_test_sequence(sequence, overall_reason)) {
+        response->success = false;
+        response->message = overall_reason;
+        publish_overall_test_log(response->message);
+        return;
+      }
+      response->success = true;
+      response->message =
+        "整体盘库测试队列已接收 sequence=" + cabinet_unit_to_string(overall_test_sequence_);
+      return;
+    }
+
     if (test_real_motion_enabled_) {
       publish_test_real_log("real motion enabled");
       if (test_real_side_row_enabled_ && is_valid_test_real_side_row_request(*request)) {
@@ -5013,7 +5951,10 @@ private:
     (void)request;
 
     if (test_gap_scan_active_) {
-      if (test_real_motion_active_) {
+      if (overall_test_active_) {
+        fail_overall_test("收到取消请求，停止整体盘库测试");
+        response->message = "整体盘库测试已请求停止";
+      } else if (test_real_motion_active_) {
         fail_test_real_motion("收到取消请求，停止测试真实运动");
         response->message = "测试真实运动已请求停止";
       } else {
@@ -5146,7 +6087,9 @@ private:
     if (!current_gap_plan_.valid) {
       std::string reason;
       if (!resolve_current_gap_plan(reason)) {
-        if (test_real_motion_active_) {
+        if (overall_test_active_) {
+          fail_overall_test("无法生成找缝规划: " + reason);
+        } else if (test_real_motion_active_) {
           fail_test_real_motion("无法生成找缝规划: " + reason);
         } else {
           mission_active_ = false;
@@ -5159,7 +6102,9 @@ private:
     if (!current_entry_profile_valid_) {
       std::string reason;
       if (!configure_current_entry_profile(reason)) {
-        if (test_real_motion_active_) {
+        if (overall_test_active_) {
+          fail_overall_test("无法生成入缝深度规划: " + reason);
+        } else if (test_real_motion_active_) {
           fail_test_real_motion("无法生成入缝深度规划: " + reason);
         } else {
           mission_active_ = false;
@@ -5172,7 +6117,9 @@ private:
     }
     std::string timeout_reason;
     if (!validate_search_gap_timeout_config(timeout_reason)) {
-      if (test_real_motion_active_) {
+      if (overall_test_active_) {
+        fail_overall_test("SEARCH_GAP超时参数非法: " + timeout_reason);
+      } else if (test_real_motion_active_) {
         fail_test_real_motion("SEARCH_GAP超时参数非法: " + timeout_reason);
       } else {
         mission_active_ = false;
@@ -5190,7 +6137,13 @@ private:
       "跟踪稳定，按物理单元找缝 direction=" +
       search_direction_to_string(current_gap_plan_.search_direction) +
       " gap=" + gap_plan_to_string(current_gap_plan_);
-    if (test_real_motion_active_) {
+    if (overall_test_active_) {
+      test_real_gap_searching_ = true;
+      publish_overall_test_log(
+        "waiting/searching gap target=" + std::to_string(current_target_cabinet_) +
+        " direction=" + search_direction_to_string(current_gap_plan_.search_direction));
+      set_state(State::OVERALL_TEST_WAITING_GAP, "[OVERALL_TEST] " + detail);
+    } else if (test_real_motion_active_) {
       test_real_gap_searching_ = true;
       publish_test_real_log("waiting/searching gap=" + active_test_real_gap_id());
       set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
@@ -5205,7 +6158,10 @@ private:
     latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
     set_wait_gap_phase(WaitGapPhase::STOP_BEFORE_DETECT);
     publish_entry_side();
-    if (test_real_motion_active_) {
+    if (overall_test_active_) {
+      test_real_gap_searching_ = false;
+      set_state(State::OVERALL_TEST_WAITING_GAP, "[OVERALL_TEST] " + detail);
+    } else if (test_real_motion_active_) {
       test_real_gap_searching_ = false;
       set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
     } else {
@@ -5222,7 +6178,10 @@ private:
     reset_segment_distance();
     set_wait_gap_phase(WaitGapPhase::RETREATING);
     publish_entry_side();
-    if (test_real_motion_active_) {
+    if (overall_test_active_) {
+      test_real_gap_searching_ = false;
+      set_state(State::OVERALL_TEST_WAITING_GAP, "[OVERALL_TEST] " + detail);
+    } else if (test_real_motion_active_) {
       test_real_gap_searching_ = false;
       set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
     } else {
@@ -5313,6 +6272,10 @@ private:
   void fail_entering_gap(const std::string & reason)
   {
     publish_stop();
+    if (overall_test_active_) {
+      fail_overall_test(reason);
+      return;
+    }
     if (test_real_motion_active_) {
       fail_test_real_motion(reason);
       return;
@@ -5361,7 +6324,11 @@ private:
     const std::string state_detail =
       detail + "，开始转入缝隙 target_straight_distance=" +
       std::to_string(target_straight_distance_) + "m";
-    if (test_real_motion_active_) {
+    if (overall_test_active_) {
+      publish_overall_test_log(
+        "entering gap for cabinet=" + std::to_string(current_target_cabinet_));
+      set_state(State::OVERALL_TEST_ENTERING_GAP, "[OVERALL_TEST] " + state_detail);
+    } else if (test_real_motion_active_) {
       publish_test_real_log("entering gap for cabinet=" + std::to_string(current_target_cabinet_));
       set_test_real_state(State::TEST_REAL_ENTERING_GAP, state_detail);
     } else {
@@ -5542,7 +6509,9 @@ private:
             if (!start_next_adjust_motion()) {
               mission_active_ = false;
               publish_stop();
-              if (test_real_motion_active_) {
+              if (overall_test_active_) {
+                fail_overall_test("缝隙检测失败且调整序列耗尽");
+              } else if (test_real_motion_active_) {
                 fail_test_real_motion("缝隙检测失败且调整序列耗尽");
               } else {
                 set_state(State::ERROR, "缝隙检测失败且调整序列耗尽");
@@ -5777,7 +6746,14 @@ private:
           straight_done = true;
           publish_stop();
           log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, true);
-          if (test_real_motion_active_) {
+          if (overall_test_active_) {
+            test_real_last_entering_straight_distance_ =
+              std::max(traveled, target_straight_distance_);
+            set_state(
+              State::OVERALL_TEST_SCAN_PLACEHOLDER,
+              "[OVERALL_TEST] reached depth-grid center, start placeholder scan cabinet=" +
+              std::to_string(current_target_cabinet_));
+          } else if (test_real_motion_active_) {
             test_real_last_entering_straight_distance_ =
               std::max(traveled, target_straight_distance_);
             State scan_state = State::TEST_REAL_IN_GAP_SCAN;
@@ -5842,7 +6818,9 @@ private:
       set_corridor_mode(false, false);
       publish_stop();
       request_recognizer_enable(false);
-      if (test_real_motion_active_) {
+      if (overall_test_active_) {
+        fail_overall_test("跟踪阶段目标丢失，安全停车并终止整体盘库测试");
+      } else if (test_real_motion_active_) {
         fail_test_real_motion("跟踪阶段目标丢失，安全停车并终止测试真实运动");
       } else {
         mission_active_ = false;
@@ -6174,7 +7152,9 @@ private:
 
       case State::TEST_DONE: {
         (void)web_api_client_.reportRobotStatus("TEST_DONE");
-        if (test_real_motion_active_) {
+        if (overall_test_active_) {
+          publish_overall_test_log("done, back to IDLE");
+        } else if (test_real_motion_active_) {
           publish_test_real_log("done, back to IDLE");
         } else {
           publish_test_scan_log("all test gaps finished");
@@ -6186,10 +7166,10 @@ private:
         test_real_close_requested_ = false;
         test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
         if (test_real_side_row_active_) {
-          publish_test_real_log(
-            "[return] last start pose saved, return-home integration pending");
+          publish_test_real_log("[return] side-row real motion completed");
         }
         reset_test_real_side_row_context();
+        reset_overall_test_context();
         test_gap_scan_active_ = false;
         test_gap_scan_queue_.clear();
         test_current_gap_index_ = 0;
@@ -6199,7 +7179,10 @@ private:
 
       case State::TEST_ERROR: {
         (void)web_api_client_.reportRobotStatus("TEST_ERROR");
-        if (test_real_motion_active_) {
+        if (overall_test_active_) {
+          stop_test_real_motion_controls();
+          publish_overall_test_log("overall test failed: " + test_gap_scan_error_reason_);
+        } else if (test_real_motion_active_) {
           stop_test_real_motion_controls();
           publish_test_real_log("test real motion failed: " + test_gap_scan_error_reason_);
         } else {
@@ -6212,6 +7195,7 @@ private:
         test_real_close_requested_ = false;
         test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
         reset_test_real_side_row_context();
+        reset_overall_test_context();
         test_gap_scan_active_ = false;
         test_gap_scan_queue_.clear();
         test_current_gap_index_ = 0;
@@ -6253,6 +7237,62 @@ private:
       case State::TEST_REAL_NEXT_GAP_SCAN:
       case State::TEST_REAL_FINAL_EXIT_GAP: {
         handle_test_gap_scan_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_PREPARE_TARGET: {
+        publish_stop();
+        break;
+      }
+
+      case State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE: {
+        handle_nav_route_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_FINAL_RECOGNITION_WAIT: {
+        handle_overall_test_final_recognition_wait_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH: {
+        handle_overall_same_side_recognition_search_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_TARGET_RECOGNITION: {
+        handle_target_tracking_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_WAITING_GAP: {
+        if (test_real_gap_searching_) {
+          handle_search_gap_state();
+        } else {
+          handle_waiting_gap_state();
+        }
+        break;
+      }
+
+      case State::OVERALL_TEST_ENTERING_GAP: {
+        handle_entering_gap_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_SCAN_PLACEHOLDER: {
+        handle_overall_test_scan_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_EXIT_GAP: {
+        handle_test_real_exit_gap_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_ADVANCE_NEXT_TARGET:
+      case State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES:
+      case State::OVERALL_TEST_DONE: {
+        publish_stop();
         break;
       }
 
@@ -6347,7 +7387,9 @@ private:
       case State::IDLE:
       case State::DONE:
       case State::ERROR:
-        if (test_real_motion_active_) {
+        if (overall_test_active_) {
+          fail_overall_test("正式流程进入 ERROR，停止整体盘库测试");
+        } else if (test_real_motion_active_) {
           fail_test_real_motion("正式流程进入 ERROR，停止测试真实运动");
         }
         break;
@@ -6559,6 +7601,16 @@ private:
   double test_real_grid_move_timeout_sec_{10.0};
   bool test_real_grid_move_return_between_layers_{false};
   bool test_real_close_gap_after_final_exit_{true};
+  bool overall_test_enabled_{true};
+  std::vector<int> overall_test_sequence_{4, 3, 8, 7};
+  std::string overall_test_left_route_{"left_route"};
+  std::string overall_test_right_route_{"right_route"};
+  bool overall_test_return_home_between_sides_{true};
+  bool overall_test_return_home_after_done_{true};
+  bool overall_test_same_side_next_search_enabled_{true};
+  double overall_test_same_side_search_speed_{0.04};
+  double overall_test_same_side_search_timeout_sec_{20.0};
+  double overall_test_final_recognition_wait_sec_{8.0};
   int test_scan_layers_{2};
   int test_scan_depth_count_{3};
   std::string test_default_scan_side_{"left"};
@@ -6607,6 +7659,17 @@ private:
   rclcpp::Time test_real_grid_move_start_time_{0, 0, RCL_ROS_TIME};
   double test_real_grid_move_target_distance_{0.0};
   double test_real_grid_move_cmd_speed_{0.0};
+  bool overall_test_active_{false};
+  std::size_t overall_test_index_{0};
+  int overall_test_current_target_{-1};
+  int overall_test_next_target_{-1};
+  std::string overall_test_current_side_;
+  std::string overall_test_current_route_;
+  OverallTestReturnReason overall_test_return_reason_{OverallTestReturnReason::NONE};
+  bool overall_test_waiting_return_home_for_side_switch_{false};
+  bool overall_test_waiting_return_home_for_done_{false};
+  rclcpp::Time overall_test_same_side_search_start_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time overall_test_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
   wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   wheeltec_inventory_system::ScanSequenceExecutor scan_sequence_executor_;
   wheeltec_inventory_system::WebApiClient web_api_client_;
