@@ -30,6 +30,12 @@ def generate_launch_description():
             'image_height': 480,
             'framerate': 30.0,
             'pixel_format': 'mjpeg2rgb',
+
+
+            # C100 image controls
+            'brightness': 0,
+            'contrast': 40,
+            'backlight_compensation': 0,
         }],
         remappings=[
             ('image_raw', '/c100_right/image_raw'),
