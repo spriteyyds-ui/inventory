@@ -635,7 +635,7 @@ private:
   {
     bool active{false};
     std::string status{"NOT_EVALUATED"};
-    std::string target_side{"left"};
+    std::string entry_side{"left"};
     double target_distance{0.60};
     double left_side_dist{std::numeric_limits<double>::infinity()};
     double right_side_dist{std::numeric_limits<double>::infinity()};
@@ -1373,6 +1373,7 @@ private:
     std::map<std::string, RouteConfig> routes;
     std::map<std::string, std::string> side_route_map;
     std::map<int, std::string> cabinet_side_map;
+    std::map<int, std::string> cabinet_entry_side_map;
 
     try {
       const auto route_path = resolve_route_config_path(route_waypoints_file_);
@@ -1385,6 +1386,7 @@ private:
       const YAML::Node route_root = root["routes"];
       const YAML::Node side_route_root = root["side_route_map"];
       const YAML::Node cabinet_side_root = root["cabinet_side_map"];
+      const YAML::Node cabinet_entry_side_root = root["cabinet_entry_side_map"];
       if (!route_root || !route_root.IsMap()) {
         reason = "route_waypoints.yaml 缺少 routes 映射";
         return false;
@@ -1460,36 +1462,81 @@ private:
         return false;
       }
 
-      for (const auto map_item : cabinet_side_root) {
-        int cabinet_id = -1;
-        const std::string cabinet_text = map_item.first.as<std::string>();
-        if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
-          reason = "cabinet_side_map 货柜号非法: " + cabinet_text;
-          return false;
-        }
+      const auto parse_cabinet_side_map =
+        [&reason](
+        const YAML::Node & map_root,
+        const std::string & map_name,
+        std::map<int, std::string> & parsed_map) -> bool
+        {
+          parsed_map.clear();
+          for (const auto map_item : map_root) {
+            int cabinet_id = -1;
+            const std::string cabinet_text = map_item.first.as<std::string>();
+            if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
+              reason = map_name + " 货柜号非法: " + cabinet_text;
+              return false;
+            }
 
-        if (!map_item.second.IsScalar()) {
-          reason = "cabinet_side_map 条目必须直接映射到 left/right: " + cabinet_text;
+            if (!map_item.second.IsScalar()) {
+              reason = map_name + " 条目必须直接映射到 left/right: " + cabinet_text;
+              return false;
+            }
+            std::string side;
+            if (!MissionManagerNode::try_normalize_entry_side(map_item.second.as<std::string>(), side)) {
+              reason = map_name + " side 必须为 left/right: " + cabinet_text;
+              return false;
+            }
+            parsed_map[cabinet_id] = side;
+          }
+          return true;
+        };
+
+      if (!parse_cabinet_side_map(cabinet_side_root, "cabinet_side_map", cabinet_side_map)) {
+        return false;
+      }
+
+      if (cabinet_entry_side_root) {
+        if (!cabinet_entry_side_root.IsMap()) {
+          reason = "route_waypoints.yaml cabinet_entry_side_map 必须为映射";
           return false;
         }
-        std::string target_side;
-        if (!try_normalize_entry_side(map_item.second.as<std::string>(), target_side)) {
-          reason = "cabinet_side_map side 必须为 left/right: " + cabinet_text;
+        if (!parse_cabinet_side_map(
+            cabinet_entry_side_root, "cabinet_entry_side_map", cabinet_entry_side_map))
+        {
           return false;
         }
-        cabinet_side_map[cabinet_id] = target_side;
+      } else {
+        RCLCPP_WARN(
+          get_logger(),
+          "route_waypoints.yaml 缺少 cabinet_entry_side_map，将回退为 cabinet_side_map");
+      }
+
+      for (const auto & side_pair : cabinet_side_map) {
+        if (cabinet_entry_side_map.find(side_pair.first) != cabinet_entry_side_map.end()) {
+          continue;
+        }
+        cabinet_entry_side_map[side_pair.first] = side_pair.second;
+        if (cabinet_entry_side_root) {
+          RCLCPP_WARN(
+            get_logger(),
+            "cabinet_entry_side_map 缺少货柜%d，回退为 cabinet_side_map side=%s",
+            side_pair.first,
+            side_pair.second.c_str());
+        }
       }
 
       route_configs_ = routes;
       side_route_map_ = side_route_map;
       cabinet_side_map_ = cabinet_side_map;
+      cabinet_entry_side_map_ = cabinet_entry_side_map;
       RCLCPP_INFO(
         get_logger(),
-        "已加载巡航路线配置: %s routes=%zu side_route_map=%zu cabinet_side_map=%zu",
+        "已加载巡航路线配置: %s routes=%zu side_route_map=%zu cabinet_side_map=%zu cabinet_entry_side_map=%zu",
         route_path.string().c_str(),
         route_configs_.size(),
         side_route_map_.size(),
-        cabinet_side_map_.size());
+        cabinet_side_map_.size(),
+        cabinet_entry_side_map_.size());
       return true;
     } catch (const std::exception & ex) {
       reason = "解析路线配置失败: " + std::string(ex.what());
@@ -1652,7 +1699,7 @@ private:
 
   std::string entry_turn_direction_text() const
   {
-    return current_target_side_ == "right" ? "right(angular.z<0)" : "left(angular.z>0)";
+    return current_entry_side_ == "right" ? "right(angular.z<0)" : "left(angular.z>0)";
   }
 
   bool configure_current_entry_profile(std::string & reason)
@@ -1713,12 +1760,13 @@ private:
   {
     RCLCPP_INFO(
       get_logger(),
-      "目标任务解析: target_cabinet=%d target_side=%s target_level_index=%d "
+      "目标任务解析: target_cabinet=%d target_side=%s entry_side=%s target_level_index=%d "
       "target_depth_index=%d target_depth_center_m=%.3f entry_center_offset_m=%.3f "
       "target_straight_distance=%.3f physical_unit=%s expected_gap=%s "
       "search_direction=%s entry_turn_direction=%s grid_center_entry=%s",
       current_target_cabinet_,
       current_target_side_.c_str(),
+      current_entry_side_.c_str(),
       current_target_level_index_,
       current_target_depth_index_,
       target_depth_center_m_,
@@ -1738,7 +1786,7 @@ private:
     }
 
     std_msgs::msg::String msg;
-    msg.data = current_target_side_;
+    msg.data = current_entry_side_;
     entry_side_pub_->publish(msg);
   }
 
@@ -1984,6 +2032,17 @@ private:
     }
 
     const std::string target_side = normalize_entry_side(side_it->second);
+    const auto entry_side_it = cabinet_entry_side_map_.find(current_target_cabinet_);
+    std::string entry_side = target_side;
+    if (entry_side_it == cabinet_entry_side_map_.end()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "目标货柜%d未配置 entry_side，回退使用 target_side=%s",
+        current_target_cabinet_,
+        target_side.c_str());
+    } else {
+      entry_side = normalize_entry_side(entry_side_it->second);
+    }
     const auto side_route_it = side_route_map_.find(target_side);
     if (side_route_it == side_route_map_.end()) {
       reason = "目标侧未配置巡航路线: " + target_side;
@@ -1999,12 +2058,16 @@ private:
     current_route_ = route_it->second;
     current_route_name_ = current_route_.name;
     current_target_side_ = target_side;
+    current_entry_side_ = entry_side;
     RCLCPP_INFO(
       get_logger(),
-      "目标货柜%d解析: route=%s side=%s waypoints=%zu",
+      "目标货柜%d解析: route=%s target_side=%s warehouse_side=%s entry_side=%s detection_side=%s waypoints=%zu",
       current_target_cabinet_,
       current_route_name_.c_str(),
       current_target_side_.c_str(),
+      current_target_side_.c_str(),
+      current_entry_side_.c_str(),
+      current_entry_side_.c_str(),
       current_route_.waypoints.size());
     publish_entry_side();
     return true;
@@ -2429,7 +2492,7 @@ private:
   bool evaluate_entry_side_distance_hold(EntrySideHoldEval & eval)
   {
     eval = EntrySideHoldEval{};
-    eval.target_side = current_target_side_;
+    eval.entry_side = current_entry_side_;
     eval.target_distance = entry_side_hold_target_distance_m_;
 
     if (!latest_scan_ || (this->now() - latest_scan_stamp_).seconds() > max_scan_age_sec_) {
@@ -2438,8 +2501,8 @@ private:
         get_logger(),
         *get_clock(),
         2000,
-        "entry side distance hold disabled: target_side=%s reason=%s",
-        eval.target_side.c_str(),
+        "entry side distance hold disabled: entry_side=%s reason=%s",
+        eval.entry_side.c_str(),
         eval.status.c_str());
       return false;
     }
@@ -2457,23 +2520,23 @@ private:
       eval.right_side_dist,
       eval.right_valid_points);
 
-    const bool target_is_right = eval.target_side == "right";
-    const std::size_t target_points = target_is_right ?
+    const bool entry_is_right = eval.entry_side == "right";
+    const std::size_t entry_points = entry_is_right ?
       eval.right_valid_points : eval.left_valid_points;
-    eval.control_side_dist = target_is_right ? eval.right_side_dist : eval.left_side_dist;
+    eval.control_side_dist = entry_is_right ? eval.right_side_dist : eval.left_side_dist;
     const int required_points = std::max(1, entry_side_hold_min_valid_points_);
 
     if (!std::isfinite(eval.control_side_dist) ||
-      target_points < static_cast<std::size_t>(required_points))
+      entry_points < static_cast<std::size_t>(required_points))
     {
-      eval.status = target_is_right ? "INSUFFICIENT_RIGHT_POINTS" : "INSUFFICIENT_LEFT_POINTS";
+      eval.status = entry_is_right ? "INSUFFICIENT_RIGHT_POINTS" : "INSUFFICIENT_LEFT_POINTS";
       RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
         2000,
-        "entry side distance hold disabled: target_side=%s reason=%s left_side_dist=%.3f "
+        "entry side distance hold disabled: entry_side=%s reason=%s left_side_dist=%.3f "
         "right_side_dist=%.3f left_points=%zu right_points=%zu required_points=%d",
-        eval.target_side.c_str(),
+        eval.entry_side.c_str(),
         eval.status.c_str(),
         eval.left_side_dist,
         eval.right_side_dist,
@@ -2484,7 +2547,7 @@ private:
     }
 
     eval.side_error = eval.control_side_dist - eval.target_distance;
-    eval.side_distance_cmd = target_is_right ?
+    eval.side_distance_cmd = entry_is_right ?
       -entry_side_hold_kp_ * eval.side_error :
       entry_side_hold_kp_ * eval.side_error;
     eval.active = true;
@@ -2516,7 +2579,7 @@ private:
   EnteringSafetyEval evaluate_entering_safety() const
   {
     EnteringSafetyEval eval;
-    eval.active_side = current_target_side_;
+    eval.active_side = current_entry_side_;
 
     if (use_scan_safety_) {
       if (!latest_scan_ || (this->now() - latest_scan_stamp_).seconds() > max_scan_age_sec_) {
@@ -2528,7 +2591,7 @@ private:
 
       eval.front_min_dist = min_scan_range_in_sector(
         *latest_scan_, enter_front_sector_start_deg_, enter_front_sector_end_deg_);
-      if (current_target_side_ == "right") {
+      if (current_entry_side_ == "right") {
         eval.front_side_min_dist = min_scan_range_in_sector(
           *latest_scan_, enter_front_right_sector_start_deg_, enter_front_right_sector_end_deg_);
         eval.side_min_dist = min_scan_range_in_sector(
@@ -2556,9 +2619,9 @@ private:
         if (eval.front_min_dist < enter_stop_distance_) {
           eval.block_reason = "BLOCKED_FRONT";
         } else if (eval.front_side_min_dist < enter_stop_distance_) {
-          eval.block_reason = current_target_side_ == "right" ? "BLOCKED_FRONT_RIGHT" : "BLOCKED_FRONT_LEFT";
+          eval.block_reason = current_entry_side_ == "right" ? "BLOCKED_FRONT_RIGHT" : "BLOCKED_FRONT_LEFT";
         } else {
-          eval.block_reason = current_target_side_ == "right" ? "BLOCKED_RIGHT_SIDE" : "BLOCKED_LEFT_SIDE";
+          eval.block_reason = current_entry_side_ == "right" ? "BLOCKED_RIGHT_SIDE" : "BLOCKED_LEFT_SIDE";
         }
         return eval;
       }
@@ -4959,7 +5022,7 @@ private:
 
     reset_entry_gap_runtime();
     entry_turn_start_yaw_ = current.yaw;
-    const double signed_delta = current_target_side_ == "right" ?
+    const double signed_delta = current_entry_side_ == "right" ?
       -std::abs(entry_turn_yaw_delta_rad_) : std::abs(entry_turn_yaw_delta_rad_);
     target_gap_yaw_ = normalize_angle(entry_turn_start_yaw_ + signed_delta);
     reset_segment_distance();
@@ -5028,7 +5091,7 @@ private:
 
     const std::string detected_side = latest_gap_.active_side.empty() ?
       latest_gap_.side : latest_gap_.active_side;
-    if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_target_side_) {
+    if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_entry_side_) {
       publish_stop();
       begin_waiting_gap_confirmation_flow("SEARCH_GAP检测到候选间隙，停车确认宽度/稳定性/安全距离");
       return;
@@ -5056,8 +5119,9 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "search_gap: side=%s direction=%s expected_gap=%s speed=%.3f",
+      "search_gap: target_side=%s entry_side=%s direction=%s expected_gap=%s speed=%.3f",
       current_target_side_.c_str(),
+      current_entry_side_.c_str(),
       search_direction_to_string(current_gap_plan_.search_direction).c_str(),
       gap_plan_to_string(current_gap_plan_).c_str(),
       cmd.linear.x);
@@ -5095,7 +5159,7 @@ private:
 
         const std::string detected_side = latest_gap_.active_side.empty() ?
           latest_gap_.side : latest_gap_.active_side;
-        if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_target_side_) {
+        if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_entry_side_) {
           begin_entering_gap_flow("检测到可入缝");
           return;
         }
@@ -5196,8 +5260,8 @@ private:
       straight_start_text << "invalid";
     }
     const std::string straight_start = straight_start_text.str();
-    const std::string target_side_text = side_hold.status == "NOT_EVALUATED" ?
-      current_target_side_ : side_hold.target_side;
+    const std::string entry_side_text = side_hold.status == "NOT_EVALUATED" ?
+      current_entry_side_ : side_hold.entry_side;
 
     RCLCPP_INFO_THROTTLE(
       get_logger(),
@@ -5206,7 +5270,7 @@ private:
       "entering_gap: phase=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
       "current_yaw=%.3f yaw_error=%.3f angular.z=%.3f straight_start_pose=(%s) "
       "traveled=%.3f target_straight_distance=%.3f turn_done=%d straight_done=%d "
-      "target_side=%s left_side_dist=%.3f right_side_dist=%.3f control_side_dist=%.3f "
+      "entry_side=%s left_side_dist=%.3f right_side_dist=%.3f control_side_dist=%.3f "
       "side_error=%.3f yaw_hold_cmd=%.3f side_distance_cmd=%.3f final_angular_cmd=%.3f "
       "side_hold_status=%s side_points[left=%zu,right=%zu] safety_stop=%d safety_reason=%s "
       "front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f",
@@ -5221,7 +5285,7 @@ private:
       target_straight_distance_,
       turn_done ? 1 : 0,
       straight_done ? 1 : 0,
-      target_side_text.c_str(),
+      entry_side_text.c_str(),
       side_hold.left_side_dist,
       side_hold.right_side_dist,
       side_hold.control_side_dist,
@@ -5308,7 +5372,7 @@ private:
           return;
         }
 
-        const double turn_direction = current_target_side_ == "right" ? -1.0 : 1.0;
+        const double turn_direction = current_entry_side_ == "right" ? -1.0 : 1.0;
         geometry_msgs::msg::Twist cmd;
         cmd.linear.x = std::abs(entry_turn_linear_speed_) * safety.speed_scale;
         angular_z = turn_direction * std::abs(entry_turn_angular_speed_) * safety.speed_scale;
@@ -5965,6 +6029,7 @@ private:
   std::map<std::string, RouteConfig> route_configs_;
   std::map<std::string, std::string> side_route_map_;
   std::map<int, std::string> cabinet_side_map_;
+  std::map<int, std::string> cabinet_entry_side_map_;
   std::map<std::string, WarehouseRowLayout> warehouse_rows_by_side_;
   std::vector<TestGapScanPlan> configured_test_inventory_plan_{
     TestGapScanPlan{"gap_03_02", std::vector<int>{3, 2, 1}},
@@ -5979,6 +6044,7 @@ private:
   TargetGapPlan current_gap_plan_;
   std::string current_route_name_;
   std::string current_target_side_{"left"};
+  std::string current_entry_side_{"left"};
   bool routes_loaded_{false};
   bool warehouse_layout_loaded_{false};
   bool test_gap_scan_config_loaded_{false};

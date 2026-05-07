@@ -14,7 +14,7 @@ test_real_motion_single_cabinet_only: true
 test_real_motion_target_cabinet: 4
 test_real_motion_target_gap: gap_02_03_04
 test_real_motion_stop_after_scan: false
-test_real_final_recognition_wait_sec: 8.0
+test_real_final_recognition_wait_sec: 20.0
 
 test_real_side_row_enabled: true
 test_real_side_row_name: row_01_02_03_04
