@@ -1,5 +1,8 @@
 #include <algorithm>
+#include <cctype>
+#include <chrono>
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <string>
@@ -8,7 +11,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
 #include "std_msgs/msg/float32.hpp"
-#include "wheeltec_inventory_system/msg/recognized_number.hpp"
+#include "std_msgs/msg/string.hpp"
 
 class DistanceEstimatorNode : public rclcpp::Node
 {
@@ -17,44 +20,47 @@ public:
   : Node("distance_estimator_node")
   {
     scan_topic_ = declare_parameter<std::string>("scan_topic", "/scan");
-    recognized_topic_ = declare_parameter<std::string>(
-      "recognized_topic", "/inventory/recognized_number");
     output_topic_ = declare_parameter<std::string>("output_topic", "/inventory/target_distance");
+    target_lidar_side_topic_ = declare_parameter<std::string>(
+      "target_lidar_side_topic", "/inventory/target_lidar_side");
+    default_lidar_side_ = normalize_lidar_side(
+      declare_parameter<std::string>("default_lidar_side", "right"));
+    if (default_lidar_side_.empty()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "default_lidar_side 参数非法，回退为 right");
+      default_lidar_side_ = "right";
+    }
+    active_lidar_side_ = default_lidar_side_;
 
-    fusion_mode_ = declare_parameter<std::string>("fusion_mode", "hybrid");
-    recognition_timeout_sec_ = declare_parameter<double>("recognition_timeout_sec", 0.8);
-
-    visual_min_distance_ = declare_parameter<double>("visual_min_distance", 0.2);
-    visual_max_distance_ = declare_parameter<double>("visual_max_distance", 5.0);
-
-    camera_hfov_deg_ = declare_parameter<double>("camera_hfov_deg", 60.0);
-    camera_image_width_px_ = declare_parameter<double>("camera_image_width_px", 640.0);
-    lidar_window_deg_ = declare_parameter<double>("lidar_window_deg", 10.0);
-    min_valid_range_ = declare_parameter<double>("min_valid_range", 0.05);
-    max_valid_range_ = declare_parameter<double>("max_valid_range", 8.0);
-
-    tracking_range_sector_start_deg_ =
-      declare_parameter<double>("tracking_range_sector_start_deg", -10.0);
-    tracking_range_sector_end_deg_ =
-      declare_parameter<double>("tracking_range_sector_end_deg", 10.0);
-    tracking_min_valid_points_ =
-      declare_parameter<int>("tracking_min_valid_points", 5);
-    tracking_use_median_ =
-      declare_parameter<bool>("tracking_use_median", true);
-    tracking_low_percentile_ =
-      declare_parameter<double>("tracking_low_percentile", 0.35);
-    tracking_distance_filter_alpha_ =
-      declare_parameter<double>("tracking_distance_filter_alpha", 0.35);
-    tracking_min_valid_distance_ =
-      declare_parameter<double>("tracking_min_valid_distance", 0.10);
-    tracking_max_valid_distance_ =
-      declare_parameter<double>("tracking_max_valid_distance", 5.00);
-    tracking_prioritize_lidar_ =
-      declare_parameter<bool>("tracking_prioritize_lidar", true);
-    tracking_visual_fallback_when_lidar_missing_ =
-      declare_parameter<bool>("tracking_visual_fallback_when_lidar_missing", true);
-
+    left_lidar_center_deg_ = declare_parameter<double>("left_lidar_center_deg", 90.0);
+    right_lidar_center_deg_ = declare_parameter<double>("right_lidar_center_deg", -90.0);
+    side_lidar_window_deg_ = declare_parameter<double>("side_lidar_window_deg", 10.0);
+    min_valid_distance_ = declare_parameter<double>("min_valid_distance", 0.05);
+    max_valid_distance_ = declare_parameter<double>("max_valid_distance", 10.0);
     publish_rate_hz_ = declare_parameter<double>("publish_rate_hz", 10.0);
+
+    if (!std::isfinite(side_lidar_window_deg_) || side_lidar_window_deg_ <= 0.0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "side_lidar_window_deg 参数非法 %.3f，回退为 10.0",
+        side_lidar_window_deg_);
+      side_lidar_window_deg_ = 10.0;
+    }
+    if (!std::isfinite(min_valid_distance_) || min_valid_distance_ < 0.0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "min_valid_distance 参数非法 %.3f，回退为 0.05",
+        min_valid_distance_);
+      min_valid_distance_ = 0.05;
+    }
+    if (!std::isfinite(max_valid_distance_) || max_valid_distance_ <= min_valid_distance_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "max_valid_distance 参数非法 %.3f，回退为 10.0",
+        max_valid_distance_);
+      max_valid_distance_ = 10.0;
+    }
 
     distance_pub_ = create_publisher<std_msgs::msg::Float32>(output_topic_, 10);
 
@@ -65,12 +71,23 @@ public:
         latest_scan_ = msg;
       });
 
-    recognized_sub_ = create_subscription<wheeltec_inventory_system::msg::RecognizedNumber>(
-      recognized_topic_,
-      10,
-      [this](const wheeltec_inventory_system::msg::RecognizedNumber::SharedPtr msg) {
-        latest_recognition_ = msg;
-        latest_recognition_time_ = this->now();
+    target_lidar_side_sub_ = create_subscription<std_msgs::msg::String>(
+      target_lidar_side_topic_,
+      rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
+      [this](const std_msgs::msg::String::SharedPtr msg) {
+        const std::string side = normalize_lidar_side(msg->data);
+        if (side.empty()) {
+          RCLCPP_WARN(
+            get_logger(),
+            "[distance_estimator] ignore invalid target_lidar_side=%s",
+            msg->data.c_str());
+          return;
+        }
+        active_lidar_side_ = side;
+        RCLCPP_INFO(
+          get_logger(),
+          "[distance_estimator] active target_lidar_side=%s",
+          active_lidar_side_.c_str());
       });
 
     const double period = 1.0 / std::max(1.0, publish_rate_hz_);
@@ -80,220 +97,155 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "距离估算节点已启动 mode=%s lidar_priority=%d sector=[%.1f,%.1f] min_pts=%d stat=%s q=%.2f alpha=%.2f",
-      fusion_mode_.c_str(),
-      tracking_prioritize_lidar_ ? 1 : 0,
-      tracking_range_sector_start_deg_,
-      tracking_range_sector_end_deg_,
-      tracking_min_valid_points_,
-      tracking_use_median_ ? "median" : "percentile",
-      tracking_low_percentile_,
-      tracking_distance_filter_alpha_);
+      "距离估算节点已启动 lidar_only side=%s left_center=%.1f right_center=%.1f window=%.1f "
+      "valid_range=[%.2f,%.2f]",
+      active_lidar_side_.c_str(),
+      left_lidar_center_deg_,
+      right_lidar_center_deg_,
+      side_lidar_window_deg_,
+      min_valid_distance_,
+      max_valid_distance_);
   }
 
 private:
-  static bool finite_and_positive(double v)
+  struct LidarEstimate
   {
-    return std::isfinite(v) && v > 0.0;
-  }
+    double distance{std::numeric_limits<double>::quiet_NaN()};
+    std::size_t valid_points{0U};
+  };
 
   static double deg2rad(double deg)
   {
     return deg * M_PI / 180.0;
   }
 
-  double visual_distance_estimate(const wheeltec_inventory_system::msg::RecognizedNumber & rec) const
+  static double normalize_angle(double rad)
   {
-    if (!rec.valid || rec.estimated_distance <= 1e-3F) {
-      return std::numeric_limits<double>::quiet_NaN();
-    }
-
-    return std::clamp(
-      static_cast<double>(rec.estimated_distance),
-      visual_min_distance_,
-      visual_max_distance_);
+    return std::atan2(std::sin(rad), std::cos(rad));
   }
 
-  double lidar_distance_estimate(
-    const sensor_msgs::msg::LaserScan & scan,
-    const wheeltec_inventory_system::msg::RecognizedNumber & rec) const
+  static double angular_distance(double a, double b)
   {
+    return std::abs(normalize_angle(a - b));
+  }
+
+  static std::string normalize_lidar_side(const std::string & side)
+  {
+    std::string normalized;
+    normalized.reserve(side.size());
+    for (const char ch : side) {
+      normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+    }
+    if (normalized == "left" || normalized == "right") {
+      return normalized;
+    }
+    return "";
+  }
+
+  double active_lidar_center_deg() const
+  {
+    return active_lidar_side_ == "left" ? left_lidar_center_deg_ : right_lidar_center_deg_;
+  }
+
+  LidarEstimate estimate_side_lidar_distance(const sensor_msgs::msg::LaserScan & scan) const
+  {
+    LidarEstimate estimate;
     if (scan.ranges.empty()) {
-      return std::numeric_limits<double>::quiet_NaN();
+      return estimate;
     }
 
-    const double fov_rad = deg2rad(camera_hfov_deg_);
-    const double width = std::max(1.0, camera_image_width_px_);
-    const double target_center_angle =
-      -(static_cast<double>(rec.horizontal_offset) / width) * fov_rad;
-    const double start =
-      target_center_angle + deg2rad(std::min(tracking_range_sector_start_deg_, tracking_range_sector_end_deg_));
-    const double end =
-      target_center_angle + deg2rad(std::max(tracking_range_sector_start_deg_, tracking_range_sector_end_deg_));
+    const double center_rad = deg2rad(active_lidar_center_deg());
+    const double half_window_rad = deg2rad(side_lidar_window_deg_) * 0.5;
 
     std::vector<double> candidates;
     candidates.reserve(scan.ranges.size());
+
     for (std::size_t i = 0; i < scan.ranges.size(); ++i) {
       const double angle = scan.angle_min + static_cast<double>(i) * scan.angle_increment;
-      if (angle < start || angle > end) {
+      if (angular_distance(angle, center_rad) > half_window_rad) {
         continue;
       }
 
-      const double r = scan.ranges[i];
-      if (!std::isfinite(r)) {
+      const double range = static_cast<double>(scan.ranges[i]);
+      if (!std::isfinite(range)) {
         continue;
       }
-      if (r < min_valid_range_ || r > max_valid_range_) {
+      if (range < static_cast<double>(scan.range_min) || range > static_cast<double>(scan.range_max)) {
         continue;
       }
-      if (r < tracking_min_valid_distance_ || r > tracking_max_valid_distance_) {
+      if (range < min_valid_distance_ || range > max_valid_distance_) {
         continue;
       }
-      candidates.push_back(r);
+
+      candidates.push_back(range);
     }
 
-    if (static_cast<int>(candidates.size()) < std::max(1, tracking_min_valid_points_)) {
-      return std::numeric_limits<double>::quiet_NaN();
+    estimate.valid_points = candidates.size();
+    if (candidates.empty()) {
+      return estimate;
     }
 
     std::sort(candidates.begin(), candidates.end());
-    if (tracking_use_median_) {
-      const std::size_t n = candidates.size();
-      if (n % 2 == 1U) {
-        return candidates[n / 2U];
-      }
-      return 0.5 * (candidates[n / 2U - 1U] + candidates[n / 2U]);
+    const std::size_t count = candidates.size();
+    if (count % 2U == 1U) {
+      estimate.distance = candidates[count / 2U];
+    } else {
+      estimate.distance = 0.5 * (candidates[count / 2U - 1U] + candidates[count / 2U]);
     }
-
-    const double q = std::clamp(tracking_low_percentile_, 0.0, 1.0);
-    const std::size_t idx = static_cast<std::size_t>(
-      std::round(q * static_cast<double>(std::max<std::size_t>(1U, candidates.size() - 1U))));
-    return candidates[idx];
-  }
-
-  double filter_lidar_distance(double raw)
-  {
-    if (!finite_and_positive(raw)) {
-      return std::numeric_limits<double>::quiet_NaN();
-    }
-
-    if (!finite_and_positive(filtered_lidar_distance_)) {
-      filtered_lidar_distance_ = raw;
-      return filtered_lidar_distance_;
-    }
-
-    const double alpha = std::clamp(tracking_distance_filter_alpha_, 0.0, 1.0);
-    filtered_lidar_distance_ = alpha * raw + (1.0 - alpha) * filtered_lidar_distance_;
-    return filtered_lidar_distance_;
+    return estimate;
   }
 
   void on_timer()
   {
-    if (!latest_recognition_) {
+    if (!latest_scan_) {
       return;
     }
 
-    if ((this->now() - latest_recognition_time_).seconds() > recognition_timeout_sec_) {
-      return;
-    }
-
-    const auto & rec = *latest_recognition_;
-    if (!rec.valid) {
-      return;
-    }
-
-    const double visual_dist = visual_distance_estimate(rec);
-
-    double lidar_dist_raw = std::numeric_limits<double>::quiet_NaN();
-    if (latest_scan_) {
-      lidar_dist_raw = lidar_distance_estimate(*latest_scan_, rec);
-    }
-    const double lidar_dist = filter_lidar_distance(lidar_dist_raw);
-
-    double fused = std::numeric_limits<double>::quiet_NaN();
-    if (fusion_mode_ == "visual") {
-      fused = visual_dist;
-    } else if (fusion_mode_ == "lidar") {
-      fused = lidar_dist;
-    } else {
-      if (tracking_prioritize_lidar_) {
-        if (finite_and_positive(lidar_dist)) {
-          fused = lidar_dist;
-        } else if (tracking_visual_fallback_when_lidar_missing_) {
-          fused = visual_dist;
-        }
-      } else {
-        if (finite_and_positive(lidar_dist) && finite_and_positive(visual_dist)) {
-          fused = 0.7 * lidar_dist + 0.3 * visual_dist;
-        } else if (finite_and_positive(lidar_dist)) {
-          fused = lidar_dist;
-        } else {
-          fused = visual_dist;
-        }
-      }
-    }
-
-    if (!finite_and_positive(fused)) {
+    const LidarEstimate estimate = estimate_side_lidar_distance(*latest_scan_);
+    if (!std::isfinite(estimate.distance) || estimate.distance <= 0.0) {
       RCLCPP_WARN_THROTTLE(
         get_logger(),
         *get_clock(),
         1000,
-        "目标距离不可用：lidar_raw=%.3f lidar_filt=%.3f visual=%.3f",
-        lidar_dist_raw,
-        lidar_dist,
-        visual_dist);
+        "[distance_estimator] invalid lidar distance: side=%s valid_points=%zu",
+        active_lidar_side_.c_str(),
+        estimate.valid_points);
       return;
     }
 
     std_msgs::msg::Float32 out;
-    out.data = static_cast<float>(fused);
+    out.data = static_cast<float>(estimate.distance);
     distance_pub_->publish(out);
 
     RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
       1200,
-      "target_distance=%.3f (lidar_raw=%.3f lidar=%.3f visual=%.3f mode=%s)",
-      fused,
-      lidar_dist_raw,
-      lidar_dist,
-      visual_dist,
-      fusion_mode_.c_str());
+      "target_distance=%.3f lidar_side=%s lidar_center_deg=%.1f window_deg=%.1f valid_points=%zu",
+      estimate.distance,
+      active_lidar_side_.c_str(),
+      active_lidar_center_deg(),
+      side_lidar_window_deg_,
+      estimate.valid_points);
   }
 
   std::string scan_topic_;
-  std::string recognized_topic_;
   std::string output_topic_;
-  std::string fusion_mode_;
+  std::string target_lidar_side_topic_;
+  std::string default_lidar_side_{"right"};
+  std::string active_lidar_side_{"right"};
 
-  double recognition_timeout_sec_{0.8};
-  double visual_min_distance_{0.2};
-  double visual_max_distance_{5.0};
-
-  double camera_hfov_deg_{60.0};
-  double camera_image_width_px_{640.0};
-  double lidar_window_deg_{10.0};
-  double min_valid_range_{0.05};
-  double max_valid_range_{8.0};
-  double tracking_range_sector_start_deg_{-10.0};
-  double tracking_range_sector_end_deg_{10.0};
-  int tracking_min_valid_points_{5};
-  bool tracking_use_median_{true};
-  double tracking_low_percentile_{0.35};
-  double tracking_distance_filter_alpha_{0.35};
-  double tracking_min_valid_distance_{0.10};
-  double tracking_max_valid_distance_{5.0};
-  bool tracking_prioritize_lidar_{true};
-  bool tracking_visual_fallback_when_lidar_missing_{true};
+  double left_lidar_center_deg_{90.0};
+  double right_lidar_center_deg_{-90.0};
+  double side_lidar_window_deg_{10.0};
+  double min_valid_distance_{0.05};
+  double max_valid_distance_{10.0};
   double publish_rate_hz_{10.0};
 
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
-  wheeltec_inventory_system::msg::RecognizedNumber::SharedPtr latest_recognition_;
-  rclcpp::Time latest_recognition_time_{0, 0, RCL_ROS_TIME};
-  double filtered_lidar_distance_{std::numeric_limits<double>::quiet_NaN()};
 
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-  rclcpp::Subscription<wheeltec_inventory_system::msg::RecognizedNumber>::SharedPtr recognized_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr target_lidar_side_sub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr distance_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };

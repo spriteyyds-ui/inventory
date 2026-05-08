@@ -252,52 +252,22 @@ distance_estimator_node:
   ros__parameters:
     # LaserScan input topic for ranging (topic name).
     scan_topic: /scan
-    # Recognition input topic used for target bearing and validity (topic name).
-    recognized_topic: /inventory/recognized_number
     # Output distance topic for mission tracking control (topic name).
     output_topic: /inventory/target_distance
-    # Fusion mode enum: visual | lidar | hybrid (enum / mode).
-    fusion_mode: hybrid
-    # Maximum recognition age accepted for distance publish (seconds).
-    recognition_timeout_sec: 0.8
-    # Minimum visual fallback distance after clamp (meters).
-    visual_min_distance: 0.2
-    # Maximum visual fallback distance after clamp (meters).
-    visual_max_distance: 5.0
-
-    # Camera horizontal field-of-view for image-to-lidar angle mapping (degrees).
-    camera_hfov_deg: 60.0
-    # Camera image width used by horizontal offset normalization (pixels).
-    camera_image_width_px: 640.0
-    # Legacy lidar local window size (degrees).
-    lidar_window_deg: 10.0
-
-    # Generic minimum accepted lidar range (meters).
-    min_valid_range: 0.05
-    # Generic maximum accepted lidar range (meters).
-    max_valid_range: 8.0
-
-    # Tracking sector start relative to visual target bearing (degrees).
-    tracking_range_sector_start_deg: -3.0
-    # Tracking sector end relative to visual target bearing (degrees).
-    tracking_range_sector_end_deg: 3.0
-    # Minimum valid lidar points required in tracking sector (count).
-    tracking_min_valid_points: 5
-    # True=median statistic, False=low-percentile statistic (boolean / mode).
-    tracking_use_median: true
-    # Low percentile used when tracking_use_median=false (ratio, 0~1).
-    tracking_low_percentile: 0.35
-    # EMA alpha for temporal smoothing of lidar distance (ratio, 0~1).
-    tracking_distance_filter_alpha: 0.35
-    # Tracking-sector minimum accepted lidar distance (meters).
-    tracking_min_valid_distance: 0.10
-    # Tracking-sector maximum accepted lidar distance (meters).
-    tracking_max_valid_distance: 5.00
-    # In hybrid mode, prioritize lidar estimate when available (boolean).
-    tracking_prioritize_lidar: true
-    # In hybrid mode, fallback to visual estimate if lidar is unavailable (boolean).
-    tracking_visual_fallback_when_lidar_missing: true
-
+    # Current target side command from mission_manager (left/right string).
+    target_lidar_side_topic: /inventory/target_lidar_side
+    # Default active LiDAR side before mission_manager publishes the target side.
+    default_lidar_side: right
+    # Left-side target ranging sector center in base frame (degrees).
+    left_lidar_center_deg: 90.0
+    # Right-side target ranging sector center in base frame (degrees).
+    right_lidar_center_deg: -90.0
+    # Side LiDAR sector width around the configured center angle (degrees).
+    side_lidar_window_deg: 6.0
+    # Minimum accepted target LiDAR range after LaserScan range_min filtering (meters).
+    min_valid_distance: 0.05
+    # Maximum accepted target LiDAR range after LaserScan range_max filtering (meters).
+    max_valid_distance: 6.0
     # Publish loop frequency for target distance output (hertz).
     publish_rate_hz: 10.0
 
@@ -422,6 +392,8 @@ mission_manager_node:
     gap_detector_enable_topic: /inventory/gap_detector_enable
     # Entry side topic published to gap_detector (left/right string).
     entry_side_topic: /inventory/entry_side
+    # Target LiDAR side topic published to distance_estimator (left/right string).
+    target_lidar_side_topic: /inventory/target_lidar_side
 
     # Start mission service name (service name).
     start_service_name: /inventory/start_mission
@@ -439,7 +411,7 @@ mission_manager_node:
     # Route search failure policy: error | return.
     route_search_failure_policy: error
     # Desired following distance in TARGET_TRACKING (meters).
-    follow_distance: 0.75
+    follow_distance: 0.50
     # Warehouse longitudinal reference length for return decisions (meters).
     warehouse_length: 12.0
     # Corridor search speed (meters/second).
@@ -529,7 +501,7 @@ mission_manager_node:
     tracking_max_angular: 0.80
 
     # Distance tolerance to consider tracking error small (meters).
-    distance_tolerance: 0.08
+    distance_tolerance: 0.25
     # Required duration with stable distance/heading before "stable" (seconds).
     distance_stable_time_sec: 1.2
     # Recognition timeout used by tracking validity checks (seconds).
