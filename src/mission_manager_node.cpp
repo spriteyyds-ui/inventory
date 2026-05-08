@@ -71,6 +71,8 @@ public:
       declare_parameter<std::string>("gap_detector_enable_topic", "/inventory/gap_detector_enable");
     entry_side_topic_ =
       declare_parameter<std::string>("entry_side_topic", "/inventory/entry_side");
+    target_lidar_side_topic_ =
+      declare_parameter<std::string>("target_lidar_side_topic", "/inventory/target_lidar_side");
 
     start_service_name_ = declare_parameter<std::string>("start_service_name", "/inventory/start_mission");
     cancel_service_name_ = declare_parameter<std::string>("cancel_service_name", "/inventory/cancel_mission");
@@ -422,6 +424,8 @@ public:
     // 使能控制使用 transient_local，保证晚启动节点也能拿到当前状态。
     auto control_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
     entry_side_pub_ = create_publisher<std_msgs::msg::String>(entry_side_topic_, control_qos);
+    target_lidar_side_pub_ =
+      create_publisher<std_msgs::msg::String>(target_lidar_side_topic_, control_qos);
     recognizer_enable_pub_ =
       create_publisher<std_msgs::msg::Bool>(recognizer_enable_topic_, control_qos);
     gap_detector_enable_pub_ =
@@ -2054,6 +2058,33 @@ private:
     entry_side_pub_->publish(msg);
   }
 
+  void publish_target_lidar_side()
+  {
+    if (!target_lidar_side_pub_) {
+      return;
+    }
+
+    std::string side;
+    if (!try_normalize_entry_side(current_entry_side_, side)) {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][distance] target=%d invalid entry_side=%s, skip target_lidar_side",
+        current_target_cabinet_,
+        current_entry_side_.c_str());
+      return;
+    }
+
+    std_msgs::msg::String msg;
+    msg.data = side;
+    target_lidar_side_pub_->publish(msg);
+
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][distance] target=%d publish target_lidar_side=%s",
+      current_target_cabinet_,
+      side.c_str());
+  }
+
   void set_gap_detector_enabled(bool enabled)
   {
     if (!gap_detector_enable_pub_) {
@@ -2339,6 +2370,7 @@ private:
       current_entry_side_.c_str(),
       current_route_.waypoints.size());
     publish_entry_side();
+    publish_target_lidar_side();
     return true;
   }
 
@@ -7414,6 +7446,7 @@ private:
   std::string recognizer_enable_topic_;
   std::string gap_detector_enable_topic_;
   std::string entry_side_topic_;
+  std::string target_lidar_side_topic_;
 
   std::string start_service_name_;
   std::string cancel_service_name_;
@@ -7782,6 +7815,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr corridor_reverse_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr gap_context_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr entry_side_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr target_lidar_side_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr recognizer_enable_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr gap_detector_enable_pub_;
 
