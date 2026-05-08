@@ -73,6 +73,9 @@ public:
       declare_parameter<std::string>("entry_side_topic", "/inventory/entry_side");
     target_lidar_side_topic_ =
       declare_parameter<std::string>("target_lidar_side_topic", "/inventory/target_lidar_side");
+    distance_estimator_enable_topic_ =
+      declare_parameter<std::string>(
+      "distance_estimator_enable_topic", "/inventory/distance_estimator_enable");
 
     start_service_name_ = declare_parameter<std::string>("start_service_name", "/inventory/start_mission");
     cancel_service_name_ = declare_parameter<std::string>("cancel_service_name", "/inventory/cancel_mission");
@@ -323,6 +326,8 @@ public:
       declare_parameter<bool>("overall_test_return_home_between_sides", true);
     overall_test_return_home_after_done_ =
       declare_parameter<bool>("overall_test_return_home_after_done", true);
+    overall_test_recognize_during_nav_ =
+      declare_parameter<bool>("overall_test_recognize_during_nav", false);
     overall_test_same_side_next_search_enabled_ =
       declare_parameter<bool>("overall_test_same_side_next_search_enabled", true);
     overall_test_same_side_search_speed_ =
@@ -330,7 +335,27 @@ public:
     overall_test_same_side_search_timeout_sec_ =
       declare_parameter<double>("overall_test_same_side_search_timeout_sec", 20.0);
     overall_test_final_recognition_wait_sec_ =
-      declare_parameter<double>("overall_test_final_recognition_wait_sec", 8.0);
+      declare_parameter<double>("overall_test_final_recognition_wait_sec", 5.0);
+    overall_test_recognition_fallback_enabled_ =
+      declare_parameter<bool>("overall_test_recognition_fallback_enabled", true);
+    overall_test_recognition_fallback_speed_ =
+      declare_parameter<double>("overall_test_recognition_fallback_speed", 0.04);
+    overall_test_recognition_fallback_wait_sec_ =
+      declare_parameter<double>("overall_test_recognition_fallback_wait_sec", 2.0);
+    overall_test_recognition_fallback_timeout_sec_ =
+      declare_parameter<double>("overall_test_recognition_fallback_timeout_sec", 20.0);
+    overall_test_recognition_fallback_sequence_ =
+      declare_parameter<std::vector<double>>(
+      "overall_test_recognition_fallback_sequence_m",
+      std::vector<double>{-0.30, 0.60, -0.30});
+    post_gap_detect_advance_enabled_ =
+      declare_parameter<bool>("post_gap_detect_advance_enabled", true);
+    post_gap_detect_advance_distance_m_ =
+      declare_parameter<double>("post_gap_detect_advance_distance_m", 0.25);
+    post_gap_detect_advance_speed_ =
+      declare_parameter<double>("post_gap_detect_advance_speed", 0.04);
+    post_gap_detect_advance_timeout_sec_ =
+      declare_parameter<double>("post_gap_detect_advance_timeout_sec", 8.0);
     test_scan_layers_ = declare_parameter<int>("scan_layers", 2);
     test_scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
     test_default_scan_side_ = declare_parameter<std::string>("default_scan_side", "left");
@@ -354,7 +379,7 @@ public:
       10,
       [this](const std_msgs::msg::Float32::SharedPtr msg) {
         latest_distance_ = static_cast<double>(msg->data);
-        has_distance_ = true;
+        has_distance_ = std::isfinite(latest_distance_) && latest_distance_ > 0.0;
       });
 
     gap_sub_ = create_subscription<wheeltec_inventory_system::msg::GapStatus>(
@@ -430,6 +455,8 @@ public:
       create_publisher<std_msgs::msg::Bool>(recognizer_enable_topic_, control_qos);
     gap_detector_enable_pub_ =
       create_publisher<std_msgs::msg::Bool>(gap_detector_enable_topic_, control_qos);
+    distance_estimator_enable_pub_ =
+      create_publisher<std_msgs::msg::Bool>(distance_estimator_enable_topic_, control_qos);
 
     start_srv_ = create_service<wheeltec_inventory_system::srv::StartMission>(
       start_service_name_,
@@ -536,17 +563,26 @@ private:
     TEST_REAL_NEXT_GAP_SCAN,
     TEST_REAL_FINAL_EXIT_GAP,
     OVERALL_TEST_PREPARE_TARGET,
-    OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE,
-    OVERALL_TEST_FINAL_RECOGNITION_WAIT,
-    OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH,
-    OVERALL_TEST_TARGET_RECOGNITION,
-    OVERALL_TEST_WAITING_GAP,
+    OVERALL_TEST_NAV_TO_OBSERVE,
+    OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT,
+    OVERALL_TEST_RECOGNITION_FALLBACK,
+    OVERALL_TEST_TARGET_DISTANCE_ALIGN,
+    OVERALL_TEST_SEARCH_GAP,
+    OVERALL_TEST_POST_GAP_DETECT_ADVANCE,
     OVERALL_TEST_ENTERING_GAP,
     OVERALL_TEST_SCAN_PLACEHOLDER,
     OVERALL_TEST_EXIT_GAP,
     OVERALL_TEST_ADVANCE_NEXT_TARGET,
+    OVERALL_TEST_SAME_SIDE_NEXT_SEARCH,
     OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES,
     OVERALL_TEST_DONE,
+  };
+
+  enum class OverallRecognitionFallbackPhase
+  {
+    IDLE,
+    MOVING,
+    WAITING,
   };
 
   enum class ReturnMode
@@ -788,16 +824,18 @@ private:
         return "TEST_REAL_FINAL_EXIT_GAP";
       case State::OVERALL_TEST_PREPARE_TARGET:
         return "OVERALL_TEST_PREPARE_TARGET";
-      case State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE:
-        return "OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE";
-      case State::OVERALL_TEST_FINAL_RECOGNITION_WAIT:
-        return "OVERALL_TEST_FINAL_RECOGNITION_WAIT";
-      case State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH:
-        return "OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH";
-      case State::OVERALL_TEST_TARGET_RECOGNITION:
-        return "OVERALL_TEST_TARGET_RECOGNITION";
-      case State::OVERALL_TEST_WAITING_GAP:
-        return "OVERALL_TEST_WAITING_GAP";
+      case State::OVERALL_TEST_NAV_TO_OBSERVE:
+        return "OVERALL_TEST_NAV_TO_OBSERVE";
+      case State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT:
+        return "OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT";
+      case State::OVERALL_TEST_RECOGNITION_FALLBACK:
+        return "OVERALL_TEST_RECOGNITION_FALLBACK";
+      case State::OVERALL_TEST_TARGET_DISTANCE_ALIGN:
+        return "OVERALL_TEST_TARGET_DISTANCE_ALIGN";
+      case State::OVERALL_TEST_SEARCH_GAP:
+        return "OVERALL_TEST_SEARCH_GAP";
+      case State::OVERALL_TEST_POST_GAP_DETECT_ADVANCE:
+        return "OVERALL_TEST_POST_GAP_DETECT_ADVANCE";
       case State::OVERALL_TEST_ENTERING_GAP:
         return "OVERALL_TEST_ENTERING_GAP";
       case State::OVERALL_TEST_SCAN_PLACEHOLDER:
@@ -806,6 +844,8 @@ private:
         return "OVERALL_TEST_EXIT_GAP";
       case State::OVERALL_TEST_ADVANCE_NEXT_TARGET:
         return "OVERALL_TEST_ADVANCE_NEXT_TARGET";
+      case State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH:
+        return "OVERALL_TEST_SAME_SIDE_NEXT_SEARCH";
       case State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES:
         return "OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES";
       case State::OVERALL_TEST_DONE:
@@ -967,6 +1007,20 @@ private:
     return oss.str();
   }
 
+  static std::string double_vector_to_string(const std::vector<double> & values)
+  {
+    std::ostringstream oss;
+    oss << '[' << std::fixed << std::setprecision(2);
+    for (std::size_t i = 0; i < values.size(); ++i) {
+      if (i > 0) {
+        oss << ',';
+      }
+      oss << values[i];
+    }
+    oss << ']';
+    return oss.str();
+  }
+
   static std::string gap_plan_to_string(const TargetGapPlan & plan)
   {
     if (!plan.valid) {
@@ -1022,7 +1076,7 @@ private:
     return
       s == State::NAV_ROUTE ||
       s == State::TEST_REAL_NAV_TO_TARGET ||
-      s == State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE;
+      s == State::OVERALL_TEST_NAV_TO_OBSERVE;
   }
 
   bool is_target_tracking_like_state(State s) const
@@ -1030,7 +1084,7 @@ private:
     return
       s == State::TARGET_TRACKING ||
       s == State::TEST_REAL_TARGET_TRACKING ||
-      s == State::OVERALL_TEST_TARGET_RECOGNITION;
+      s == State::OVERALL_TEST_TARGET_DISTANCE_ALIGN;
   }
 
   bool is_test_real_recognition_state(State s) const
@@ -1046,10 +1100,10 @@ private:
   {
     return
       overall_test_active_ &&
-      (s == State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE ||
-      s == State::OVERALL_TEST_FINAL_RECOGNITION_WAIT ||
-      s == State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH ||
-      s == State::OVERALL_TEST_TARGET_RECOGNITION);
+      ((s == State::OVERALL_TEST_NAV_TO_OBSERVE && overall_test_recognize_during_nav_) ||
+      s == State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT ||
+      s == State::OVERALL_TEST_RECOGNITION_FALLBACK ||
+      s == State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH);
   }
 
   static std::string side_row_phase_to_string(TestRealSideRowPhase phase)
@@ -1440,6 +1494,10 @@ private:
         overall_test_return_home_after_done_ =
           root["overall_test_return_home_after_done"].as<bool>();
       }
+      if (root["overall_test_recognize_during_nav"]) {
+        overall_test_recognize_during_nav_ =
+          root["overall_test_recognize_during_nav"].as<bool>();
+      }
       if (root["overall_test_same_side_next_search_enabled"]) {
         overall_test_same_side_next_search_enabled_ =
           root["overall_test_same_side_next_search_enabled"].as<bool>();
@@ -1455,6 +1513,42 @@ private:
       if (root["overall_test_final_recognition_wait_sec"]) {
         overall_test_final_recognition_wait_sec_ =
           root["overall_test_final_recognition_wait_sec"].as<double>();
+      }
+      if (root["overall_test_recognition_fallback_enabled"]) {
+        overall_test_recognition_fallback_enabled_ =
+          root["overall_test_recognition_fallback_enabled"].as<bool>();
+      }
+      if (root["overall_test_recognition_fallback_speed"]) {
+        overall_test_recognition_fallback_speed_ =
+          root["overall_test_recognition_fallback_speed"].as<double>();
+      }
+      if (root["overall_test_recognition_fallback_wait_sec"]) {
+        overall_test_recognition_fallback_wait_sec_ =
+          root["overall_test_recognition_fallback_wait_sec"].as<double>();
+      }
+      if (root["overall_test_recognition_fallback_timeout_sec"]) {
+        overall_test_recognition_fallback_timeout_sec_ =
+          root["overall_test_recognition_fallback_timeout_sec"].as<double>();
+      }
+      if (root["overall_test_recognition_fallback_sequence_m"]) {
+        overall_test_recognition_fallback_sequence_.clear();
+        for (const auto step_node : root["overall_test_recognition_fallback_sequence_m"]) {
+          overall_test_recognition_fallback_sequence_.push_back(step_node.as<double>());
+        }
+      }
+      if (root["post_gap_detect_advance_enabled"]) {
+        post_gap_detect_advance_enabled_ = root["post_gap_detect_advance_enabled"].as<bool>();
+      }
+      if (root["post_gap_detect_advance_distance_m"]) {
+        post_gap_detect_advance_distance_m_ =
+          root["post_gap_detect_advance_distance_m"].as<double>();
+      }
+      if (root["post_gap_detect_advance_speed"]) {
+        post_gap_detect_advance_speed_ = root["post_gap_detect_advance_speed"].as<double>();
+      }
+      if (root["post_gap_detect_advance_timeout_sec"]) {
+        post_gap_detect_advance_timeout_sec_ =
+          root["post_gap_detect_advance_timeout_sec"].as<double>();
       }
       if (root["scan_layers"]) {
         test_scan_layers_ = root["scan_layers"].as<int>();
@@ -1566,18 +1660,30 @@ private:
       RCLCPP_INFO(
         get_logger(),
         "整体盘库测试配置: enabled=%s sequence=%s left_route=%s right_route=%s "
-        "return_between_sides=%s return_after_done=%s same_side_search=%s speed=%.3f "
-        "timeout=%.2f final_recognition_wait=%.2f",
+        "return_between_sides=%s return_after_done=%s recognize_during_nav=%s "
+        "same_side_search=%s speed=%.3f timeout=%.2f final_recognition_wait=%.2f "
+        "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
+        "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
         overall_test_enabled_ ? "true" : "false",
         cabinet_unit_to_string(overall_test_sequence_).c_str(),
         overall_test_left_route_.c_str(),
         overall_test_right_route_.c_str(),
         overall_test_return_home_between_sides_ ? "true" : "false",
         overall_test_return_home_after_done_ ? "true" : "false",
+        overall_test_recognize_during_nav_ ? "true" : "false",
         overall_test_same_side_next_search_enabled_ ? "true" : "false",
         overall_test_same_side_search_speed_,
         overall_test_same_side_search_timeout_sec_,
-        overall_test_final_recognition_wait_sec_);
+        overall_test_final_recognition_wait_sec_,
+        overall_test_recognition_fallback_enabled_ ? "true" : "false",
+        overall_test_recognition_fallback_speed_,
+        overall_test_recognition_fallback_wait_sec_,
+        overall_test_recognition_fallback_timeout_sec_,
+        double_vector_to_string(overall_test_recognition_fallback_sequence_).c_str(),
+        post_gap_detect_advance_enabled_ ? "true" : "false",
+        post_gap_detect_advance_distance_m_,
+        post_gap_detect_advance_speed_,
+        post_gap_detect_advance_timeout_sec_);
       return true;
     } catch (const std::exception & ex) {
       reason = "解析 test_gap_scan_params.yaml 失败: " + std::string(ex.what());
@@ -2106,6 +2212,34 @@ private:
       enabled ? "ENABLE(SEARCH_GAP/WAITING_GAP检测)" : "DISABLE(停止检测)");
   }
 
+  void set_distance_estimator_enabled(bool enabled, bool force_publish = false)
+  {
+    if (!distance_estimator_enable_pub_) {
+      return;
+    }
+    if (!force_publish && distance_estimator_enable_initialized_ &&
+      distance_estimator_enabled_cmd_ == enabled)
+    {
+      return;
+    }
+
+    std_msgs::msg::Bool msg;
+    msg.data = enabled;
+    distance_estimator_enable_pub_->publish(msg);
+    distance_estimator_enabled_cmd_ = enabled;
+    distance_estimator_enable_initialized_ = true;
+    if (!enabled) {
+      has_distance_ = false;
+      latest_distance_ = 0.0;
+    }
+
+    RCLCPP_INFO(
+      get_logger(),
+      "distance_estimator 使能切换: %s%s",
+      enabled ? "ENABLE(目标侧向测距)" : "DISABLE(停止目标测距)",
+      force_publish ? " [force]" : "");
+  }
+
   void set_recognizer_topic_enabled(bool enabled, bool force_publish = false)
   {
     if (!recognizer_enable_pub_) {
@@ -2124,31 +2258,36 @@ private:
     RCLCPP_INFO(
       get_logger(),
       "recognizer 使能切换: %s%s",
-      enabled ? "ENABLE(IDLE/NAV_ROUTE/TARGET_TRACKING)" : "DISABLE(停止识别)",
+      enabled ? "ENABLE(识别阶段)" : "DISABLE(停止识别)",
       force_publish ? " [force]" : "");
   }
 
   void set_state(State s, const std::string & detail)
   {
-    // SEARCH_GAP/WAITING_GAP 阶段启用 gap 检测，其他状态全部停掉。
-    set_gap_detector_enabled(
+    const bool gap_enabled =
       s == State::SEARCH_GAP ||
       s == State::WAITING_GAP ||
       s == State::TEST_REAL_WAITING_GAP ||
-      s == State::OVERALL_TEST_WAITING_GAP);
-    // 识别启停严格由状态机控制：
-    // IDLE/NAV_ROUTE/TARGET_TRACKING 开启；进入找缝/回退观测后及后续状态关闭。
-    set_recognizer_topic_enabled(
+      s == State::OVERALL_TEST_SEARCH_GAP;
+    const bool recognizer_enabled =
       s == State::IDLE ||
       s == State::NAV_ROUTE ||
       s == State::TARGET_TRACKING ||
       s == State::TEST_REAL_NAV_TO_TARGET ||
       s == State::TEST_REAL_TARGET_TRACKING ||
       s == State::TEST_REAL_FINAL_RECOGNITION_WAIT ||
-      s == State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE ||
-      s == State::OVERALL_TEST_FINAL_RECOGNITION_WAIT ||
-      s == State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH ||
-      s == State::OVERALL_TEST_TARGET_RECOGNITION);
+      (s == State::OVERALL_TEST_NAV_TO_OBSERVE && overall_test_recognize_during_nav_) ||
+      s == State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT ||
+      s == State::OVERALL_TEST_RECOGNITION_FALLBACK ||
+      s == State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH;
+    const bool distance_enabled =
+      s == State::TARGET_TRACKING ||
+      s == State::TEST_REAL_TARGET_TRACKING ||
+      s == State::OVERALL_TEST_TARGET_DISTANCE_ALIGN;
+
+    set_gap_detector_enabled(gap_enabled);
+    set_distance_estimator_enabled(distance_enabled);
+    set_recognizer_topic_enabled(recognizer_enabled);
     state_ = s;
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] " + detail);
@@ -2587,7 +2726,10 @@ private:
       return;
     }
     if (!msg->valid) {
-      if (is_nav_route_like_state(state_) || is_test_real_recognition_state(state_)) {
+      if (is_nav_route_like_state(state_) ||
+        is_test_real_recognition_state(state_) ||
+        is_overall_test_recognition_state(state_))
+      {
         reset_target_recognition_stability();
       }
       return;
@@ -2638,7 +2780,9 @@ private:
       publish_stop();
       has_distance_ = false;
       tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-      set_state(State::TARGET_TRACKING, "识别到目标货柜，进入跟踪");
+      set_state(
+        State::TARGET_TRACKING,
+        "识别到目标柜 target=" + std::to_string(current_target_cabinet_) + "，进入跟踪");
     }
   }
 
@@ -3100,16 +3244,22 @@ private:
     reset_nav_route_runtime();
     publish_entry_side();
     set_corridor_mode(false, false);
-    request_recognizer_enable(true);
+    const bool recognizer_during_nav =
+      !(overall_test_active_ && nav_state == State::OVERALL_TEST_NAV_TO_OBSERVE &&
+      !overall_test_recognize_during_nav_);
+    request_recognizer_enable(recognizer_during_nav);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
     has_distance_ = false;
     target_visible_ = false;
     set_state(nav_state, detail);
-    set_recognizer_topic_enabled(true, true);
+    set_recognizer_topic_enabled(recognizer_during_nav, true);
 
     if (!send_current_route_waypoint(fail_reason)) {
       mission_active_ = false;
       publish_stop();
       request_recognizer_enable(false);
+      set_distance_estimator_enabled(false, true);
       if (overall_test_active_) {
         fail_overall_test("启动巡航路线失败: " + fail_reason);
       } else if (test_real_motion_active_) {
@@ -3178,10 +3328,10 @@ private:
         tracking_stable_start_ = zero_time(get_clock());
         if (overall_test_active_) {
           publish_overall_test_log(
-            "enter target tracking cabinet=" + std::to_string(current_target_cabinet_));
-          set_state(
-            State::OVERALL_TEST_TARGET_RECOGNITION,
-            "[OVERALL_TEST] stop hold finished, enter target tracking");
+            "recognized during nav target=" + std::to_string(current_target_cabinet_) +
+            ", stop hold finished");
+          begin_overall_target_distance_align_after_recognition(
+            current_target_cabinet_, "nav recognition stop hold finished");
         } else if (test_real_motion_active_) {
           publish_test_real_log("enter real target tracking cabinet=" + std::to_string(current_target_cabinet_));
           set_test_real_state(State::TEST_REAL_TARGET_TRACKING, "停车完成，进入目标跟踪");
@@ -3213,7 +3363,7 @@ private:
     ++current_route_waypoint_index_;
     if (current_route_waypoint_index_ >= current_route_.waypoints.size()) {
       if (overall_test_active_) {
-        begin_overall_test_final_recognition_wait();
+        begin_overall_test_post_route_recognition_wait();
         return;
       }
       if (test_real_motion_active_) {
@@ -3827,6 +3977,14 @@ private:
     overall_test_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     overall_test_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_phase_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::IDLE;
+    overall_test_recognition_fallback_index_ = 0;
+    overall_test_post_gap_advance_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
   std::string overall_return_reason_to_string(OverallTestReturnReason reason) const
@@ -4042,6 +4200,11 @@ private:
     overall_test_current_side_ = current_target_side_;
     overall_test_current_route_ = current_route_name_;
     log_current_target_entry_plan();
+    publish_entry_side();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
     publish_overall_test_log(
       "current_target=" + std::to_string(overall_test_current_target_) +
       " index=" + std::to_string(overall_test_index_) +
@@ -4074,6 +4237,14 @@ private:
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     last_target_seen_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     reset_segment_distance();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
+    publish_overall_test_log(
+      "nav observe stage: recognizer=" +
+      std::string(overall_test_recognize_during_nav_ ? "on" : "off") +
+      " distance=off gap=off target=" + std::to_string(current_target_cabinet_));
 
     std::string fail_reason;
     if (!begin_nav_route_for_current_target(
@@ -4082,7 +4253,7 @@ private:
         " side=" + current_target_side_ +
         " route=" + current_route_name_,
         fail_reason,
-        State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE))
+        State::OVERALL_TEST_NAV_TO_OBSERVE))
     {
       fail_overall_test("启动目标侧路径失败: " + fail_reason);
       return false;
@@ -4111,6 +4282,14 @@ private:
     overall_test_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     overall_test_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_phase_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::IDLE;
+    overall_test_recognition_fallback_index_ = 0;
+    overall_test_post_gap_advance_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
     test_gap_scan_queue_.clear();
     test_current_gap_index_ = 0;
@@ -4129,6 +4308,10 @@ private:
     set_test_state(
       State::OVERALL_TEST_PREPARE_TARGET,
       "[OVERALL_TEST] prepare first target");
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
 
     if (!prepare_overall_test_target(overall_test_sequence_[overall_test_index_], reason)) {
       reset_overall_test_context();
@@ -4147,15 +4330,16 @@ private:
     publish_stop();
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     reset_test_real_scan_runtime();
     test_gap_scan_error_reason_ = reason;
     set_test_state(State::TEST_ERROR, "[OVERALL_TEST] " + reason);
   }
 
-  void begin_overall_test_final_recognition_wait()
+  void begin_overall_test_post_route_recognition_wait()
   {
-    cancel_nav2_route_goal("整体盘库测试巡航路线已走完，进入末端识别等待");
+    cancel_nav2_route_goal("整体盘库测试巡航路线已走完，进入停车识别等待");
     nav2_route_goal_in_progress_ = false;
     nav2_route_result_ready_ = false;
     nav2_route_stop_hold_active_ = false;
@@ -4165,47 +4349,68 @@ private:
     publish_stop();
     request_recognizer_enable(true);
     set_recognizer_topic_enabled(true, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
     reset_target_recognition_stability();
     has_distance_ = false;
     target_visible_ = false;
     overall_test_final_recognition_wait_start_ = this->now();
     publish_overall_test_log(
-      "route finished before recognizing target=" +
+      "route finished, start recognition wait target=" +
       std::to_string(current_target_cabinet_) +
-      ", entering final recognition wait, timeout=" +
-      format_seconds(overall_test_final_recognition_wait_sec_) + "s");
+      " timeout=" + format_seconds(overall_test_final_recognition_wait_sec_));
     set_state(
-      State::OVERALL_TEST_FINAL_RECOGNITION_WAIT,
-      "[OVERALL_TEST] route finished before recognizing target=" +
+      State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT,
+      "[OVERALL_TEST] route finished, start recognition wait target=" +
       std::to_string(current_target_cabinet_) +
-      ", entering final recognition wait, timeout=" +
-      format_seconds(overall_test_final_recognition_wait_sec_) + "s");
+      " timeout=" + format_seconds(overall_test_final_recognition_wait_sec_));
   }
 
-  void switch_overall_to_tracking_after_recognition(int rec_id)
+  void begin_overall_target_distance_align_after_recognition(
+    int rec_id,
+    const std::string & context)
   {
-    const bool from_final_wait = state_ == State::OVERALL_TEST_FINAL_RECOGNITION_WAIT;
+    const bool from_post_route_wait =
+      state_ == State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT;
+    const bool from_same_side_search =
+      state_ == State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH;
     cancel_nav2_route_goal("整体盘库测试稳定识别到目标货柜");
     nav2_route_stop_hold_active_ = false;
     nav2_route_cancel_requested_ = false;
     target_found_pending_ = false;
     set_corridor_mode(false, false);
     publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_gap_detector_enabled(false);
+    publish_target_lidar_side();
+    set_distance_estimator_enabled(true, true);
     has_distance_ = false;
+    latest_distance_ = 0.0;
     overall_test_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_phase_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::IDLE;
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    if (from_final_wait) {
+    if (from_post_route_wait) {
       publish_overall_test_log(
-        "final recognition wait success: target=" + std::to_string(rec_id));
+        "post-route recognition wait success target=" + std::to_string(rec_id));
+    }
+    if (from_same_side_search) {
+      publish_overall_test_log(
+        "same-side next target recognized=" + std::to_string(rec_id) +
+        ", recognizer=off, distance=on");
     }
     publish_overall_test_log(
-      "recognized target cabinet " + std::to_string(rec_id) +
-      ", switch to target tracking");
+      "recognized target=" + std::to_string(rec_id) +
+      ", recognizer=off, distance=on");
     set_state(
-      State::OVERALL_TEST_TARGET_RECOGNITION,
+      State::OVERALL_TEST_TARGET_DISTANCE_ALIGN,
       "[OVERALL_TEST] recognized target cabinet=" + std::to_string(rec_id) +
-      " stable, enter target tracking");
+      " stable, enter target distance align: " + context);
   }
 
   bool handle_overall_test_recognition(int rec_id)
@@ -4228,10 +4433,6 @@ private:
     last_target_seen_time_ = this->now();
     target_visible_ = true;
 
-    if (state_ == State::OVERALL_TEST_TARGET_RECOGNITION) {
-      return true;
-    }
-
     const bool stable_ready = update_target_recognition_stability(rec_id);
     const int required_count = std::max(1, target_recognition_stable_frames_);
     RCLCPP_INFO(
@@ -4246,12 +4447,13 @@ private:
       stable_ready ? "true" : "false");
 
     if (stable_ready) {
-      switch_overall_to_tracking_after_recognition(rec_id);
+      begin_overall_target_distance_align_after_recognition(
+        rec_id, "recognition stable in " + state_to_string(state_));
     }
     return true;
   }
 
-  void start_overall_same_side_recognition_search()
+  void start_overall_same_side_next_search()
   {
     overall_test_same_side_search_start_ = this->now();
     reset_target_recognition_stability();
@@ -4260,20 +4462,27 @@ private:
     latest_distance_ = 0.0;
     request_recognizer_enable(true);
     set_recognizer_topic_enabled(true, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
     set_corridor_mode(false, false);
     publish_overall_test_log(
-      "next_target=" + std::to_string(overall_test_current_target_) +
-      " same side, continue recognition search speed=" +
+      "same-side next search start target=" +
+      std::to_string(overall_test_current_target_) +
+      " recognizer=on distance=off gap=off speed=" +
       format_seconds(overall_test_same_side_search_speed_) +
       " timeout=" + format_seconds(overall_test_same_side_search_timeout_sec_));
     set_state(
-      State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH,
-      "[OVERALL_TEST] same side continue recognition search target=" +
+      State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH,
+      "[OVERALL_TEST] same-side next search target=" +
       std::to_string(overall_test_current_target_));
   }
 
-  void handle_overall_same_side_recognition_search_state()
+  void handle_overall_same_side_next_search_state()
   {
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
     if (overall_test_same_side_search_start_.nanoseconds() == 0) {
       overall_test_same_side_search_start_ = this->now();
     }
@@ -4295,7 +4504,7 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][OVERALL_TEST] same_side_search target=%d side=%s speed=%.3f elapsed=%.2f/%.2f",
+      "[mission_manager][OVERALL_TEST] same_side_next_search target=%d side=%s speed=%.3f elapsed=%.2f/%.2f",
       current_target_cabinet_,
       current_target_side_.c_str(),
       cmd.linear.x,
@@ -4303,11 +4512,51 @@ private:
       timeout);
   }
 
-  void handle_overall_test_final_recognition_wait_state()
+  void begin_overall_recognition_fallback()
+  {
+    if (!overall_test_recognition_fallback_enabled_) {
+      fail_overall_test(
+        "post-route recognition wait timeout and recognition fallback disabled target=" +
+        std::to_string(current_target_cabinet_));
+      return;
+    }
+    if (overall_test_recognition_fallback_sequence_.empty()) {
+      fail_overall_test(
+        "post-route recognition wait timeout and fallback sequence empty target=" +
+        std::to_string(current_target_cabinet_));
+      return;
+    }
+
+    publish_stop();
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
+    reset_target_recognition_stability();
+    overall_test_recognition_fallback_start_ = this->now();
+    overall_test_recognition_fallback_phase_start_ = this->now();
+    overall_test_recognition_fallback_index_ = 0;
+    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::MOVING;
+    reset_segment_distance();
+    publish_overall_test_log(
+      "recognition fallback start sequence=" +
+      double_vector_to_string(overall_test_recognition_fallback_sequence_));
+    publish_overall_test_log(
+      "recognition fallback step=1 move=" +
+      format_seconds(overall_test_recognition_fallback_sequence_.front()));
+    set_state(
+      State::OVERALL_TEST_RECOGNITION_FALLBACK,
+      "[OVERALL_TEST] recognition fallback target=" +
+      std::to_string(current_target_cabinet_));
+  }
+
+  void handle_overall_test_post_route_recognition_wait_state()
   {
     publish_stop();
     request_recognizer_enable(true);
     set_recognizer_topic_enabled(true);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
     if (overall_test_final_recognition_wait_start_.nanoseconds() == 0) {
       overall_test_final_recognition_wait_start_ = this->now();
     }
@@ -4319,18 +4568,185 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][OVERALL_TEST] final recognition wait: target=%d elapsed=%.2f/%.2f",
+      "[mission_manager][OVERALL_TEST] post-route recognition wait: target=%d elapsed=%.2f/%.2f",
       current_target_cabinet_,
       elapsed,
       timeout);
 
     if (elapsed >= timeout) {
       publish_overall_test_log(
-        "final recognition wait timeout: target=" +
+        "post-route recognition wait timeout: target=" +
         std::to_string(current_target_cabinet_));
+      begin_overall_recognition_fallback();
+    }
+  }
+
+  void handle_overall_recognition_fallback_state()
+  {
+    request_recognizer_enable(true);
+    set_recognizer_topic_enabled(true);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
+
+    if (overall_test_recognition_fallback_start_.nanoseconds() == 0) {
+      begin_overall_recognition_fallback();
+      return;
+    }
+
+    const double elapsed_total =
+      (this->now() - overall_test_recognition_fallback_start_).seconds();
+    const double fallback_step_timeout =
+      std::max(0.1, overall_test_recognition_fallback_timeout_sec_);
+
+    if (overall_test_recognition_fallback_index_ >=
+      overall_test_recognition_fallback_sequence_.size())
+    {
+      publish_stop();
       fail_overall_test(
-        "final recognition wait timeout: target=" +
+        "recognition fallback sequence exhausted target=" +
         std::to_string(current_target_cabinet_));
+      return;
+    }
+
+    const double step =
+      overall_test_recognition_fallback_sequence_[overall_test_recognition_fallback_index_];
+    switch (overall_test_recognition_fallback_phase_) {
+      case OverallRecognitionFallbackPhase::MOVING: {
+        const double target_distance = std::abs(step);
+        const double speed = std::abs(overall_test_recognition_fallback_speed_);
+        const double move_elapsed =
+          (this->now() - overall_test_recognition_fallback_phase_start_).seconds();
+        const double required_time = speed > 1e-4 ? target_distance / speed : fallback_step_timeout;
+        const double move_timeout = std::max(fallback_step_timeout, required_time + 2.0);
+        if (move_elapsed >= move_timeout) {
+          publish_stop();
+          fail_overall_test(
+            "recognition fallback move timeout target=" +
+            std::to_string(current_target_cabinet_) +
+            " step=" + std::to_string(overall_test_recognition_fallback_index_ + 1U) +
+            " move=" + format_seconds(step) +
+            " elapsed=" + format_seconds(move_elapsed) +
+            " timeout=" + format_seconds(move_timeout));
+          return;
+        }
+        if (target_distance <= 1e-4 || segment_distance() >= target_distance) {
+          publish_stop();
+          overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::WAITING;
+          overall_test_recognition_fallback_phase_start_ = this->now();
+          break;
+        }
+
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = (step >= 0.0 ? 1.0 : -1.0) *
+          std::abs(overall_test_recognition_fallback_speed_);
+        cmd.angular.z = 0.0;
+        cmd_pub_->publish(cmd);
+        RCLCPP_INFO_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          1000,
+          "[mission_manager][OVERALL_TEST] recognition_fallback moving step=%zu/%zu "
+          "move=%.2f traveled=%.2f/%.2f elapsed=%.2f/%.2f",
+          overall_test_recognition_fallback_index_ + 1U,
+          overall_test_recognition_fallback_sequence_.size(),
+          step,
+          segment_distance(),
+          target_distance,
+          elapsed_total,
+          move_timeout);
+        break;
+      }
+
+      case OverallRecognitionFallbackPhase::WAITING: {
+        publish_stop();
+        const double wait_elapsed =
+          (this->now() - overall_test_recognition_fallback_phase_start_).seconds();
+        if (wait_elapsed < std::max(0.0, overall_test_recognition_fallback_wait_sec_)) {
+          break;
+        }
+
+        ++overall_test_recognition_fallback_index_;
+        if (overall_test_recognition_fallback_index_ >=
+          overall_test_recognition_fallback_sequence_.size())
+        {
+          fail_overall_test(
+            "recognition fallback sequence exhausted target=" +
+            std::to_string(current_target_cabinet_));
+          return;
+        }
+
+        overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::MOVING;
+        overall_test_recognition_fallback_phase_start_ = this->now();
+        reset_segment_distance();
+        publish_overall_test_log(
+          "recognition fallback step=" +
+          std::to_string(overall_test_recognition_fallback_index_ + 1U) +
+          " move=" +
+          format_seconds(
+            overall_test_recognition_fallback_sequence_[overall_test_recognition_fallback_index_]));
+        break;
+      }
+
+      case OverallRecognitionFallbackPhase::IDLE:
+      default:
+        overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::MOVING;
+        overall_test_recognition_fallback_phase_start_ = this->now();
+        reset_segment_distance();
+        break;
+    }
+  }
+
+  void handle_overall_target_distance_align_state()
+  {
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false);
+    set_gap_detector_enabled(false);
+    set_distance_estimator_enabled(true);
+
+    if (!has_distance_ || !std::isfinite(latest_distance_) || latest_distance_ <= 0.0) {
+      publish_stop();
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][OVERALL_TEST] target distance align waiting for distance target=%d",
+        current_target_cabinet_);
+      return;
+    }
+
+    const double distance_error = latest_distance_ - follow_distance_;
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = std::clamp(
+      tracking_kp_distance_ * distance_error,
+      -std::abs(tracking_speed_),
+      std::abs(tracking_speed_));
+    cmd.angular.z = 0.0;
+    cmd_pub_->publish(cmd);
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "[mission_manager][OVERALL_TEST] target distance align target=%d distance=%.2f "
+      "follow=%.2f tolerance=%.2f cmd.linear.x=%.3f",
+      current_target_cabinet_,
+      latest_distance_,
+      follow_distance_,
+      distance_tolerance_,
+      cmd.linear.x);
+
+    if (std::abs(distance_error) <= distance_tolerance_) {
+      if (tracking_stable_start_.nanoseconds() == 0) {
+        tracking_stable_start_ = this->now();
+      }
+      if ((this->now() - tracking_stable_start_).seconds() >= distance_stable_time_sec_) {
+        publish_stop();
+        set_distance_estimator_enabled(false, true);
+        publish_overall_test_log("target distance stable, distance=off, gap_detector=on");
+        begin_search_gap_flow();
+      }
+    } else {
+      tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     }
   }
 
@@ -4342,6 +4758,10 @@ private:
       return;
     }
     publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
     publish_overall_test_log("scan placeholder for cabinet " + std::to_string(cabinet_id));
     if (!execute_placeholder_scan_for_cabinet(cabinet_id, false)) {
       return;
@@ -4449,10 +4869,11 @@ private:
     }
 
     const int finished_target = overall_test_sequence_[overall_test_index_];
-    publish_overall_test_log(
-      "exit gap finished for cabinet " + std::to_string(finished_target));
 
     if (overall_test_index_ + 1U >= overall_test_sequence_.size()) {
+      publish_overall_test_log(
+        "exit gap done target=" + std::to_string(finished_target) +
+        " next_target=-1 same_side=false");
       publish_overall_test_log("all targets completed, final return home");
       if (overall_test_return_home_after_done_) {
         start_existing_return_home_for_overall_test(OverallTestReturnReason::FINAL_DONE);
@@ -4472,6 +4893,11 @@ private:
       fail_overall_test("判断目标侧失败: " + side_reason);
       return;
     }
+    const bool same_side = current_side == next_side;
+    publish_overall_test_log(
+      "exit gap done target=" + std::to_string(finished_target) +
+      " next_target=" + std::to_string(next_target) +
+      " same_side=" + std::string(same_side ? "true" : "false"));
 
     ++overall_test_index_;
     overall_test_next_target_ =
@@ -4493,14 +4919,14 @@ private:
       return;
     }
 
-    if (current_side == next_side && overall_test_same_side_next_search_enabled_) {
-      start_overall_same_side_recognition_search();
+    if (same_side && overall_test_same_side_next_search_enabled_) {
+      start_overall_same_side_next_search();
       return;
     }
 
     publish_overall_test_log(
       "next_target=" + std::to_string(next_target) +
-      " same side route restart side=" + next_side);
+      " route restart side=" + next_side);
     (void)start_overall_test_target_route("advance next target");
   }
 
@@ -5718,6 +6144,7 @@ private:
     publish_stop();
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
   }
 
@@ -6165,16 +6592,19 @@ private:
     search_gap_start_ = this->now();
     reset_segment_distance();
     publish_entry_side();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
     const std::string detail =
       "跟踪稳定，按物理单元找缝 direction=" +
       search_direction_to_string(current_gap_plan_.search_direction) +
       " gap=" + gap_plan_to_string(current_gap_plan_);
     if (overall_test_active_) {
-      test_real_gap_searching_ = true;
+      test_real_gap_searching_ = false;
       publish_overall_test_log(
-        "waiting/searching gap target=" + std::to_string(current_target_cabinet_) +
+        "search gap target=" + std::to_string(current_target_cabinet_) +
         " direction=" + search_direction_to_string(current_gap_plan_.search_direction));
-      set_state(State::OVERALL_TEST_WAITING_GAP, "[OVERALL_TEST] " + detail);
+      set_state(State::OVERALL_TEST_SEARCH_GAP, "[OVERALL_TEST] " + detail);
     } else if (test_real_motion_active_) {
       test_real_gap_searching_ = true;
       publish_test_real_log("waiting/searching gap=" + active_test_real_gap_id());
@@ -6192,7 +6622,8 @@ private:
     publish_entry_side();
     if (overall_test_active_) {
       test_real_gap_searching_ = false;
-      set_state(State::OVERALL_TEST_WAITING_GAP, "[OVERALL_TEST] " + detail);
+      begin_overall_post_gap_detect_advance_flow();
+      return;
     } else if (test_real_motion_active_) {
       test_real_gap_searching_ = false;
       set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
@@ -6212,7 +6643,8 @@ private:
     publish_entry_side();
     if (overall_test_active_) {
       test_real_gap_searching_ = false;
-      set_state(State::OVERALL_TEST_WAITING_GAP, "[OVERALL_TEST] " + detail);
+      fail_overall_test("SEARCH_GAP legacy fallback bypassed for overall_test: " + detail);
+      return;
     } else if (test_real_motion_active_) {
       test_real_gap_searching_ = false;
       set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
@@ -6343,6 +6775,10 @@ private:
     }
 
     reset_entry_gap_runtime();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
     entry_turn_start_yaw_ = current.yaw;
     const double signed_delta = current_entry_side_ == "right" ?
       -std::abs(entry_turn_yaw_delta_rad_) : std::abs(entry_turn_yaw_delta_rad_);
@@ -6432,6 +6868,95 @@ private:
     return search_gap_forward_timeout_sec_;
   }
 
+  void begin_overall_post_gap_detect_advance_flow()
+  {
+    publish_stop();
+    set_gap_detector_enabled(false);
+    set_distance_estimator_enabled(false, true);
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+
+    if (!post_gap_detect_advance_enabled_ ||
+      !std::isfinite(post_gap_detect_advance_distance_m_) ||
+      post_gap_detect_advance_distance_m_ <= 1e-4)
+    {
+      publish_overall_test_log(
+        "gap detected stable, post advance disabled, entering gap target=" +
+        std::to_string(current_target_cabinet_));
+      begin_entering_gap_flow("gap detected stable, post advance disabled");
+      return;
+    }
+
+    overall_test_post_gap_advance_start_ = this->now();
+    reset_segment_distance();
+    publish_overall_test_log(
+      "gap detected stable, post advance direction=" +
+      search_direction_to_string(current_gap_plan_.search_direction) +
+      " distance=" + format_seconds(post_gap_detect_advance_distance_m_));
+    set_state(
+      State::OVERALL_TEST_POST_GAP_DETECT_ADVANCE,
+      "[OVERALL_TEST] gap detected stable, post advance direction=" +
+      search_direction_to_string(current_gap_plan_.search_direction) +
+      " distance=" + format_seconds(post_gap_detect_advance_distance_m_));
+  }
+
+  void handle_overall_post_gap_detect_advance_state()
+  {
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
+
+    if (overall_test_post_gap_advance_start_.nanoseconds() == 0) {
+      overall_test_post_gap_advance_start_ = this->now();
+      reset_segment_distance();
+    }
+
+    const double timeout =
+      std::isfinite(post_gap_detect_advance_timeout_sec_) ?
+      std::max(0.1, post_gap_detect_advance_timeout_sec_) : 8.0;
+    const double elapsed = (this->now() - overall_test_post_gap_advance_start_).seconds();
+    if (elapsed >= timeout) {
+      publish_stop();
+      fail_overall_test(
+        "post gap advance timeout target=" +
+        std::to_string(current_target_cabinet_) +
+        " elapsed=" + format_seconds(elapsed) +
+        " timeout=" + format_seconds(timeout));
+      return;
+    }
+
+    const double direction =
+      current_gap_plan_.search_direction == SearchDirection::BACKWARD ? -1.0 : 1.0;
+    const bool done = run_wait_gap_linear_motion(
+      direction,
+      post_gap_detect_advance_speed_,
+      std::abs(post_gap_detect_advance_distance_m_));
+    if (done) {
+      overall_test_post_gap_advance_start_ =
+        rclcpp::Time(0, 0, get_clock()->get_clock_type());
+      publish_overall_test_log(
+        "post gap advance done, entering gap target=" +
+        std::to_string(current_target_cabinet_));
+      begin_entering_gap_flow("post gap advance done");
+      return;
+    }
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "[mission_manager][OVERALL_TEST] post_gap_advance target=%d direction=%s traveled=%.2f/%.2f "
+      "speed=%.3f elapsed=%.2f/%.2f",
+      current_target_cabinet_,
+      search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      segment_distance(),
+      std::abs(post_gap_detect_advance_distance_m_),
+      post_gap_detect_advance_speed_,
+      elapsed,
+      timeout);
+  }
+
   void handle_search_gap_state()
   {
     publish_entry_side();
@@ -6441,6 +6966,10 @@ private:
       latest_gap_.side : latest_gap_.active_side;
     if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_entry_side_) {
       publish_stop();
+      if (overall_test_active_) {
+        begin_overall_post_gap_detect_advance_flow();
+        return;
+      }
       begin_waiting_gap_confirmation_flow("SEARCH_GAP检测到候选间隙，停车确认宽度/稳定性/安全距离");
       return;
     }
@@ -6453,6 +6982,15 @@ private:
     const double elapsed_sec = (this->now() - search_gap_start_).seconds();
     if (elapsed_sec >= std::max(0.1, timeout_sec)) {
       publish_stop();
+      if (overall_test_active_) {
+        fail_overall_test(
+          "SEARCH_GAP timeout target=" +
+          std::to_string(current_target_cabinet_) +
+          " direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
+          " timeout=" + format_seconds(timeout_sec) +
+          " elapsed=" + format_seconds(elapsed_sec));
+        return;
+      }
       begin_waiting_gap_fallback_flow(
         "SEARCH_GAP超时未检测到目标间隙，执行原固定回退序列作为fallback微调 direction=" +
         search_direction_to_string(current_gap_plan_.search_direction) +
@@ -7277,32 +7815,38 @@ private:
         break;
       }
 
-      case State::OVERALL_TEST_NAV_TO_TARGET_SIDE_ROUTE: {
+      case State::OVERALL_TEST_NAV_TO_OBSERVE: {
         handle_nav_route_state();
         break;
       }
 
-      case State::OVERALL_TEST_FINAL_RECOGNITION_WAIT: {
-        handle_overall_test_final_recognition_wait_state();
+      case State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT: {
+        handle_overall_test_post_route_recognition_wait_state();
         break;
       }
 
-      case State::OVERALL_TEST_SAME_SIDE_RECOGNITION_SEARCH: {
-        handle_overall_same_side_recognition_search_state();
+      case State::OVERALL_TEST_RECOGNITION_FALLBACK: {
+        handle_overall_recognition_fallback_state();
         break;
       }
 
-      case State::OVERALL_TEST_TARGET_RECOGNITION: {
-        handle_target_tracking_state();
+      case State::OVERALL_TEST_TARGET_DISTANCE_ALIGN: {
+        handle_overall_target_distance_align_state();
         break;
       }
 
-      case State::OVERALL_TEST_WAITING_GAP: {
-        if (test_real_gap_searching_) {
-          handle_search_gap_state();
-        } else {
-          handle_waiting_gap_state();
-        }
+      case State::OVERALL_TEST_SEARCH_GAP: {
+        handle_search_gap_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_POST_GAP_DETECT_ADVANCE: {
+        handle_overall_post_gap_detect_advance_state();
+        break;
+      }
+
+      case State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH: {
+        handle_overall_same_side_next_search_state();
         break;
       }
 
@@ -7447,6 +7991,7 @@ private:
   std::string gap_detector_enable_topic_;
   std::string entry_side_topic_;
   std::string target_lidar_side_topic_;
+  std::string distance_estimator_enable_topic_;
 
   std::string start_service_name_;
   std::string cancel_service_name_;
@@ -7640,10 +8185,20 @@ private:
   std::string overall_test_right_route_{"right_route"};
   bool overall_test_return_home_between_sides_{true};
   bool overall_test_return_home_after_done_{true};
+  bool overall_test_recognize_during_nav_{false};
   bool overall_test_same_side_next_search_enabled_{true};
   double overall_test_same_side_search_speed_{0.04};
   double overall_test_same_side_search_timeout_sec_{20.0};
-  double overall_test_final_recognition_wait_sec_{8.0};
+  double overall_test_final_recognition_wait_sec_{5.0};
+  bool overall_test_recognition_fallback_enabled_{true};
+  double overall_test_recognition_fallback_speed_{0.04};
+  double overall_test_recognition_fallback_wait_sec_{2.0};
+  double overall_test_recognition_fallback_timeout_sec_{20.0};
+  std::vector<double> overall_test_recognition_fallback_sequence_{-0.30, 0.60, -0.30};
+  bool post_gap_detect_advance_enabled_{true};
+  double post_gap_detect_advance_distance_m_{0.25};
+  double post_gap_detect_advance_speed_{0.04};
+  double post_gap_detect_advance_timeout_sec_{8.0};
   int test_scan_layers_{2};
   int test_scan_depth_count_{3};
   std::string test_default_scan_side_{"left"};
@@ -7703,6 +8258,12 @@ private:
   bool overall_test_waiting_return_home_for_done_{false};
   rclcpp::Time overall_test_same_side_search_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time overall_test_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time overall_test_recognition_fallback_start_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time overall_test_recognition_fallback_phase_start_{0, 0, RCL_ROS_TIME};
+  OverallRecognitionFallbackPhase overall_test_recognition_fallback_phase_{
+    OverallRecognitionFallbackPhase::IDLE};
+  std::size_t overall_test_recognition_fallback_index_{0};
+  rclcpp::Time overall_test_post_gap_advance_start_{0, 0, RCL_ROS_TIME};
   wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   wheeltec_inventory_system::ScanSequenceExecutor scan_sequence_executor_;
   wheeltec_inventory_system::WebApiClient web_api_client_;
@@ -7718,6 +8279,8 @@ private:
   bool recognizer_enable_initialized_{false};
   bool gap_detector_enabled_cmd_{false};
   bool gap_detector_enable_initialized_{false};
+  bool distance_estimator_enabled_cmd_{false};
+  bool distance_estimator_enable_initialized_{false};
   bool return_using_nav2_{false};
   bool nav2_return_in_progress_{false};
   bool nav2_result_ready_{false};
@@ -7818,6 +8381,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr target_lidar_side_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr recognizer_enable_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr gap_detector_enable_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr distance_estimator_enable_pub_;
 
   rclcpp::Service<wheeltec_inventory_system::srv::StartMission>::SharedPtr start_srv_;
   rclcpp::Service<wheeltec_inventory_system::srv::StartTestGapScan>::SharedPtr

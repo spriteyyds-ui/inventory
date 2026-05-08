@@ -34,11 +34,11 @@ test_real_exit_mode: reverse
 test_real_exit_speed: 0.05
 test_real_exit_extra_distance_m: 0.10
 test_real_exit_timeout_sec: 40.0
-test_real_exit_distance_m: 1.20
+test_real_exit_distance_m: 1.40
 test_real_exit_turn_enabled: true
 test_real_exit_turn_angular_speed: 0.25
 test_real_exit_turn_yaw_tolerance_rad: 0.08
-test_real_exit_turn_timeout_sec: 8.0
+test_real_exit_turn_timeout_sec: 16.0
 
 test_real_reentry_for_position_adjustment: true
 test_real_reentry_comment: "Use reverse-exit and re-enter as a temporary replacement for in-gap orientation/position adjustment."
@@ -55,6 +55,7 @@ test_real_close_gap_after_final_exit: true
 # run_all_configured=true and empty gap_id, this sequence is executed target by target.
 overall_test_enabled: true
 overall_test_sequence: [4, 3, 8, 7]
+overall_test_recognize_during_nav: false
 
 # Route names used for each cabinet side during the overall test.
 overall_test_left_route: left_route
@@ -67,11 +68,24 @@ overall_test_return_home_after_done: true
 # Same-side next target search after exiting a gap. This drives slowly while recognition is enabled.
 overall_test_same_side_next_search_enabled: true
 overall_test_same_side_search_speed: 0.04
-overall_test_same_side_search_timeout_sec: 20.0
+overall_test_same_side_search_timeout_sec: 40.0
 
-# After a side route finishes without a stable target recognition, stop and keep recognition
-# enabled for this long before failing the overall test.
-overall_test_final_recognition_wait_sec: 20.0
+# After a side route finishes, stop and recognize the target before enabling target ranging.
+overall_test_final_recognition_wait_sec: 5.0
+
+# Fixed recognition fallback after post-route recognition timeout.
+overall_test_recognition_fallback_enabled: true
+overall_test_recognition_fallback_speed: 0.04
+overall_test_recognition_fallback_wait_sec: 2.0
+overall_test_recognition_fallback_timeout_sec: 20.0
+overall_test_recognition_fallback_sequence_m: [-0.30, 0.60, -0.30]
+
+# After gap_detector reports a stable enterable gap, continue along the search direction
+# before turning into the gap.
+post_gap_detect_advance_enabled: true
+post_gap_detect_advance_distance_m: 0.25
+post_gap_detect_advance_speed: 0.04
+post_gap_detect_advance_timeout_sec: 8.0
 
 scan_layers: 2
 scan_depth_count: 3

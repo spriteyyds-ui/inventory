@@ -256,6 +256,10 @@ distance_estimator_node:
     output_topic: /inventory/target_distance
     # Current target side command from mission_manager (left/right string).
     target_lidar_side_topic: /inventory/target_lidar_side
+    # Mission-controlled enable topic; disabled phases do not publish target_distance.
+    enable_topic: /inventory/distance_estimator_enable
+    # Start disabled until mission_manager enters TARGET_DISTANCE_ALIGN.
+    enable_on_start: false
     # Default active LiDAR side before mission_manager publishes the target side.
     default_lidar_side: right
     # Left-side target ranging sector center in base frame (degrees).
@@ -390,6 +394,8 @@ mission_manager_node:
     recognizer_enable_topic: /inventory/recognizer_enable
     # Gap detector enable topic, true only in WAITING_GAP (topic name).
     gap_detector_enable_topic: /inventory/gap_detector_enable
+    # Target distance estimator enable topic, true only during target distance alignment.
+    distance_estimator_enable_topic: /inventory/distance_estimator_enable
     # Entry side topic published to gap_detector (left/right string).
     entry_side_topic: /inventory/entry_side
     # Target LiDAR side topic published to distance_estimator (left/right string).
@@ -459,7 +465,7 @@ mission_manager_node:
     # Small angular clamp for straight-stage yaw hold (radians/second).
     entry_straight_max_angular_speed: 0.15
     # Target-side LiDAR distance to hold during MOVING_TO_GRID_CENTER (meters).
-    entry_side_hold_target_distance_m: 0.60
+    entry_side_hold_target_distance_m: 0.30
     # Proportional gain for target-side distance hold in MOVING_TO_GRID_CENTER (rad/s per meter).
     entry_side_hold_kp: 0.00
     # Minimum valid LiDAR points required in the target-side sector before side hold is enabled.
@@ -519,9 +525,9 @@ mission_manager_node:
     # Low speed used while SEARCH_GAP moves toward the expected physical-unit gap (meters/second).
     search_gap_speed: 0.10
     # SEARCH_GAP timeout for forward search before falling back to the micro-adjust sequence (seconds).
-    search_gap_forward_timeout_sec: 4.0
+    search_gap_forward_timeout_sec: 10.0
     # SEARCH_GAP timeout for backward search before falling back to the micro-adjust sequence (seconds).
-    search_gap_backward_timeout_sec: 6.0
+    search_gap_backward_timeout_sec: 10.0
     # Timeout of one WAITING_GAP detection cycle (seconds).
     gap_detect_cycle_timeout_sec: 2.5
     # Number of failed detect cycles before one pose adjustment (count).
@@ -529,7 +535,7 @@ mission_manager_node:
     # Linear speed for gap-adjust sequence motions (meters/second).
     gap_adjust_speed: 0.08
     # Relative adjustment sequence applied per retry stage (meters list).
-    gap_adjust_sequence: [-0.10, 0.10, -0.20]
+    gap_adjust_sequence: [-0.20, 0.10, -0.20]
 
     # Whether to return home after mission finishes (boolean).
     return_home_on_finish: false
