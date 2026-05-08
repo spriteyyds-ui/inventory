@@ -10,6 +10,7 @@
 
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/laser_scan.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/string.hpp"
 
@@ -23,6 +24,10 @@ public:
     output_topic_ = declare_parameter<std::string>("output_topic", "/inventory/target_distance");
     target_lidar_side_topic_ = declare_parameter<std::string>(
       "target_lidar_side_topic", "/inventory/target_lidar_side");
+    enable_topic_ = declare_parameter<std::string>(
+      "enable_topic", "/inventory/distance_estimator_enable");
+    enable_on_start_ = declare_parameter<bool>("enable_on_start", false);
+    estimator_enabled_ = enable_on_start_;
     default_lidar_side_ = normalize_lidar_side(
       declare_parameter<std::string>("default_lidar_side", "right"));
     if (default_lidar_side_.empty()) {
@@ -90,6 +95,21 @@ public:
           active_lidar_side_.c_str());
       });
 
+    enable_sub_ = create_subscription<std_msgs::msg::Bool>(
+      enable_topic_,
+      rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable(),
+      [this](const std_msgs::msg::Bool::SharedPtr msg) {
+        if (estimator_enabled_ == msg->data) {
+          return;
+        }
+        estimator_enabled_ = msg->data;
+        RCLCPP_INFO(
+          get_logger(),
+          "[distance_estimator] %s by enable_topic=%s",
+          estimator_enabled_ ? "enabled" : "disabled",
+          enable_topic_.c_str());
+      });
+
     const double period = 1.0 / std::max(1.0, publish_rate_hz_);
     timer_ = create_wall_timer(
       std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<double>(period)),
@@ -97,14 +117,16 @@ public:
 
     RCLCPP_INFO(
       get_logger(),
-      "距离估算节点已启动 lidar_only side=%s left_center=%.1f right_center=%.1f window=%.1f "
-      "valid_range=[%.2f,%.2f]",
+      "距离估算节点已启动 lidar_only enabled=%s side=%s left_center=%.1f right_center=%.1f "
+      "window=%.1f valid_range=[%.2f,%.2f] enable_topic=%s",
+      estimator_enabled_ ? "true" : "false",
       active_lidar_side_.c_str(),
       left_lidar_center_deg_,
       right_lidar_center_deg_,
       side_lidar_window_deg_,
       min_valid_distance_,
-      max_valid_distance_);
+      max_valid_distance_,
+      enable_topic_.c_str());
   }
 
 private:
@@ -197,6 +219,14 @@ private:
 
   void on_timer()
   {
+    if (!estimator_enabled_) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        2000,
+        "[distance_estimator] disabled: skip target_distance publish");
+      return;
+    }
     if (!latest_scan_) {
       return;
     }
@@ -232,8 +262,11 @@ private:
   std::string scan_topic_;
   std::string output_topic_;
   std::string target_lidar_side_topic_;
+  std::string enable_topic_;
   std::string default_lidar_side_{"right"};
   std::string active_lidar_side_{"right"};
+  bool enable_on_start_{false};
+  bool estimator_enabled_{false};
 
   double left_lidar_center_deg_{90.0};
   double right_lidar_center_deg_{-90.0};
@@ -246,6 +279,7 @@ private:
 
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr target_lidar_side_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr distance_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
