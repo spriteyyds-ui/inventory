@@ -108,7 +108,7 @@ public:
     enter_left_angular_multiplier_ = declare_parameter<double>("enter_left_angular_multiplier", 1.0);
     enter_right_angular_multiplier_ = declare_parameter<double>("enter_right_angular_multiplier", -1.0);
     enable_grid_center_entry_ = declare_parameter<bool>("enable_grid_center_entry", true);
-    grid_depth_m_ = declare_parameter<double>("grid_depth_m", 1);
+    grid_depth_m_ = declare_parameter<double>("grid_depth_m", 2.4);
     left_max_depth_index_ = declare_parameter<int>("left_max_depth_index", 4);
     right_max_depth_index_ = declare_parameter<int>("right_max_depth_index", 3);
     entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
@@ -334,6 +334,24 @@ public:
       declare_parameter<double>("overall_test_same_side_search_speed", 0.04);
     overall_test_same_side_search_timeout_sec_ =
       declare_parameter<double>("overall_test_same_side_search_timeout_sec", 20.0);
+    overall_test_same_side_pose_hold_enabled_ =
+      declare_parameter<bool>("overall_test_same_side_pose_hold_enabled", true);
+    overall_test_same_side_fixed_y_m_ =
+      declare_parameter<double>("overall_test_same_side_fixed_y_m", 0.575);
+    overall_test_same_side_fixed_yaw_rad_ =
+      declare_parameter<double>("overall_test_same_side_fixed_yaw_rad", -3.1400);
+    overall_test_same_side_yaw_kp_ =
+      declare_parameter<double>("overall_test_same_side_yaw_kp", 0.40);
+    overall_test_same_side_yaw_deadband_rad_ =
+      declare_parameter<double>("overall_test_same_side_yaw_deadband_rad", 0.03);
+    overall_test_same_side_y_kp_ =
+      declare_parameter<double>("overall_test_same_side_y_kp", 0.30);
+    overall_test_same_side_y_deadband_m_ =
+      declare_parameter<double>("overall_test_same_side_y_deadband_m", 0.03);
+    overall_test_same_side_y_correction_sign_ =
+      declare_parameter<double>("overall_test_same_side_y_correction_sign", 1.0);
+    overall_test_same_side_max_angular_ =
+      declare_parameter<double>("overall_test_same_side_max_angular", 0.15);
     overall_test_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_test_final_recognition_wait_sec", 5.0);
     overall_test_recognition_fallback_enabled_ =
@@ -1040,6 +1058,13 @@ private:
     return oss.str();
   }
 
+  static std::string format_fixed(double value, int precision)
+  {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(std::max(0, precision)) << value;
+    return oss.str();
+  }
+
   void publish_test_scan_log(const std::string & text)
   {
     publish_log("[mission_manager][test_scan] " + text);
@@ -1510,6 +1535,42 @@ private:
         overall_test_same_side_search_timeout_sec_ =
           root["overall_test_same_side_search_timeout_sec"].as<double>();
       }
+      if (root["overall_test_same_side_pose_hold_enabled"]) {
+        overall_test_same_side_pose_hold_enabled_ =
+          root["overall_test_same_side_pose_hold_enabled"].as<bool>();
+      }
+      if (root["overall_test_same_side_fixed_y_m"]) {
+        overall_test_same_side_fixed_y_m_ =
+          root["overall_test_same_side_fixed_y_m"].as<double>();
+      }
+      if (root["overall_test_same_side_fixed_yaw_rad"]) {
+        overall_test_same_side_fixed_yaw_rad_ =
+          root["overall_test_same_side_fixed_yaw_rad"].as<double>();
+      }
+      if (root["overall_test_same_side_yaw_kp"]) {
+        overall_test_same_side_yaw_kp_ =
+          root["overall_test_same_side_yaw_kp"].as<double>();
+      }
+      if (root["overall_test_same_side_yaw_deadband_rad"]) {
+        overall_test_same_side_yaw_deadband_rad_ =
+          root["overall_test_same_side_yaw_deadband_rad"].as<double>();
+      }
+      if (root["overall_test_same_side_y_kp"]) {
+        overall_test_same_side_y_kp_ =
+          root["overall_test_same_side_y_kp"].as<double>();
+      }
+      if (root["overall_test_same_side_y_deadband_m"]) {
+        overall_test_same_side_y_deadband_m_ =
+          root["overall_test_same_side_y_deadband_m"].as<double>();
+      }
+      if (root["overall_test_same_side_y_correction_sign"]) {
+        overall_test_same_side_y_correction_sign_ =
+          root["overall_test_same_side_y_correction_sign"].as<double>();
+      }
+      if (root["overall_test_same_side_max_angular"]) {
+        overall_test_same_side_max_angular_ =
+          root["overall_test_same_side_max_angular"].as<double>();
+      }
       if (root["overall_test_final_recognition_wait_sec"]) {
         overall_test_final_recognition_wait_sec_ =
           root["overall_test_final_recognition_wait_sec"].as<double>();
@@ -1661,7 +1722,9 @@ private:
         get_logger(),
         "整体盘库测试配置: enabled=%s sequence=%s left_route=%s right_route=%s "
         "return_between_sides=%s return_after_done=%s recognize_during_nav=%s "
-        "same_side_search=%s speed=%.3f timeout=%.2f final_recognition_wait=%.2f "
+        "same_side_search=%s speed=%.3f timeout=%.2f pose_hold=%s fixed_y=%.3f "
+        "fixed_yaw=%.4f yaw_kp=%.3f yaw_deadband=%.3f y_kp=%.3f y_deadband=%.3f "
+        "y_sign=%.1f max_angular=%.3f final_recognition_wait=%.2f "
         "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
         "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
         overall_test_enabled_ ? "true" : "false",
@@ -1674,6 +1737,15 @@ private:
         overall_test_same_side_next_search_enabled_ ? "true" : "false",
         overall_test_same_side_search_speed_,
         overall_test_same_side_search_timeout_sec_,
+        overall_test_same_side_pose_hold_enabled_ ? "true" : "false",
+        overall_test_same_side_fixed_y_m_,
+        overall_test_same_side_fixed_yaw_rad_,
+        overall_test_same_side_yaw_kp_,
+        overall_test_same_side_yaw_deadband_rad_,
+        overall_test_same_side_y_kp_,
+        overall_test_same_side_y_deadband_m_,
+        overall_test_same_side_y_correction_sign_,
+        overall_test_same_side_max_angular_,
         overall_test_final_recognition_wait_sec_,
         overall_test_recognition_fallback_enabled_ ? "true" : "false",
         overall_test_recognition_fallback_speed_,
@@ -4471,10 +4543,41 @@ private:
       " recognizer=on distance=off gap=off speed=" +
       format_seconds(overall_test_same_side_search_speed_) +
       " timeout=" + format_seconds(overall_test_same_side_search_timeout_sec_));
+    if (overall_test_same_side_pose_hold_enabled_) {
+      publish_overall_test_log(
+        "same-side pose hold enabled fixed_y=" +
+        format_fixed(overall_test_same_side_fixed_y_m_, 3) +
+        " fixed_yaw=" + format_fixed(overall_test_same_side_fixed_yaw_rad_, 4));
+    }
     set_state(
       State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH,
       "[OVERALL_TEST] same-side next search target=" +
       std::to_string(overall_test_current_target_));
+  }
+
+  bool current_same_side_pose_hold_pose(Pose2D & pose, std::string & pose_note) const
+  {
+    pose = Pose2D{};
+    pose_note.clear();
+
+    const Pose2D current = current_pose_2d();
+    if (!current.valid) {
+      pose_note = "pose invalid";
+      return false;
+    }
+
+    Pose2D map_pose;
+    std::string tf_error;
+    if (transform_pose_2d(current, nav2_goal_frame_, map_pose, tf_error)) {
+      pose = map_pose;
+      pose_note = "frame=" + pose.frame_id;
+      return true;
+    }
+
+    pose = current;
+    pose_note =
+      "map transform failed: " + tf_error + ", using pose frame=" + current.frame_id;
+    return true;
   }
 
   void handle_overall_same_side_next_search_state()
@@ -4499,17 +4602,75 @@ private:
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = overall_test_same_side_search_speed_;
     cmd.angular.z = 0.0;
+    Pose2D pose;
+    std::string pose_note;
+    bool pose_hold_active = false;
+    double y_error = 0.0;
+    double yaw_error = 0.0;
+    double yaw_cmd = 0.0;
+    double y_cmd = 0.0;
+
+    if (overall_test_same_side_pose_hold_enabled_) {
+      if (current_same_side_pose_hold_pose(pose, pose_note)) {
+        pose_hold_active = true;
+        y_error = overall_test_same_side_fixed_y_m_ - pose.y;
+        yaw_error = normalize_angle(overall_test_same_side_fixed_yaw_rad_ - pose.yaw);
+        if (std::abs(yaw_error) >= std::abs(overall_test_same_side_yaw_deadband_rad_)) {
+          yaw_cmd = overall_test_same_side_yaw_kp_ * yaw_error;
+        }
+        if (std::abs(y_error) >= std::abs(overall_test_same_side_y_deadband_m_)) {
+          y_cmd = overall_test_same_side_y_kp_ * y_error;
+        }
+        const double max_angular =
+          std::isfinite(overall_test_same_side_max_angular_) ?
+          std::max(0.0, std::abs(overall_test_same_side_max_angular_)) : 0.15;
+        cmd.angular.z = std::clamp(
+          yaw_cmd + overall_test_same_side_y_correction_sign_ * y_cmd,
+          -max_angular,
+          max_angular);
+      } else {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          1000,
+          "[OVERALL_TEST] same-side pose hold unavailable: %s, fallback to open-loop search",
+          pose_note.c_str());
+      }
+    }
     cmd_pub_->publish(cmd);
-    RCLCPP_INFO_THROTTLE(
-      get_logger(),
-      *get_clock(),
-      1000,
-      "[mission_manager][OVERALL_TEST] same_side_next_search target=%d side=%s speed=%.3f elapsed=%.2f/%.2f",
-      current_target_cabinet_,
-      current_target_side_.c_str(),
-      cmd.linear.x,
-      elapsed,
-      timeout);
+    if (pose_hold_active) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[OVERALL_TEST] same_side_next_search target=%d speed=%.3f current_y=%.3f "
+        "fixed_y=%.3f y_error=%.3f current_yaw=%.4f fixed_yaw=%.4f yaw_error=%.4f "
+        "angular=%.3f elapsed=%.2f/%.2f pose=%s",
+        current_target_cabinet_,
+        cmd.linear.x,
+        pose.y,
+        overall_test_same_side_fixed_y_m_,
+        y_error,
+        pose.yaw,
+        overall_test_same_side_fixed_yaw_rad_,
+        yaw_error,
+        cmd.angular.z,
+        elapsed,
+        timeout,
+        pose_note.c_str());
+    } else {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[OVERALL_TEST] same_side_next_search target=%d speed=%.3f angular=%.3f "
+        "elapsed=%.2f/%.2f open_loop=true",
+        current_target_cabinet_,
+        cmd.linear.x,
+        cmd.angular.z,
+        elapsed,
+        timeout);
+    }
   }
 
   void begin_overall_recognition_fallback()
@@ -8189,6 +8350,15 @@ private:
   bool overall_test_same_side_next_search_enabled_{true};
   double overall_test_same_side_search_speed_{0.04};
   double overall_test_same_side_search_timeout_sec_{20.0};
+  bool overall_test_same_side_pose_hold_enabled_{true};
+  double overall_test_same_side_fixed_y_m_{0.575};
+  double overall_test_same_side_fixed_yaw_rad_{-3.1400};
+  double overall_test_same_side_yaw_kp_{0.40};
+  double overall_test_same_side_yaw_deadband_rad_{0.03};
+  double overall_test_same_side_y_kp_{0.30};
+  double overall_test_same_side_y_deadband_m_{0.03};
+  double overall_test_same_side_y_correction_sign_{1.0};
+  double overall_test_same_side_max_angular_{0.15};
   double overall_test_final_recognition_wait_sec_{5.0};
   bool overall_test_recognition_fallback_enabled_{true};
   double overall_test_recognition_fallback_speed_{0.04};
