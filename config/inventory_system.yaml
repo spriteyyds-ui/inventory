@@ -441,7 +441,7 @@ mission_manager_node:
     # Prefer dynamic straight distance to the target depth-grid center instead of legacy entry_distance.
     enable_grid_center_entry: true
     # Length of one cabinet depth grid (meters). Centers are (depth_index - 0.5) * grid_depth_m.
-    grid_depth_m: 2.4
+    grid_depth_m: 1.0
     # Maximum allowed depth_index for left / upper-side cabinets (1-18).
     left_max_depth_index: 4
     # Maximum allowed depth_index for right / lower-side cabinets (19-36).
