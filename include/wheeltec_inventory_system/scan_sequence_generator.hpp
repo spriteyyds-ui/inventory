@@ -10,9 +10,9 @@ namespace wheeltec_inventory_system
 enum class ScanStepType
 {
   MOVE_TO_GRID,
-  SCAN_PLACEHOLDER,
-  LIFT_PLACEHOLDER,
-  LOWER_PLACEHOLDER
+  SCAN_GRID,
+  MOVE_LIFT_TO_LEVEL,
+  MOVE_LIFT_HOME
 };
 
 struct ScanStep

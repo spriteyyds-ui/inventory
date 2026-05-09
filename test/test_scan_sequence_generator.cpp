@@ -12,7 +12,7 @@ std::vector<std::string> collectScanGridLabels(
 {
   std::vector<std::string> labels;
   for (const auto & step : steps) {
-    if (step.step_type == wheeltec_inventory_system::ScanStepType::SCAN_PLACEHOLDER) {
+    if (step.step_type == wheeltec_inventory_system::ScanStepType::SCAN_GRID) {
       labels.push_back(wheeltec_inventory_system::ScanSequenceGenerator::formatGridLabel(step));
     }
   }

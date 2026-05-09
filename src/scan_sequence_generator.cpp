@@ -24,8 +24,8 @@ std::vector<ScanStep> ScanSequenceGenerator::generateCabinetSnakeSequence(
 
   for (int layer = 1; layer <= layers; ++layer) {
     if (layer > 1) {
-      steps.push_back(ScanStep{cabinet_id, layer, 0, ScanStepType::LIFT_PLACEHOLDER});
-      std::cout << "[scan_sequence_generator] add lift placeholder cabinet=" << cabinet_id
+      steps.push_back(ScanStep{cabinet_id, layer, 0, ScanStepType::MOVE_LIFT_TO_LEVEL});
+      std::cout << "[scan_sequence_generator] add lift move cabinet=" << cabinet_id
                 << " target_layer=" << layer << std::endl;
     }
 
@@ -36,7 +36,7 @@ std::vector<ScanStep> ScanSequenceGenerator::generateCabinetSnakeSequence(
 
     for (int depth = start_depth;; depth += step_delta) {
       const ScanStep move_step{cabinet_id, layer, depth, ScanStepType::MOVE_TO_GRID};
-      const ScanStep scan_step{cabinet_id, layer, depth, ScanStepType::SCAN_PLACEHOLDER};
+      const ScanStep scan_step{cabinet_id, layer, depth, ScanStepType::SCAN_GRID};
       steps.push_back(move_step);
       steps.push_back(scan_step);
 
@@ -50,8 +50,8 @@ std::vector<ScanStep> ScanSequenceGenerator::generateCabinetSnakeSequence(
   }
 
   if (layers > 1) {
-    steps.push_back(ScanStep{cabinet_id, 1, 0, ScanStepType::LOWER_PLACEHOLDER});
-    std::cout << "[scan_sequence_generator] add lower placeholder cabinet=" << cabinet_id
+    steps.push_back(ScanStep{cabinet_id, 1, 0, ScanStepType::MOVE_LIFT_HOME});
+    std::cout << "[scan_sequence_generator] add lift home cabinet=" << cabinet_id
               << " target_layer=1" << std::endl;
   }
 
@@ -64,12 +64,12 @@ std::string ScanSequenceGenerator::stepTypeToString(ScanStepType step_type)
   switch (step_type) {
     case ScanStepType::MOVE_TO_GRID:
       return "MOVE_TO_GRID";
-    case ScanStepType::SCAN_PLACEHOLDER:
-      return "SCAN_PLACEHOLDER";
-    case ScanStepType::LIFT_PLACEHOLDER:
-      return "LIFT_PLACEHOLDER";
-    case ScanStepType::LOWER_PLACEHOLDER:
-      return "LOWER_PLACEHOLDER";
+    case ScanStepType::SCAN_GRID:
+      return "SCAN_GRID";
+    case ScanStepType::MOVE_LIFT_TO_LEVEL:
+      return "MOVE_LIFT_TO_LEVEL";
+    case ScanStepType::MOVE_LIFT_HOME:
+      return "MOVE_LIFT_HOME";
   }
 
   return "UNKNOWN";

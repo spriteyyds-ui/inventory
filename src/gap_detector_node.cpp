@@ -98,22 +98,30 @@ public:
     context_sub_ = create_subscription<std_msgs::msg::Float32MultiArray>(
       context_topic_,
       10,
-      std::bind(&GapDetectorNode::context_callback, this, std::placeholders::_1));
+      [this](const std_msgs::msg::Float32MultiArray::SharedPtr msg) {
+        context_callback(msg);
+      });
 
     auto control_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
     enable_sub_ = create_subscription<std_msgs::msg::Bool>(
       enable_topic_,
       control_qos,
-      std::bind(&GapDetectorNode::enable_callback, this, std::placeholders::_1));
+      [this](const std_msgs::msg::Bool::SharedPtr msg) {
+        enable_callback(msg);
+      });
     entry_side_sub_ = create_subscription<std_msgs::msg::String>(
       entry_side_topic_,
       control_qos,
-      std::bind(&GapDetectorNode::entry_side_callback, this, std::placeholders::_1));
+      [this](const std_msgs::msg::String::SharedPtr msg) {
+        entry_side_callback(msg);
+      });
 
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_,
       rclcpp::SensorDataQoS(),
-      std::bind(&GapDetectorNode::scan_callback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+        scan_callback(msg);
+      });
 
     detector_enabled_ = enable_on_start_;
     init_csv_logger();

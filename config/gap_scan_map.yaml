@@ -6,7 +6,6 @@ gaps:
     second_scan_cabinets: [1]
     open_command_id: gap_01_02_03
     close_command_id: gap_01_02_03
-    motion_mode: ackermann_reentry_test
 
   gap_02_03_04:
     left_cabinet: 4
@@ -15,7 +14,6 @@ gaps:
     second_scan_cabinets: [3]
     open_command_id: gap_02_03_04
     close_command_id: gap_02_03_04
-    motion_mode: ackermann_reentry_test
 
   gap_05_06_07:
     left_cabinet: 5
@@ -24,7 +22,6 @@ gaps:
     second_scan_cabinets: [6, 7]
     open_command_id: gap_05_06_07
     close_command_id: gap_05_06_07
-    motion_mode: ackermann_reentry_test
 
   gap_06_07_08:
     left_cabinet: 8
@@ -33,4 +30,3 @@ gaps:
     second_scan_cabinets: [7, 6]
     open_command_id: gap_06_07_08
     close_command_id: gap_06_07_08
-    motion_mode: ackermann_reentry_test

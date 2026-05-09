@@ -99,9 +99,11 @@ ament_target_dependencies(gap_detector_node
 )
 target_link_libraries(gap_detector_node ${cpp_typesupport_target})
 
-add_library(inventory_test_scan_modules STATIC
+add_library(inventory_scan_modules STATIC
   src/scan_sequence_generator.cpp
   src/scan_sequence_executor.cpp
+  src/inventory_scanner.cpp
+  src/lift_controller.cpp
   src/web_api_client.cpp
 )
 
@@ -123,13 +125,13 @@ if(TARGET yaml-cpp::yaml-cpp)
   target_link_libraries(
     mission_manager_node
     ${cpp_typesupport_target}
-    inventory_test_scan_modules
+    inventory_scan_modules
     yaml-cpp::yaml-cpp)
 else()
   target_link_libraries(
     mission_manager_node
     ${cpp_typesupport_target}
-    inventory_test_scan_modules
+    inventory_scan_modules
     yaml-cpp)
 endif()
 
@@ -147,7 +149,7 @@ target_link_libraries(offline_test ${OpenCV_LIBS})
 add_executable(test_scan_sequence_generator
   test/test_scan_sequence_generator.cpp
 )
-target_link_libraries(test_scan_sequence_generator inventory_test_scan_modules)
+target_link_libraries(test_scan_sequence_generator inventory_scan_modules)
 
 install(TARGETS
   corridor_follower_node

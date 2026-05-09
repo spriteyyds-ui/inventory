@@ -46,21 +46,25 @@ public:
     image_sub_ = create_subscription<sensor_msgs::msg::Image>(
       camera_topic_,
       rclcpp::SensorDataQoS(),
-      std::bind(&NumberRecognizerNode::image_callback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::Image::SharedPtr msg) {
+        image_callback(msg);
+      });
 
     trigger_srv_ = create_service<std_srvs::srv::SetBool>(
       trigger_service_name_,
-      std::bind(
-        &NumberRecognizerNode::trigger_callback,
-        this,
-        std::placeholders::_1,
-        std::placeholders::_2));
+      [this](
+        const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+        std::shared_ptr<std_srvs::srv::SetBool::Response> response) {
+        trigger_callback(request, response);
+      });
 
     auto control_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
     enable_sub_ = create_subscription<std_msgs::msg::Bool>(
       enable_control_topic_,
       control_qos,
-      std::bind(&NumberRecognizerNode::enable_control_callback, this, std::placeholders::_1));
+      [this](const std_msgs::msg::Bool::SharedPtr msg) {
+        enable_control_callback(msg);
+      });
 
     distance_sub_ = create_subscription<std_msgs::msg::Float32>(
       distance_overlay_topic_,
@@ -74,7 +78,9 @@ public:
       });
 
     param_cb_handle_ = add_on_set_parameters_callback(
-      std::bind(&NumberRecognizerNode::on_parameters_set, this, std::placeholders::_1));
+      [this](const std::vector<rclcpp::Parameter> & params) {
+        return on_parameters_set(params);
+      });
 
     if (!reload_classifier_model()) {
       RCLCPP_ERROR(get_logger(), "分类模型加载失败，节点将继续运行但识别无效");
