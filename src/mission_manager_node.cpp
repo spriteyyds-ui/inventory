@@ -666,6 +666,12 @@ private:
     ARC_REVERSE,
   };
 
+  enum class InGapScanRuntimeMode
+  {
+    TEST_REAL,
+    OVERALL_TEST,
+  };
+
   enum class OverallTestReturnReason
   {
     NONE,
@@ -1086,6 +1092,29 @@ private:
       publish_overall_test_log(text);
     } else {
       publish_test_real_log(text);
+    }
+  }
+
+  static const char * in_gap_scan_mode_label(InGapScanRuntimeMode mode)
+  {
+    return mode == InGapScanRuntimeMode::OVERALL_TEST ? "OVERALL_TEST" : "test_real";
+  }
+
+  void publish_in_gap_scan_log(InGapScanRuntimeMode mode, const std::string & text)
+  {
+    if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
+      publish_overall_test_log(text);
+    } else {
+      publish_test_real_log(text);
+    }
+  }
+
+  void fail_in_gap_scan_runtime(InGapScanRuntimeMode mode, const std::string & reason)
+  {
+    if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
+      fail_overall_test(reason);
+    } else {
+      fail_test_real_motion(reason);
     }
   }
 
@@ -4918,19 +4947,27 @@ private:
       fail_overall_test("整体盘库测试扫描柜号非法");
       return;
     }
-    publish_stop();
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false);
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
-    publish_overall_test_log("scan placeholder for cabinet " + std::to_string(cabinet_id));
-    if (!execute_placeholder_scan_for_cabinet(cabinet_id, false)) {
+
+    if (!test_real_scan_active_ || test_real_scan_cabinet_ != cabinet_id) {
+      publish_overall_test_log(
+        "OVERALL_TEST_SCAN_PLACEHOLDER runtime start cabinet=" + std::to_string(cabinet_id) +
+        " current_depth=" + std::to_string(current_target_depth_index_));
+    }
+
+    if (!execute_test_real_scan_runtime_tick(cabinet_id, InGapScanRuntimeMode::OVERALL_TEST)) {
       return;
     }
-    publish_overall_test_log("scan placeholder finished for cabinet " + std::to_string(cabinet_id));
+
+    publish_overall_test_log(
+      "OVERALL_TEST_SCAN_PLACEHOLDER runtime finished cabinet=" + std::to_string(cabinet_id));
     set_state(
       State::OVERALL_TEST_EXIT_GAP,
-      "[OVERALL_TEST] scan finished, reverse exit gap cabinet=" + std::to_string(cabinet_id));
+      "[OVERALL_TEST] in-gap sequence finished, reverse exit gap cabinet=" +
+      std::to_string(cabinet_id));
   }
 
   bool should_return_home_between_targets(
@@ -5287,14 +5324,16 @@ private:
     test_real_grid_move_start_pose_ = Pose2D{};
   }
 
-  bool begin_test_real_scan_runtime(int cabinet_id)
+  bool begin_test_real_scan_runtime(
+    int cabinet_id,
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
   {
     test_real_scan_steps_ = scan_sequence_generator_.generateCabinetSnakeSequence(
       cabinet_id,
       test_scan_layers_,
       test_scan_depth_count_);
     if (test_real_scan_steps_.empty()) {
-      fail_test_real_motion("生成扫描序列为空: cabinet=" + std::to_string(cabinet_id));
+      fail_in_gap_scan_runtime(mode, "生成扫描序列为空: cabinet=" + std::to_string(cabinet_id));
       return false;
     }
 
@@ -5302,49 +5341,88 @@ private:
     test_real_scan_cabinet_ = cabinet_id;
     test_real_scan_active_ = true;
     test_real_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    test_real_grid_have_previous_depth_ = false;
-    test_real_grid_previous_cabinet_ = -1;
-    test_real_grid_previous_layer_ = -1;
-    test_real_grid_previous_depth_ = -1;
+    if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
+      const int initial_depth = std::max(1, current_target_depth_index_);
+      test_real_grid_have_previous_depth_ = true;
+      test_real_grid_previous_cabinet_ = cabinet_id;
+      test_real_grid_previous_layer_ = 1;
+      test_real_grid_previous_depth_ = initial_depth;
+    } else {
+      test_real_grid_have_previous_depth_ = false;
+      test_real_grid_previous_cabinet_ = -1;
+      test_real_grid_previous_layer_ = -1;
+      test_real_grid_previous_depth_ = -1;
+    }
     test_real_grid_move_active_ = false;
     test_real_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
-    publish_test_real_log(
-      "in gap, start placeholder scan cabinet=" + std::to_string(cabinet_id));
+    publish_in_gap_scan_log(
+      mode,
+      "in gap, start runtime scan cabinet=" + std::to_string(cabinet_id) +
+      " step_count=" + std::to_string(test_real_scan_steps_.size()) +
+      " previous_depth=" + std::to_string(test_real_grid_previous_depth_));
     RCLCPP_INFO(
       get_logger(),
-      "[mission_manager][test_real][scan_runtime] start cabinet=%d step_count=%zu "
-      "grid_motion=true spacing=%.2f speed=%.3f timeout=%.2f",
+      "[mission_manager][%s][scan_runtime] start cabinet=%d step_count=%zu "
+      "previous_depth=%d grid_motion=%s spacing=%.2f speed=%.3f timeout=%.2f",
+      in_gap_scan_mode_label(mode),
       cabinet_id,
       test_real_scan_steps_.size(),
+      test_real_grid_previous_depth_,
+      test_real_grid_motion_enabled_ ? "true" : "false",
       test_real_grid_spacing_m_,
       test_real_grid_move_speed_,
       test_real_grid_move_timeout_sec_);
     return true;
   }
 
-  bool test_real_scan_wait_step_started(const wheeltec_inventory_system::ScanStep & step)
+  bool test_real_scan_wait_step_started(
+    const wheeltec_inventory_system::ScanStep & step,
+    InGapScanRuntimeMode mode)
   {
     if (test_real_scan_step_start_time_.nanoseconds() != 0) {
       return true;
     }
 
     test_real_scan_step_start_time_ = this->now();
+    const std::string step_type =
+      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type);
+    std::string action_text = "placeholder action";
+    if (step.step_type == wheeltec_inventory_system::ScanStepType::SCAN_PLACEHOLDER) {
+      action_text = "placeholder scan/lift/barcode action";
+    } else if (step.step_type == wheeltec_inventory_system::ScanStepType::LIFT_PLACEHOLDER) {
+      action_text = "placeholder lift action";
+    } else if (step.step_type == wheeltec_inventory_system::ScanStepType::LOWER_PLACEHOLDER) {
+      action_text = "placeholder lower action";
+    }
     RCLCPP_INFO(
       get_logger(),
-      "[mission_manager][test_real][scan_runtime] placeholder step=%s cabinet=%d layer=%d depth=%d",
-      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+      "[mission_manager][%s][scan_runtime] %s step_index=%zu/%zu step=%s "
+      "cabinet=%d layer=%d depth=%d",
+      in_gap_scan_mode_label(mode),
+      action_text.c_str(),
+      test_real_scan_step_index_,
+      test_real_scan_steps_.size(),
+      step_type.c_str(),
       step.cabinet_id,
       step.layer_index,
       step.depth_index);
+    publish_in_gap_scan_log(
+      mode,
+      action_text + " step=" + step_type +
+      " cabinet=" + std::to_string(step.cabinet_id) +
+      " layer=" + std::to_string(step.layer_index) +
+      " depth=" + std::to_string(step.depth_index) +
+      " step_index=" + std::to_string(test_real_scan_step_index_));
     return false;
   }
 
   bool execute_test_real_scan_wait_step(
     const wheeltec_inventory_system::ScanStep & step,
-    double wait_sec)
+    double wait_sec,
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
   {
-    const bool already_started = test_real_scan_wait_step_started(step);
+    const bool already_started = test_real_scan_wait_step_started(step, mode);
     (void)already_started;
     if ((this->now() - test_real_scan_step_start_time_).seconds() < std::max(0.0, wait_sec)) {
       return false;
@@ -5357,7 +5435,8 @@ private:
           step.depth_index,
           "placeholder_ok"))
       {
-        fail_test_real_motion(
+        fail_in_gap_scan_runtime(
+          mode,
           "占位扫描结果上报失败: cabinet=" + std::to_string(step.cabinet_id) +
           " layer=" + std::to_string(step.layer_index) +
           " depth=" + std::to_string(step.depth_index));
@@ -5365,6 +5444,17 @@ private:
       }
     }
 
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][%s][scan_runtime] placeholder finished step_index=%zu/%zu "
+      "cabinet=%d layer=%d depth=%d step=%s",
+      in_gap_scan_mode_label(mode),
+      test_real_scan_step_index_,
+      test_real_scan_steps_.size(),
+      step.cabinet_id,
+      step.layer_index,
+      step.depth_index,
+      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str());
     test_real_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     return true;
   }
@@ -5378,9 +5468,16 @@ private:
       test_real_grid_move_step_.step_type == step.step_type;
   }
 
-  bool execute_test_real_grid_move_step(const wheeltec_inventory_system::ScanStep & step)
+  bool execute_test_real_grid_move_step(
+    const wheeltec_inventory_system::ScanStep & step,
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
   {
     if (!test_real_grid_motion_enabled_) {
+      if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
+        fail_overall_test(
+          "overall test in-gap MOVE_TO_GRID requires test_real_grid_motion_enabled=true");
+        return false;
+      }
       return true;
     }
 
@@ -5399,27 +5496,39 @@ private:
       test_real_grid_previous_depth_ = step.depth_index;
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][grid_move] cabinet=%d layer=%d depth=%d first depth, no move",
+        "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
+        "target_depth=%d first depth, no move",
+        in_gap_scan_mode_label(mode),
+        test_real_scan_step_index_,
+        test_real_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
         step.depth_index);
-      publish_test_real_log(
+      publish_in_gap_scan_log(
+        mode,
         "[grid_move] cabinet=" + std::to_string(step.cabinet_id) +
         " layer=" + std::to_string(step.layer_index) +
         " depth=" + std::to_string(step.depth_index) +
+        " step_index=" + std::to_string(test_real_scan_step_index_) +
         " first depth, no move");
       return true;
     }
 
     const int delta_depth = step.depth_index - test_real_grid_previous_depth_;
     if (delta_depth == 0) {
+      const int previous_depth = test_real_grid_previous_depth_;
       test_real_grid_previous_layer_ = step.layer_index;
       test_real_grid_previous_depth_ = step.depth_index;
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][grid_move] cabinet=%d layer=%d depth=%d delta_depth=0 no move",
+        "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
+        "previous_depth=%d target_depth=%d delta_depth=0 no move",
+        in_gap_scan_mode_label(mode),
+        test_real_scan_step_index_,
+        test_real_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
+        previous_depth,
         step.depth_index);
       return true;
     }
@@ -5427,20 +5536,29 @@ private:
     const double spacing = std::max(0.0, test_real_grid_spacing_m_);
     const double target_distance = std::abs(delta_depth) * spacing;
     if (target_distance <= 1e-4) {
+      const int previous_depth = test_real_grid_previous_depth_;
       test_real_grid_previous_layer_ = step.layer_index;
       test_real_grid_previous_depth_ = step.depth_index;
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][grid_move] cabinet=%d layer=%d depth=%d spacing=0 no move",
+        "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
+        "previous_depth=%d target_depth=%d delta_depth=%d distance=%.2f no move",
+        in_gap_scan_mode_label(mode),
+        test_real_scan_step_index_,
+        test_real_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
-        step.depth_index);
+        previous_depth,
+        step.depth_index,
+        delta_depth,
+        target_distance);
       return true;
     }
 
     const double speed_abs = std::clamp(std::abs(test_real_grid_move_speed_), 0.0, 0.05);
     if (speed_abs <= 1e-4) {
-      fail_test_real_motion(
+      fail_in_gap_scan_runtime(
+        mode,
         "深度格移动速度非法: " + std::to_string(test_real_grid_move_speed_));
       return false;
     }
@@ -5449,12 +5567,12 @@ private:
     if (!test_real_grid_move_active_ || !test_real_grid_move_step_matches(step)) {
       std::string reason;
       if (!current_odom_ready_for_entry(reason)) {
-        fail_test_real_motion("深度格移动前里程计异常: " + reason);
+        fail_in_gap_scan_runtime(mode, "深度格移动前里程计异常: " + reason);
         return false;
       }
       const Pose2D current = current_pose_2d();
       if (!current.valid) {
-        fail_test_real_motion("深度格移动前当前位姿无效");
+        fail_in_gap_scan_runtime(mode, "深度格移动前当前位姿无效");
         return false;
       }
 
@@ -5468,10 +5586,15 @@ private:
 
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][grid_move] cabinet=%d layer=%d depth=%d "
-        "delta_depth=%d distance=%.2f speed=%.3f timeout=%.2f",
+        "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
+        "previous_depth=%d target_depth=%d delta_depth=%d target_distance=%.2f "
+        "speed=%.3f timeout=%.2f",
+        in_gap_scan_mode_label(mode),
+        test_real_scan_step_index_,
+        test_real_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
+        test_real_grid_previous_depth_,
         step.depth_index,
         delta_depth,
         test_real_grid_move_target_distance_,
@@ -5479,25 +5602,29 @@ private:
         test_real_grid_move_timeout_sec_);
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][grid_move] start_pose x=%.3f y=%.3f yaw=%.3f frame=%s",
+        "[mission_manager][%s][grid_move] start_pose x=%.3f y=%.3f yaw=%.3f frame=%s",
+        in_gap_scan_mode_label(mode),
         current.x,
         current.y,
         current.yaw,
         current.frame_id.c_str());
-      publish_test_real_log(
+      publish_in_gap_scan_log(
+        mode,
         "[grid_move] cabinet=" + std::to_string(step.cabinet_id) +
         " layer=" + std::to_string(step.layer_index) +
-        " depth=" + std::to_string(step.depth_index) +
+        " previous_depth=" + std::to_string(test_real_grid_previous_depth_) +
+        " target_depth=" + std::to_string(step.depth_index) +
         " delta_depth=" + std::to_string(delta_depth) +
-        " distance=" + format_seconds(test_real_grid_move_target_distance_) +
-        " speed=" + format_seconds(test_real_grid_move_cmd_speed_));
+        " target_distance=" + format_fixed(test_real_grid_move_target_distance_, 2) +
+        " speed=" + format_fixed(test_real_grid_move_cmd_speed_, 3) +
+        " step_index=" + std::to_string(test_real_scan_step_index_));
       return false;
     }
 
     std::string reason;
     if (!current_odom_ready_for_entry(reason)) {
       publish_stop();
-      fail_test_real_motion("深度格移动中里程计异常: " + reason);
+      fail_in_gap_scan_runtime(mode, "深度格移动中里程计异常: " + reason);
       return false;
     }
 
@@ -5508,15 +5635,22 @@ private:
       publish_stop();
       RCLCPP_ERROR(
         get_logger(),
-        "[mission_manager][test_real][grid_move] timeout cabinet=%d layer=%d depth=%d "
-        "traveled=%.2f target=%.2f elapsed=%.2f",
+        "[mission_manager][%s][grid_move] timeout step_index=%zu/%zu cabinet=%d "
+        "layer=%d previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f "
+        "target=%.2f elapsed=%.2f",
+        in_gap_scan_mode_label(mode),
+        test_real_scan_step_index_,
+        test_real_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
+        test_real_grid_previous_depth_,
         step.depth_index,
+        delta_depth,
         traveled,
         test_real_grid_move_target_distance_,
         elapsed);
-      fail_test_real_motion(
+      fail_in_gap_scan_runtime(
+        mode,
         "深度格移动超时: cabinet=" + std::to_string(step.cabinet_id) +
         " layer=" + std::to_string(step.layer_index) +
         " depth=" + std::to_string(step.depth_index));
@@ -5525,22 +5659,32 @@ private:
 
     if (traveled >= test_real_grid_move_target_distance_) {
       publish_stop();
+      const int previous_depth = test_real_grid_previous_depth_;
       test_real_grid_previous_layer_ = step.layer_index;
       test_real_grid_previous_depth_ = step.depth_index;
       test_real_grid_move_active_ = false;
       test_real_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][grid_move] move finished cabinet=%d layer=%d depth=%d "
-        "traveled=%.2f",
+        "[mission_manager][%s][grid_move] move finished step_index=%zu/%zu cabinet=%d "
+        "layer=%d previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f",
+        in_gap_scan_mode_label(mode),
+        test_real_scan_step_index_,
+        test_real_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
+        previous_depth,
         step.depth_index,
+        delta_depth,
         traveled);
-      publish_test_real_log(
+      publish_in_gap_scan_log(
+        mode,
         "[grid_move] move finished cabinet=" + std::to_string(step.cabinet_id) +
         " layer=" + std::to_string(step.layer_index) +
-        " depth=" + std::to_string(step.depth_index));
+        " previous_depth=" + std::to_string(previous_depth) +
+        " target_depth=" + std::to_string(step.depth_index) +
+        " traveled=" + format_fixed(traveled, 2) +
+        " step_index=" + std::to_string(test_real_scan_step_index_));
       return true;
     }
 
@@ -5548,14 +5692,15 @@ private:
       const auto safety = evaluate_entering_safety();
       if (safety.blocked) {
         publish_stop();
-        fail_test_real_motion("深度格前进被安全策略阻塞: " + safety.block_reason);
+        fail_in_gap_scan_runtime(mode, "深度格前进被安全策略阻塞: " + safety.block_reason);
         return false;
       }
     } else {
       const double ultrasonic_range = min_ultrasonic_range();
       if (std::isfinite(ultrasonic_range) && ultrasonic_range < entry_ultrasonic_stop_distance_) {
         publish_stop();
-        fail_test_real_motion(
+        fail_in_gap_scan_runtime(
+          mode,
           "深度格后退被超声波安全策略阻塞 range=" + std::to_string(ultrasonic_range));
         return false;
       }
@@ -5569,17 +5714,28 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][test_real][grid_move] moving traveled=%.2f target=%.2f elapsed=%.2f",
+      "[mission_manager][%s][grid_move] moving step_index=%zu/%zu cabinet=%d "
+      "previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f target=%.2f "
+      "elapsed=%.2f",
+      in_gap_scan_mode_label(mode),
+      test_real_scan_step_index_,
+      test_real_scan_steps_.size(),
+      step.cabinet_id,
+      test_real_grid_previous_depth_,
+      step.depth_index,
+      delta_depth,
       traveled,
       test_real_grid_move_target_distance_,
       elapsed);
     return false;
   }
 
-  bool execute_test_real_scan_runtime_tick(int cabinet_id)
+  bool execute_test_real_scan_runtime_tick(
+    int cabinet_id,
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
   {
     if (!test_real_scan_active_ || test_real_scan_cabinet_ != cabinet_id) {
-      if (!begin_test_real_scan_runtime(cabinet_id)) {
+      if (!begin_test_real_scan_runtime(cabinet_id, mode)) {
         return false;
       }
     }
@@ -5593,14 +5749,16 @@ private:
     bool step_done = false;
     switch (step.step_type) {
       case wheeltec_inventory_system::ScanStepType::MOVE_TO_GRID:
-        step_done = execute_test_real_grid_move_step(step);
+        step_done = execute_test_real_grid_move_step(step, mode);
         break;
       case wheeltec_inventory_system::ScanStepType::SCAN_PLACEHOLDER:
-        step_done = execute_test_real_scan_wait_step(step, test_scan_placeholder_wait_sec_);
+        step_done =
+          execute_test_real_scan_wait_step(step, test_scan_placeholder_wait_sec_, mode);
         break;
       case wheeltec_inventory_system::ScanStepType::LIFT_PLACEHOLDER:
       case wheeltec_inventory_system::ScanStepType::LOWER_PLACEHOLDER:
-        step_done = execute_test_real_scan_wait_step(step, test_lift_placeholder_wait_sec_);
+        step_done =
+          execute_test_real_scan_wait_step(step, test_lift_placeholder_wait_sec_, mode);
         break;
     }
 
@@ -5610,6 +5768,9 @@ private:
 
     ++test_real_scan_step_index_;
     if (test_real_scan_step_index_ >= test_real_scan_steps_.size()) {
+      publish_in_gap_scan_log(
+        mode,
+        "in-gap runtime sequence complete cabinet=" + std::to_string(cabinet_id));
       reset_test_real_scan_runtime();
       return true;
     }
