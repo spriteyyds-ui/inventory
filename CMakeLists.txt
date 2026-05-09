@@ -38,7 +38,6 @@ set(msg_files
 
 set(srv_files
   "srv/StartMission.srv"
-  "srv/StartTestGapScan.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}

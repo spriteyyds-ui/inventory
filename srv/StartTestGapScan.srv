@@ -1,6 +1,0 @@
-string gap_id
-int32[] scan_cabinets
-bool run_all_configured
----
-bool success
-string message
