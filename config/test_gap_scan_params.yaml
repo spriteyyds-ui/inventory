@@ -69,27 +69,32 @@ overall_test_return_home_after_done: true
 overall_test_same_side_next_search_enabled: true
 overall_test_same_side_search_speed: 0.04
 overall_test_same_side_search_timeout_sec: 40.0
+
+# Enable fixed map-y / fixed-yaw hold during OVERALL_TEST_SAME_SIDE_NEXT_SEARCH.
 overall_test_same_side_pose_hold_enabled: true
 
-# Fixed map-frame y used during OVERALL_TEST_SAME_SIDE_NEXT_SEARCH.
-overall_test_same_side_fixed_y_m: 0.575
+# Left-side same-side search pose hold.
+overall_test_same_side_left_fixed_y_m: 0.575
+overall_test_same_side_left_fixed_yaw_rad: -3.1400
 
-# Fixed yaw used during OVERALL_TEST_SAME_SIDE_NEXT_SEARCH.
-overall_test_same_side_fixed_yaw_rad: -3.1400
+# Right-side same-side search pose hold.
+# It is left y minus 1.2 m: 0.575 - 1.2 = -0.625.
+overall_test_same_side_right_fixed_y_m: -0.625
+overall_test_same_side_right_fixed_yaw_rad: -3.1400
 
 # Yaw-hold proportional gain.
 overall_test_same_side_yaw_kp: 0.40
 
-# Yaw deadband. If abs(yaw_error) is below this value, yaw correction is zero.
+# Yaw deadband.
 overall_test_same_side_yaw_deadband_rad: 0.03
 
-# Lateral-y correction gain. This should be small and used only in same-side search.
+# Map-y correction gain.
 overall_test_same_side_y_kp: 0.30
 
-# Y deadband. If abs(y_error) is below this value, y correction is zero.
+# Map-y deadband.
 overall_test_same_side_y_deadband_m: 0.03
 
-# Sign for lateral-y correction. Set to -1.0 if real vehicle correction is reversed.
+# Sign for y correction. If real robot moves away from fixed y, change this to -1.0.
 overall_test_same_side_y_correction_sign: 1.0
 
 # Max angular correction during same-side search.
