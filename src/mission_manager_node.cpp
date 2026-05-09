@@ -38,7 +38,6 @@
 #include "wheeltec_inventory_system/msg/recognized_number.hpp"
 #include "wheeltec_inventory_system/scan_sequence_generator.hpp"
 #include "wheeltec_inventory_system/srv/start_mission.hpp"
-#include "wheeltec_inventory_system/srv/start_test_gap_scan.hpp"
 #include "wheeltec_inventory_system/web_api_client.hpp"
 #include "yaml-cpp/yaml.h"
 
@@ -82,16 +81,12 @@ public:
     cancel_service_name_ = declare_parameter<std::string>("cancel_service_name", "/inventory/cancel_mission");
     recognizer_trigger_service_ =
       declare_parameter<std::string>("recognizer_trigger_service", "/inventory/trigger_recognition");
-    start_test_gap_scan_service_name_ =
-      declare_parameter<std::string>("start_test_gap_scan_service_name", "/inventory/start_test_gap_scan");
 
     target_list_param_ = declare_parameter<std::vector<std::string>>("target_list", std::vector<std::string>{});
     route_waypoints_file_ =
       declare_parameter<std::string>("route_waypoints_file", "config/route_waypoints.yaml");
     warehouse_layout_file_ =
       declare_parameter<std::string>("warehouse_layout_file", "config/warehouse_layout.yaml");
-    test_gap_scan_params_file_ =
-      declare_parameter<std::string>("test_gap_scan_params_file", "config/test_gap_scan_params.yaml");
     gap_scan_map_file_ =
       declare_parameter<std::string>("gap_scan_map_file", "config/gap_scan_map.yaml");
     route_search_failure_policy_ =
@@ -243,129 +238,129 @@ public:
     lift_home_level_ = declare_parameter<int>("lift_home_level", 1);
     grid_motion_duration_sec_ = declare_parameter<double>("grid_motion_duration_sec", 1.0);
     grid_motion_timeout_sec_ = declare_parameter<double>("grid_motion_timeout_sec", 10.0);
-    test_real_motion_enabled_ = declare_parameter<bool>("real_motion_enabled", false);
-    test_real_motion_target_cabinet_ =
+    single_cabinet_motion_enabled_ = declare_parameter<bool>("real_motion_enabled", false);
+    single_cabinet_motion_target_cabinet_ =
       declare_parameter<int>("real_motion_target_cabinet", 3);
-    test_real_motion_target_gap_ =
+    single_cabinet_motion_target_gap_ =
       declare_parameter<std::string>("real_motion_target_gap", "gap_03_02");
-    test_real_motion_stop_after_scan_ =
+    single_cabinet_motion_stop_after_scan_ =
       declare_parameter<bool>("real_motion_stop_after_scan", true);
-    test_real_final_recognition_wait_sec_ =
+    single_cabinet_final_recognition_wait_sec_ =
       declare_parameter<double>("real_motion_final_recognition_wait_sec", 8.0);
-    test_real_side_row_enabled_ = declare_parameter<bool>("side_row_inventory_enabled", false);
-    test_real_side_row_name_ =
+    single_cabinet_side_row_enabled_ = declare_parameter<bool>("side_row_inventory_enabled", false);
+    single_cabinet_side_row_name_ =
       declare_parameter<std::string>("side_row_inventory_name", "row_01_02_03_04");
-    test_real_side_row_first_gap_ =
+    single_cabinet_side_row_first_gap_ =
       declare_parameter<std::string>("side_row_first_gap", "gap_02_03_04");
     const auto first_gap_scan_sequence_param =
       declare_parameter<std::vector<int64_t>>(
       "side_row_first_gap_scan_sequence",
       std::vector<int64_t>{4, 3});
-    test_real_side_row_first_gap_scan_sequence_.assign(
+    single_cabinet_side_row_first_gap_scan_sequence_.assign(
       first_gap_scan_sequence_param.begin(),
       first_gap_scan_sequence_param.end());
-    test_real_side_row_second_gap_ =
+    single_cabinet_side_row_second_gap_ =
       declare_parameter<std::string>("side_row_second_gap", "gap_01_02_03");
     const auto second_gap_scan_sequence_param =
       declare_parameter<std::vector<int64_t>>(
       "side_row_second_gap_scan_sequence",
       std::vector<int64_t>{2, 1});
-    test_real_side_row_second_gap_scan_sequence_.assign(
+    single_cabinet_side_row_second_gap_scan_sequence_.assign(
       second_gap_scan_sequence_param.begin(),
       second_gap_scan_sequence_param.end());
-    test_real_side_row_corridor_transfer_enabled_ =
+    single_cabinet_side_row_corridor_transfer_enabled_ =
       declare_parameter<bool>("side_row_corridor_transfer_enabled", true);
-    test_real_side_row_corridor_transfer_target_cabinet_ =
+    single_cabinet_side_row_corridor_transfer_target_cabinet_ =
       declare_parameter<int>("side_row_corridor_transfer_target_cabinet", 2);
-    test_real_side_row_corridor_transfer_direction_ =
+    single_cabinet_side_row_corridor_transfer_direction_ =
       declare_parameter<std::string>(
       "side_row_corridor_transfer_direction",
       "toward_cabinet_1");
-    test_real_exit_after_each_scan_ = declare_parameter<bool>("exit_gap_after_each_scan", true);
-    test_real_exit_mode_ = declare_parameter<std::string>("exit_gap_mode", "reverse");
-    test_real_exit_speed_ = declare_parameter<double>("exit_gap_speed", 0.05);
-    test_real_exit_extra_distance_m_ =
+    single_cabinet_exit_after_each_scan_ = declare_parameter<bool>("exit_gap_after_each_scan", true);
+    single_cabinet_exit_mode_ = declare_parameter<std::string>("exit_gap_mode", "reverse");
+    single_cabinet_exit_speed_ = declare_parameter<double>("exit_gap_speed", 0.05);
+    single_cabinet_exit_extra_distance_m_ =
       declare_parameter<double>("exit_gap_extra_distance_m", 0.10);
-    test_real_exit_timeout_sec_ = declare_parameter<double>("exit_gap_timeout_sec", 40.0);
-    test_real_exit_distance_m_ = declare_parameter<double>("exit_gap_distance_m", 1.20);
-    test_real_exit_turn_enabled_ = declare_parameter<bool>("exit_gap_turn_enabled", true);
-    test_real_exit_turn_angular_speed_ =
+    single_cabinet_exit_timeout_sec_ = declare_parameter<double>("exit_gap_timeout_sec", 40.0);
+    single_cabinet_exit_distance_m_ = declare_parameter<double>("exit_gap_distance_m", 1.20);
+    single_cabinet_exit_turn_enabled_ = declare_parameter<bool>("exit_gap_turn_enabled", true);
+    single_cabinet_exit_turn_angular_speed_ =
       declare_parameter<double>("exit_gap_turn_angular_speed", 0.25);
-    test_real_exit_turn_yaw_tolerance_rad_ =
+    single_cabinet_exit_turn_yaw_tolerance_rad_ =
       declare_parameter<double>("exit_gap_turn_yaw_tolerance_rad", 0.08);
-    test_real_exit_turn_timeout_sec_ =
+    single_cabinet_exit_turn_timeout_sec_ =
       declare_parameter<double>("exit_gap_turn_timeout_sec", 8.0);
-    test_real_reentry_for_position_adjustment_ =
+    single_cabinet_reentry_for_position_adjustment_ =
       declare_parameter<bool>("reentry_for_position_adjustment", true);
-    test_real_grid_motion_enabled_ =
+    single_cabinet_grid_motion_enabled_ =
       declare_parameter<bool>("grid_motion_enabled", false);
-    test_real_grid_spacing_m_ =
+    single_cabinet_grid_spacing_m_ =
       declare_parameter<double>("grid_spacing_m", 0.30);
-    test_real_grid_move_speed_ =
+    single_cabinet_grid_move_speed_ =
       declare_parameter<double>("grid_move_speed", 0.04);
-    test_real_grid_move_timeout_sec_ =
+    single_cabinet_grid_move_timeout_sec_ =
       declare_parameter<double>("grid_move_timeout_sec", 10.0);
-    test_real_grid_move_return_between_layers_ =
+    single_cabinet_grid_move_return_between_layers_ =
       declare_parameter<bool>("grid_move_return_between_layers", false);
-    test_real_close_gap_after_final_exit_ =
+    single_cabinet_close_gap_after_final_exit_ =
       declare_parameter<bool>("close_gap_after_final_exit", true);
-    overall_test_enabled_ = declare_parameter<bool>("full_inventory_enabled", true);
-    const auto overall_test_sequence_param =
+    full_inventory_enabled_ = declare_parameter<bool>("full_inventory_enabled", true);
+    const auto full_inventory_sequence_param =
       declare_parameter<std::vector<int64_t>>(
       "inventory_plan",
       std::vector<int64_t>{4, 3, 8, 7});
-    overall_test_sequence_.assign(
-      overall_test_sequence_param.begin(),
-      overall_test_sequence_param.end());
-    overall_test_left_route_ =
+    full_inventory_sequence_.assign(
+      full_inventory_sequence_param.begin(),
+      full_inventory_sequence_param.end());
+    full_inventory_left_route_ =
       declare_parameter<std::string>("inventory_left_route", "left_route");
-    overall_test_right_route_ =
+    full_inventory_right_route_ =
       declare_parameter<std::string>("inventory_right_route", "right_route");
-    overall_test_return_home_between_sides_ =
+    full_inventory_return_home_between_sides_ =
       declare_parameter<bool>("return_home_between_sides", true);
-    overall_test_return_home_after_done_ =
+    full_inventory_return_home_after_done_ =
       declare_parameter<bool>("return_home_after_full_inventory", true);
-    overall_test_recognize_during_nav_ =
+    full_inventory_recognize_during_nav_ =
       declare_parameter<bool>("recognize_during_nav", false);
-    overall_test_same_side_next_search_enabled_ =
+    full_inventory_same_side_next_search_enabled_ =
       declare_parameter<bool>("same_side_next_search_enabled", true);
-    overall_test_same_side_search_speed_ =
+    full_inventory_same_side_search_speed_ =
       declare_parameter<double>("same_side_search_speed", 0.04);
-    overall_test_same_side_search_timeout_sec_ =
+    full_inventory_same_side_search_timeout_sec_ =
       declare_parameter<double>("same_side_search_timeout_sec", 20.0);
-    overall_test_same_side_pose_hold_enabled_ =
+    full_inventory_same_side_pose_hold_enabled_ =
       declare_parameter<bool>("same_side_pose_hold_enabled", true);
-    overall_test_same_side_left_fixed_y_m_ =
+    full_inventory_same_side_left_fixed_y_m_ =
       declare_parameter<double>("same_side_left_fixed_y_m", 0.575);
-    overall_test_same_side_left_fixed_yaw_rad_ =
+    full_inventory_same_side_left_fixed_yaw_rad_ =
       declare_parameter<double>("same_side_left_fixed_yaw_rad", -3.1400);
-    overall_test_same_side_right_fixed_y_m_ =
+    full_inventory_same_side_right_fixed_y_m_ =
       declare_parameter<double>("same_side_right_fixed_y_m", -0.625);
-    overall_test_same_side_right_fixed_yaw_rad_ =
+    full_inventory_same_side_right_fixed_yaw_rad_ =
       declare_parameter<double>("same_side_right_fixed_yaw_rad", -3.1400);
-    overall_test_same_side_yaw_kp_ =
+    full_inventory_same_side_yaw_kp_ =
       declare_parameter<double>("same_side_yaw_kp", 0.40);
-    overall_test_same_side_yaw_deadband_rad_ =
+    full_inventory_same_side_yaw_deadband_rad_ =
       declare_parameter<double>("same_side_yaw_deadband_rad", 0.03);
-    overall_test_same_side_y_kp_ =
+    full_inventory_same_side_y_kp_ =
       declare_parameter<double>("same_side_y_kp", 0.30);
-    overall_test_same_side_y_deadband_m_ =
+    full_inventory_same_side_y_deadband_m_ =
       declare_parameter<double>("same_side_y_deadband_m", 0.03);
-    overall_test_same_side_y_correction_sign_ =
+    full_inventory_same_side_y_correction_sign_ =
       declare_parameter<double>("same_side_y_correction_sign", 1.0);
-    overall_test_same_side_max_angular_ =
+    full_inventory_same_side_max_angular_ =
       declare_parameter<double>("same_side_max_angular", 0.15);
-    overall_test_final_recognition_wait_sec_ =
+    full_inventory_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_final_recognition_wait_sec", 5.0);
-    overall_test_recognition_fallback_enabled_ =
+    full_inventory_recognition_fallback_enabled_ =
       declare_parameter<bool>("recognition_fallback_enabled", true);
-    overall_test_recognition_fallback_speed_ =
+    full_inventory_recognition_fallback_speed_ =
       declare_parameter<double>("recognition_fallback_speed", 0.04);
-    overall_test_recognition_fallback_wait_sec_ =
+    full_inventory_recognition_fallback_wait_sec_ =
       declare_parameter<double>("recognition_fallback_wait_sec", 2.0);
-    overall_test_recognition_fallback_timeout_sec_ =
+    full_inventory_recognition_fallback_timeout_sec_ =
       declare_parameter<double>("recognition_fallback_timeout_sec", 20.0);
-    overall_test_recognition_fallback_sequence_ =
+    full_inventory_recognition_fallback_sequence_ =
       declare_parameter<std::vector<double>>(
       "recognition_fallback_sequence_m",
       std::vector<double>{-0.30, 0.60, -0.30});
@@ -496,15 +491,6 @@ public:
         cancel_service_callback(request, response);
       });
 
-    start_test_gap_scan_srv_ =
-      create_service<wheeltec_inventory_system::srv::StartTestGapScan>(
-      start_test_gap_scan_service_name_,
-      [this](
-        const std::shared_ptr<wheeltec_inventory_system::srv::StartTestGapScan::Request> request,
-        std::shared_ptr<wheeltec_inventory_system::srv::StartTestGapScan::Response> response) {
-        start_test_gap_scan_callback(request, response);
-      });
-
     recognizer_trigger_client_ = create_client<std_srvs::srv::SetBool>(
       recognizer_trigger_service_);
     nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
@@ -521,10 +507,10 @@ public:
     if (!warehouse_layout_loaded_) {
       RCLCPP_ERROR(get_logger(), "仓库布局配置加载失败: %s", layout_load_error.c_str());
     }
-    std::string test_scan_load_error;
-    test_gap_scan_config_loaded_ = load_test_gap_scan_config(test_scan_load_error);
-    if (!test_gap_scan_config_loaded_) {
-      RCLCPP_WARN(get_logger(), "测试盘库配置加载失败: %s", test_scan_load_error.c_str());
+    std::string runtime_load_error;
+    inventory_runtime_config_loaded_ = load_inventory_runtime_config(runtime_load_error);
+    if (!inventory_runtime_config_loaded_) {
+      RCLCPP_WARN(get_logger(), "盘库运行配置加载失败: %s", runtime_load_error.c_str());
     }
 
     const double period = 1.0 / std::max(1.0, control_rate_hz_);
@@ -562,39 +548,39 @@ private:
     RETURNING,
     DONE,
     ERROR,
-    TEST_REAL_PREPARE_NAV,
-    TEST_REAL_NAV_TO_TARGET,
-    TEST_REAL_TARGET_TRACKING,
-    TEST_REAL_FINAL_RECOGNITION_WAIT,
-    TEST_REAL_WAITING_GAP,
-    TEST_REAL_ENTERING_GAP,
-    TEST_REAL_IN_GAP_SCAN,
-    TEST_REAL_STOP_AFTER_SCAN,
-    TEST_REAL_EXIT_GAP,
-    TEST_REAL_REENTER_FOR_ADJUSTED_SCAN,
-    TEST_REAL_ADJUSTED_SIDE_SCAN,
-    TEST_REAL_CORRIDOR_TRANSFER,
-    TEST_REAL_PREPARE_NEXT_GAP,
-    TEST_REAL_REENTER_NEXT_GAP,
-    TEST_REAL_NEXT_GAP_SCAN,
-    TEST_REAL_FINAL_EXIT_GAP,
-    OVERALL_TEST_PREPARE_TARGET,
-    OVERALL_TEST_NAV_TO_OBSERVE,
-    OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT,
-    OVERALL_TEST_RECOGNITION_FALLBACK,
-    OVERALL_TEST_TARGET_DISTANCE_ALIGN,
-    OVERALL_TEST_SEARCH_GAP,
-    OVERALL_TEST_POST_GAP_DETECT_ADVANCE,
-    OVERALL_TEST_ENTERING_GAP,
-    OVERALL_TEST_IN_GAP_SCAN,
-    OVERALL_TEST_EXIT_GAP,
-    OVERALL_TEST_ADVANCE_NEXT_TARGET,
-    OVERALL_TEST_SAME_SIDE_NEXT_SEARCH,
-    OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES,
-    OVERALL_TEST_COMPLETE,
+    SINGLE_CABINET_PREPARE_NAV,
+    SINGLE_CABINET_NAV_TO_TARGET,
+    SINGLE_CABINET_TARGET_TRACKING,
+    SINGLE_CABINET_FINAL_RECOGNITION_WAIT,
+    SINGLE_CABINET_WAITING_GAP,
+    SINGLE_CABINET_ENTERING_GAP,
+    SINGLE_CABINET_IN_GAP_SCAN,
+    SINGLE_CABINET_STOP_AFTER_SCAN,
+    SINGLE_CABINET_EXIT_GAP,
+    SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN,
+    SINGLE_CABINET_ADJUSTED_SIDE_SCAN,
+    SINGLE_CABINET_CORRIDOR_TRANSFER,
+    SINGLE_CABINET_PREPARE_NEXT_GAP,
+    SINGLE_CABINET_REENTER_NEXT_GAP,
+    SINGLE_CABINET_NEXT_GAP_SCAN,
+    SINGLE_CABINET_FINAL_EXIT_GAP,
+    FULL_INVENTORY_PREPARE_TARGET,
+    FULL_INVENTORY_NAV_TO_OBSERVE,
+    FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT,
+    FULL_INVENTORY_RECOGNITION_FALLBACK,
+    FULL_INVENTORY_TARGET_DISTANCE_ALIGN,
+    FULL_INVENTORY_SEARCH_GAP,
+    FULL_INVENTORY_POST_GAP_DETECT_ADVANCE,
+    FULL_INVENTORY_ENTERING_GAP,
+    FULL_INVENTORY_IN_GAP_SCAN,
+    FULL_INVENTORY_EXIT_GAP,
+    FULL_INVENTORY_ADVANCE_NEXT_TARGET,
+    FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
+    FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES,
+    FULL_INVENTORY_COMPLETE,
   };
 
-  enum class OverallRecognitionFallbackPhase
+  enum class FullInventoryRecognitionFallbackPhase
   {
     IDLE,
     MOVING,
@@ -638,7 +624,7 @@ private:
     POSE_ADJUSTING,
   };
 
-  enum class TestRealSideRowPhase
+  enum class SingleCabinetSideRowPhase
   {
     NONE,
     FIRST_PRIMARY_SCAN,
@@ -649,7 +635,7 @@ private:
     COMPLETE,
   };
 
-  enum class TestRealAfterExitAction
+  enum class SingleCabinetAfterExitAction
   {
     NONE,
     REENTER_ADJUSTED,
@@ -658,7 +644,7 @@ private:
     FINAL_CLOSE_AND_DONE,
   };
 
-  enum class TestRealExitPhase
+  enum class SingleCabinetExitPhase
   {
     STRAIGHT_REVERSE,
     ARC_REVERSE,
@@ -666,11 +652,11 @@ private:
 
   enum class InGapScanRuntimeMode
   {
-    TEST_REAL,
-    OVERALL_TEST,
+    SINGLE_CABINET,
+    FULL_INVENTORY,
   };
 
-  enum class OverallTestReturnReason
+  enum class FullInventoryReturnReason
   {
     NONE,
     BETWEEN_SIDES,
@@ -733,7 +719,7 @@ private:
     bool depth_defaulted{false};
   };
 
-  struct TestGapScanPlan
+  struct InventoryGapPlan
   {
     std::string gap_id;
     std::vector<int> scan_cabinets;
@@ -800,66 +786,66 @@ private:
         return "DONE";
       case State::ERROR:
         return "ERROR";
-      case State::TEST_REAL_PREPARE_NAV:
-        return "TEST_REAL_PREPARE_NAV";
-      case State::TEST_REAL_NAV_TO_TARGET:
-        return "TEST_REAL_NAV_TO_TARGET";
-      case State::TEST_REAL_TARGET_TRACKING:
-        return "TEST_REAL_TARGET_TRACKING";
-      case State::TEST_REAL_FINAL_RECOGNITION_WAIT:
-        return "TEST_REAL_FINAL_RECOGNITION_WAIT";
-      case State::TEST_REAL_WAITING_GAP:
-        return "TEST_REAL_WAITING_GAP";
-      case State::TEST_REAL_ENTERING_GAP:
-        return "TEST_REAL_ENTERING_GAP";
-      case State::TEST_REAL_IN_GAP_SCAN:
-        return "TEST_REAL_IN_GAP_SCAN";
-      case State::TEST_REAL_STOP_AFTER_SCAN:
-        return "TEST_REAL_STOP_AFTER_SCAN";
-      case State::TEST_REAL_EXIT_GAP:
-        return "TEST_REAL_EXIT_GAP";
-      case State::TEST_REAL_REENTER_FOR_ADJUSTED_SCAN:
-        return "TEST_REAL_REENTER_FOR_ADJUSTED_SCAN";
-      case State::TEST_REAL_ADJUSTED_SIDE_SCAN:
-        return "TEST_REAL_ADJUSTED_SIDE_SCAN";
-      case State::TEST_REAL_CORRIDOR_TRANSFER:
-        return "TEST_REAL_CORRIDOR_TRANSFER";
-      case State::TEST_REAL_PREPARE_NEXT_GAP:
-        return "TEST_REAL_PREPARE_NEXT_GAP";
-      case State::TEST_REAL_REENTER_NEXT_GAP:
-        return "TEST_REAL_REENTER_NEXT_GAP";
-      case State::TEST_REAL_NEXT_GAP_SCAN:
-        return "TEST_REAL_NEXT_GAP_SCAN";
-      case State::TEST_REAL_FINAL_EXIT_GAP:
-        return "TEST_REAL_FINAL_EXIT_GAP";
-      case State::OVERALL_TEST_PREPARE_TARGET:
-        return "OVERALL_TEST_PREPARE_TARGET";
-      case State::OVERALL_TEST_NAV_TO_OBSERVE:
-        return "OVERALL_TEST_NAV_TO_OBSERVE";
-      case State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT:
-        return "OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT";
-      case State::OVERALL_TEST_RECOGNITION_FALLBACK:
-        return "OVERALL_TEST_RECOGNITION_FALLBACK";
-      case State::OVERALL_TEST_TARGET_DISTANCE_ALIGN:
-        return "OVERALL_TEST_TARGET_DISTANCE_ALIGN";
-      case State::OVERALL_TEST_SEARCH_GAP:
-        return "OVERALL_TEST_SEARCH_GAP";
-      case State::OVERALL_TEST_POST_GAP_DETECT_ADVANCE:
-        return "OVERALL_TEST_POST_GAP_DETECT_ADVANCE";
-      case State::OVERALL_TEST_ENTERING_GAP:
-        return "OVERALL_TEST_ENTERING_GAP";
-      case State::OVERALL_TEST_IN_GAP_SCAN:
-        return "OVERALL_TEST_IN_GAP_SCAN";
-      case State::OVERALL_TEST_EXIT_GAP:
-        return "OVERALL_TEST_EXIT_GAP";
-      case State::OVERALL_TEST_ADVANCE_NEXT_TARGET:
-        return "OVERALL_TEST_ADVANCE_NEXT_TARGET";
-      case State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH:
-        return "OVERALL_TEST_SAME_SIDE_NEXT_SEARCH";
-      case State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES:
-        return "OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES";
-      case State::OVERALL_TEST_COMPLETE:
-        return "OVERALL_TEST_COMPLETE";
+      case State::SINGLE_CABINET_PREPARE_NAV:
+        return "SINGLE_CABINET_PREPARE_NAV";
+      case State::SINGLE_CABINET_NAV_TO_TARGET:
+        return "SINGLE_CABINET_NAV_TO_TARGET";
+      case State::SINGLE_CABINET_TARGET_TRACKING:
+        return "SINGLE_CABINET_TARGET_TRACKING";
+      case State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT:
+        return "SINGLE_CABINET_FINAL_RECOGNITION_WAIT";
+      case State::SINGLE_CABINET_WAITING_GAP:
+        return "SINGLE_CABINET_WAITING_GAP";
+      case State::SINGLE_CABINET_ENTERING_GAP:
+        return "SINGLE_CABINET_ENTERING_GAP";
+      case State::SINGLE_CABINET_IN_GAP_SCAN:
+        return "SINGLE_CABINET_IN_GAP_SCAN";
+      case State::SINGLE_CABINET_STOP_AFTER_SCAN:
+        return "SINGLE_CABINET_STOP_AFTER_SCAN";
+      case State::SINGLE_CABINET_EXIT_GAP:
+        return "SINGLE_CABINET_EXIT_GAP";
+      case State::SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN:
+        return "SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN";
+      case State::SINGLE_CABINET_ADJUSTED_SIDE_SCAN:
+        return "SINGLE_CABINET_ADJUSTED_SIDE_SCAN";
+      case State::SINGLE_CABINET_CORRIDOR_TRANSFER:
+        return "SINGLE_CABINET_CORRIDOR_TRANSFER";
+      case State::SINGLE_CABINET_PREPARE_NEXT_GAP:
+        return "SINGLE_CABINET_PREPARE_NEXT_GAP";
+      case State::SINGLE_CABINET_REENTER_NEXT_GAP:
+        return "SINGLE_CABINET_REENTER_NEXT_GAP";
+      case State::SINGLE_CABINET_NEXT_GAP_SCAN:
+        return "SINGLE_CABINET_NEXT_GAP_SCAN";
+      case State::SINGLE_CABINET_FINAL_EXIT_GAP:
+        return "SINGLE_CABINET_FINAL_EXIT_GAP";
+      case State::FULL_INVENTORY_PREPARE_TARGET:
+        return "FULL_INVENTORY_PREPARE_TARGET";
+      case State::FULL_INVENTORY_NAV_TO_OBSERVE:
+        return "FULL_INVENTORY_NAV_TO_OBSERVE";
+      case State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT:
+        return "FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT";
+      case State::FULL_INVENTORY_RECOGNITION_FALLBACK:
+        return "FULL_INVENTORY_RECOGNITION_FALLBACK";
+      case State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN:
+        return "FULL_INVENTORY_TARGET_DISTANCE_ALIGN";
+      case State::FULL_INVENTORY_SEARCH_GAP:
+        return "FULL_INVENTORY_SEARCH_GAP";
+      case State::FULL_INVENTORY_POST_GAP_DETECT_ADVANCE:
+        return "FULL_INVENTORY_POST_GAP_DETECT_ADVANCE";
+      case State::FULL_INVENTORY_ENTERING_GAP:
+        return "FULL_INVENTORY_ENTERING_GAP";
+      case State::FULL_INVENTORY_IN_GAP_SCAN:
+        return "FULL_INVENTORY_IN_GAP_SCAN";
+      case State::FULL_INVENTORY_EXIT_GAP:
+        return "FULL_INVENTORY_EXIT_GAP";
+      case State::FULL_INVENTORY_ADVANCE_NEXT_TARGET:
+        return "FULL_INVENTORY_ADVANCE_NEXT_TARGET";
+      case State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
+        return "FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH";
+      case State::FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES:
+        return "FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES";
+      case State::FULL_INVENTORY_COMPLETE:
+        return "FULL_INVENTORY_COMPLETE";
       default:
         return "UNKNOWN";
     }
@@ -991,12 +977,12 @@ private:
     }
   }
 
-  static std::string test_real_exit_phase_to_string(TestRealExitPhase phase)
+  static std::string single_cabinet_exit_phase_to_string(SingleCabinetExitPhase phase)
   {
     switch (phase) {
-      case TestRealExitPhase::STRAIGHT_REVERSE:
+      case SingleCabinetExitPhase::STRAIGHT_REVERSE:
         return "STRAIGHT_REVERSE";
-      case TestRealExitPhase::ARC_REVERSE:
+      case SingleCabinetExitPhase::ARC_REVERSE:
         return "ARC_REVERSE";
       default:
         return "STRAIGHT_REVERSE";
@@ -1057,111 +1043,111 @@ private:
     return oss.str();
   }
 
-  void publish_test_scan_log(const std::string & text)
+  void publish_inventory_flow_log(const std::string & text)
   {
-    publish_log("[mission_manager][test_scan] " + text);
+    publish_log("[mission_manager][inventory_flow] " + text);
   }
 
-  void publish_test_real_log(const std::string & text)
+  void publish_single_cabinet_log(const std::string & text)
   {
-    publish_log("[mission_manager][test_real] " + text);
+    publish_log("[mission_manager][single_cabinet] " + text);
   }
 
-  void publish_overall_test_log(const std::string & text)
+  void publish_full_inventory_log(const std::string & text)
   {
-    publish_log("[mission_manager][OVERALL_TEST] " + text);
+    publish_log("[mission_manager][FULL_INVENTORY] " + text);
   }
 
-  void publish_motion_test_log(const std::string & text)
+  void publish_motion_log(const std::string & text)
   {
-    if (overall_test_active_) {
-      publish_overall_test_log(text);
+    if (full_inventory_active_) {
+      publish_full_inventory_log(text);
     } else {
-      publish_test_real_log(text);
+      publish_single_cabinet_log(text);
     }
   }
 
   static const char * in_gap_scan_mode_label(InGapScanRuntimeMode mode)
   {
-    return mode == InGapScanRuntimeMode::OVERALL_TEST ? "OVERALL_TEST" : "test_real";
+    return mode == InGapScanRuntimeMode::FULL_INVENTORY ? "FULL_INVENTORY" : "single_cabinet";
   }
 
   void publish_in_gap_scan_log(InGapScanRuntimeMode mode, const std::string & text)
   {
-    if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
-      publish_overall_test_log(text);
+    if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
+      publish_full_inventory_log(text);
     } else {
-      publish_test_real_log(text);
+      publish_single_cabinet_log(text);
     }
   }
 
   void fail_in_gap_scan_runtime(InGapScanRuntimeMode mode, const std::string & reason)
   {
-    if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
-      fail_overall_test(reason);
+    if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
+      fail_full_inventory(reason);
     } else {
-      fail_test_real_motion(reason);
+      fail_single_cabinet_motion(reason);
     }
   }
 
-  std::string real_motion_reject_message() const
+  std::string single_cabinet_reject_message() const
   {
     return
-      "real motion test only supports " + test_real_motion_target_gap_ +
-      " with scan_cabinets=[" + std::to_string(test_real_motion_target_cabinet_) + "]";
+      "single cabinet inventory only supports " + single_cabinet_motion_target_gap_ +
+      " with scan_cabinets=[" + std::to_string(single_cabinet_motion_target_cabinet_) + "]";
   }
 
   bool is_nav_route_like_state(State s) const
   {
     return
       s == State::NAV_ROUTE ||
-      s == State::TEST_REAL_NAV_TO_TARGET ||
-      s == State::OVERALL_TEST_NAV_TO_OBSERVE;
+      s == State::SINGLE_CABINET_NAV_TO_TARGET ||
+      s == State::FULL_INVENTORY_NAV_TO_OBSERVE;
   }
 
   bool is_target_tracking_like_state(State s) const
   {
     return
       s == State::TARGET_TRACKING ||
-      s == State::TEST_REAL_TARGET_TRACKING ||
-      s == State::OVERALL_TEST_TARGET_DISTANCE_ALIGN;
+      s == State::SINGLE_CABINET_TARGET_TRACKING ||
+      s == State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN;
   }
 
-  bool is_test_real_recognition_state(State s) const
+  bool is_single_cabinet_recognition_state(State s) const
   {
     return
-      test_real_motion_active_ &&
-      (s == State::TEST_REAL_NAV_TO_TARGET ||
-      s == State::TEST_REAL_TARGET_TRACKING ||
-      s == State::TEST_REAL_FINAL_RECOGNITION_WAIT);
+      single_cabinet_motion_active_ &&
+      (s == State::SINGLE_CABINET_NAV_TO_TARGET ||
+      s == State::SINGLE_CABINET_TARGET_TRACKING ||
+      s == State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT);
   }
 
-  bool is_overall_test_recognition_state(State s) const
+  bool is_full_inventory_recognition_state(State s) const
   {
     return
-      overall_test_active_ &&
-      ((s == State::OVERALL_TEST_NAV_TO_OBSERVE && overall_test_recognize_during_nav_) ||
-      s == State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT ||
-      s == State::OVERALL_TEST_RECOGNITION_FALLBACK ||
-      s == State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH);
+      full_inventory_active_ &&
+      ((s == State::FULL_INVENTORY_NAV_TO_OBSERVE && full_inventory_recognize_during_nav_) ||
+      s == State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT ||
+      s == State::FULL_INVENTORY_RECOGNITION_FALLBACK ||
+      s == State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH);
   }
 
-  static std::string side_row_phase_to_string(TestRealSideRowPhase phase)
+  static std::string side_row_phase_to_string(SingleCabinetSideRowPhase phase)
   {
     switch (phase) {
-      case TestRealSideRowPhase::FIRST_PRIMARY_SCAN:
+      case SingleCabinetSideRowPhase::FIRST_PRIMARY_SCAN:
         return "FIRST_PRIMARY_SCAN";
-      case TestRealSideRowPhase::FIRST_ADJUSTED_SCAN:
+      case SingleCabinetSideRowPhase::FIRST_ADJUSTED_SCAN:
         return "FIRST_ADJUSTED_SCAN";
-      case TestRealSideRowPhase::CORRIDOR_TRANSFER:
+      case SingleCabinetSideRowPhase::CORRIDOR_TRANSFER:
         return "CORRIDOR_TRANSFER";
-      case TestRealSideRowPhase::SECOND_PRIMARY_SCAN:
+      case SingleCabinetSideRowPhase::SECOND_PRIMARY_SCAN:
         return "SECOND_PRIMARY_SCAN";
-      case TestRealSideRowPhase::SECOND_ADJUSTED_SCAN:
+      case SingleCabinetSideRowPhase::SECOND_ADJUSTED_SCAN:
         return "SECOND_ADJUSTED_SCAN";
-      case TestRealSideRowPhase::COMPLETE:
+      case SingleCabinetSideRowPhase::COMPLETE:
         return "COMPLETE";
-      case TestRealSideRowPhase::NONE:
+      case SingleCabinetSideRowPhase::NONE:
       default:
         return "NONE";
     }
@@ -1289,7 +1275,7 @@ private:
     return cwd_candidate;
   }
 
-  void apply_test_gap_scan_runtime_params()
+  void apply_inventory_runtime_params()
   {
     wheeltec_inventory_system::InventoryScannerConfig scanner_config;
     scanner_config.enabled = scanner_enabled_;
@@ -1357,12 +1343,12 @@ private:
         }
       }
 
-      test_gap_scan_map_cabinets_by_gap_id_ = gap_map;
+      gap_scan_map_cabinets_by_gap_id_ = gap_map;
       RCLCPP_INFO(
         get_logger(),
-        "已加载测试 gap 扫描映射: %s gaps=%zu",
+        "已加载盘库 gap 扫描映射: %s gaps=%zu",
         map_path.string().c_str(),
-        test_gap_scan_map_cabinets_by_gap_id_.size());
+        gap_scan_map_cabinets_by_gap_id_.size());
       return true;
     } catch (const std::exception & ex) {
       reason = "解析 gap_scan_map.yaml 失败: " + std::string(ex.what());
@@ -1370,445 +1356,109 @@ private:
     }
   }
 
-  bool load_test_gap_scan_config(std::string & reason)
+  bool load_inventory_runtime_config(std::string & reason)
   {
     reason.clear();
-    apply_test_gap_scan_runtime_params();
+    apply_inventory_runtime_params();
 
-    try {
-      const auto params_path = resolve_route_config_path(test_gap_scan_params_file_);
-      if (!std::filesystem::exists(params_path)) {
-        reason = "test_gap_scan_params.yaml 不存在: " + params_path.string();
-        return false;
-      }
-
-      const YAML::Node root = YAML::LoadFile(params_path.string());
-      if (root["web_client_mode"]) {
-        web_client_mode_ = root["web_client_mode"].as<std::string>();
-      }
-      if (root["open_gap_wait_sec"]) {
-        open_gap_wait_sec_ = root["open_gap_wait_sec"].as<double>();
-      }
-      if (root["close_gap_wait_sec"]) {
-        close_gap_wait_sec_ = root["close_gap_wait_sec"].as<double>();
-      }
-      if (root["scanner_enabled"]) {
-        scanner_enabled_ = root["scanner_enabled"].as<bool>();
-      }
-      if (root["scan_duration_sec"]) {
-        scan_duration_sec_ = root["scan_duration_sec"].as<double>();
-      }
-      if (root["scan_timeout_sec"]) {
-        scan_timeout_sec_ = root["scan_timeout_sec"].as<double>();
-      }
-      if (root["scan_retry_count"]) {
-        scan_retry_count_ = root["scan_retry_count"].as<int>();
-      }
-      if (root["scan_result_timeout_sec"]) {
-        scan_result_timeout_sec_ = root["scan_result_timeout_sec"].as<double>();
-      }
-      if (root["lift_enabled"]) {
-        lift_enabled_ = root["lift_enabled"].as<bool>();
-      }
-      if (root["lift_motion_duration_sec"]) {
-        lift_motion_duration_sec_ = root["lift_motion_duration_sec"].as<double>();
-      }
-      if (root["lift_motion_timeout_sec"]) {
-        lift_motion_timeout_sec_ = root["lift_motion_timeout_sec"].as<double>();
-      }
-      if (root["lift_level_count"]) {
-        lift_level_count_ = root["lift_level_count"].as<int>();
-      }
-      if (root["lift_home_level"]) {
-        lift_home_level_ = root["lift_home_level"].as<int>();
-      }
-      if (root["grid_motion_duration_sec"]) {
-        grid_motion_duration_sec_ = root["grid_motion_duration_sec"].as<double>();
-      }
-      if (root["grid_motion_timeout_sec"]) {
-        grid_motion_timeout_sec_ = root["grid_motion_timeout_sec"].as<double>();
-      }
-      if (root["real_motion_enabled"]) {
-        test_real_motion_enabled_ = root["real_motion_enabled"].as<bool>();
-      }
-      if (root["real_motion_target_cabinet"]) {
-        test_real_motion_target_cabinet_ = root["real_motion_target_cabinet"].as<int>();
-      }
-      if (root["real_motion_target_gap"]) {
-        test_real_motion_target_gap_ = root["real_motion_target_gap"].as<std::string>();
-      }
-      if (root["real_motion_stop_after_scan"]) {
-        test_real_motion_stop_after_scan_ = root["real_motion_stop_after_scan"].as<bool>();
-      }
-      if (root["real_motion_final_recognition_wait_sec"]) {
-        test_real_final_recognition_wait_sec_ =
-          root["real_motion_final_recognition_wait_sec"].as<double>();
-      }
-      if (root["side_row_inventory_enabled"]) {
-        test_real_side_row_enabled_ = root["side_row_inventory_enabled"].as<bool>();
-      }
-      if (root["side_row_inventory_name"]) {
-        test_real_side_row_name_ = root["side_row_inventory_name"].as<std::string>();
-      }
-      if (root["side_row_first_gap"]) {
-        test_real_side_row_first_gap_ = root["side_row_first_gap"].as<std::string>();
-      }
-      if (root["side_row_first_gap_scan_sequence"]) {
-        test_real_side_row_first_gap_scan_sequence_.clear();
-        for (const auto cabinet_node : root["side_row_first_gap_scan_sequence"]) {
-          test_real_side_row_first_gap_scan_sequence_.push_back(cabinet_node.as<int>());
-        }
-      }
-      if (root["side_row_second_gap"]) {
-        test_real_side_row_second_gap_ = root["side_row_second_gap"].as<std::string>();
-      }
-      if (root["side_row_second_gap_scan_sequence"]) {
-        test_real_side_row_second_gap_scan_sequence_.clear();
-        for (const auto cabinet_node : root["side_row_second_gap_scan_sequence"]) {
-          test_real_side_row_second_gap_scan_sequence_.push_back(cabinet_node.as<int>());
-        }
-      }
-      if (root["side_row_corridor_transfer_enabled"]) {
-        test_real_side_row_corridor_transfer_enabled_ =
-          root["side_row_corridor_transfer_enabled"].as<bool>();
-      }
-      if (root["side_row_corridor_transfer_target_cabinet"]) {
-        test_real_side_row_corridor_transfer_target_cabinet_ =
-          root["side_row_corridor_transfer_target_cabinet"].as<int>();
-      }
-      if (root["side_row_corridor_transfer_direction"]) {
-        test_real_side_row_corridor_transfer_direction_ =
-          root["side_row_corridor_transfer_direction"].as<std::string>();
-      }
-      if (root["exit_gap_after_each_scan"]) {
-        test_real_exit_after_each_scan_ = root["exit_gap_after_each_scan"].as<bool>();
-      }
-      if (root["exit_gap_mode"]) {
-        test_real_exit_mode_ = root["exit_gap_mode"].as<std::string>();
-      }
-      if (root["exit_gap_speed"]) {
-        test_real_exit_speed_ = root["exit_gap_speed"].as<double>();
-      }
-      if (root["exit_gap_extra_distance_m"]) {
-        test_real_exit_extra_distance_m_ = root["exit_gap_extra_distance_m"].as<double>();
-      }
-      if (root["exit_gap_timeout_sec"]) {
-        test_real_exit_timeout_sec_ = root["exit_gap_timeout_sec"].as<double>();
-      }
-      if (root["exit_gap_distance_m"]) {
-        test_real_exit_distance_m_ = root["exit_gap_distance_m"].as<double>();
-      }
-      if (root["exit_gap_turn_enabled"]) {
-        test_real_exit_turn_enabled_ = root["exit_gap_turn_enabled"].as<bool>();
-      }
-      if (root["exit_gap_turn_angular_speed"]) {
-        test_real_exit_turn_angular_speed_ = root["exit_gap_turn_angular_speed"].as<double>();
-      }
-      if (root["exit_gap_turn_yaw_tolerance_rad"]) {
-        test_real_exit_turn_yaw_tolerance_rad_ =
-          root["exit_gap_turn_yaw_tolerance_rad"].as<double>();
-      }
-      if (root["exit_gap_turn_timeout_sec"]) {
-        test_real_exit_turn_timeout_sec_ = root["exit_gap_turn_timeout_sec"].as<double>();
-      }
-      if (root["reentry_for_position_adjustment"]) {
-        test_real_reentry_for_position_adjustment_ =
-          root["reentry_for_position_adjustment"].as<bool>();
-      }
-      if (root["grid_motion_enabled"]) {
-        test_real_grid_motion_enabled_ = root["grid_motion_enabled"].as<bool>();
-      }
-      if (root["grid_spacing_m"]) {
-        test_real_grid_spacing_m_ = root["grid_spacing_m"].as<double>();
-      }
-      if (root["grid_move_speed"]) {
-        test_real_grid_move_speed_ = root["grid_move_speed"].as<double>();
-      }
-      if (root["grid_move_timeout_sec"]) {
-        test_real_grid_move_timeout_sec_ = root["grid_move_timeout_sec"].as<double>();
-      }
-      if (root["grid_move_return_between_layers"]) {
-        test_real_grid_move_return_between_layers_ =
-          root["grid_move_return_between_layers"].as<bool>();
-      }
-      if (root["close_gap_after_final_exit"]) {
-        test_real_close_gap_after_final_exit_ =
-          root["close_gap_after_final_exit"].as<bool>();
-      }
-      if (root["full_inventory_enabled"]) {
-        overall_test_enabled_ = root["full_inventory_enabled"].as<bool>();
-      }
-      if (root["inventory_plan"]) {
-        overall_test_sequence_.clear();
-        for (const auto cabinet_node : root["inventory_plan"]) {
-          overall_test_sequence_.push_back(cabinet_node.as<int>());
-        }
-      }
-      if (root["inventory_left_route"]) {
-        overall_test_left_route_ = root["inventory_left_route"].as<std::string>();
-      }
-      if (root["inventory_right_route"]) {
-        overall_test_right_route_ = root["inventory_right_route"].as<std::string>();
-      }
-      if (root["return_home_between_sides"]) {
-        overall_test_return_home_between_sides_ =
-          root["return_home_between_sides"].as<bool>();
-      }
-      if (root["return_home_after_full_inventory"]) {
-        overall_test_return_home_after_done_ =
-          root["return_home_after_full_inventory"].as<bool>();
-      }
-      if (root["recognize_during_nav"]) {
-        overall_test_recognize_during_nav_ =
-          root["recognize_during_nav"].as<bool>();
-      }
-      if (root["same_side_next_search_enabled"]) {
-        overall_test_same_side_next_search_enabled_ =
-          root["same_side_next_search_enabled"].as<bool>();
-      }
-      if (root["same_side_search_speed"]) {
-        overall_test_same_side_search_speed_ =
-          root["same_side_search_speed"].as<double>();
-      }
-      if (root["same_side_search_timeout_sec"]) {
-        overall_test_same_side_search_timeout_sec_ =
-          root["same_side_search_timeout_sec"].as<double>();
-      }
-      if (root["same_side_pose_hold_enabled"]) {
-        overall_test_same_side_pose_hold_enabled_ =
-          root["same_side_pose_hold_enabled"].as<bool>();
-      }
-      if (root["same_side_left_fixed_y_m"]) {
-        overall_test_same_side_left_fixed_y_m_ =
-          root["same_side_left_fixed_y_m"].as<double>();
-      }
-      if (root["same_side_left_fixed_yaw_rad"]) {
-        overall_test_same_side_left_fixed_yaw_rad_ =
-          root["same_side_left_fixed_yaw_rad"].as<double>();
-      }
-      if (root["same_side_right_fixed_y_m"]) {
-        overall_test_same_side_right_fixed_y_m_ =
-          root["same_side_right_fixed_y_m"].as<double>();
-      }
-      if (root["same_side_right_fixed_yaw_rad"]) {
-        overall_test_same_side_right_fixed_yaw_rad_ =
-          root["same_side_right_fixed_yaw_rad"].as<double>();
-      }
-      if (root["same_side_yaw_kp"]) {
-        overall_test_same_side_yaw_kp_ =
-          root["same_side_yaw_kp"].as<double>();
-      }
-      if (root["same_side_yaw_deadband_rad"]) {
-        overall_test_same_side_yaw_deadband_rad_ =
-          root["same_side_yaw_deadband_rad"].as<double>();
-      }
-      if (root["same_side_y_kp"]) {
-        overall_test_same_side_y_kp_ =
-          root["same_side_y_kp"].as<double>();
-      }
-      if (root["same_side_y_deadband_m"]) {
-        overall_test_same_side_y_deadband_m_ =
-          root["same_side_y_deadband_m"].as<double>();
-      }
-      if (root["same_side_y_correction_sign"]) {
-        overall_test_same_side_y_correction_sign_ =
-          root["same_side_y_correction_sign"].as<double>();
-      }
-      if (root["same_side_max_angular"]) {
-        overall_test_same_side_max_angular_ =
-          root["same_side_max_angular"].as<double>();
-      }
-      if (root["overall_final_recognition_wait_sec"]) {
-        overall_test_final_recognition_wait_sec_ =
-          root["overall_final_recognition_wait_sec"].as<double>();
-      }
-      if (root["recognition_fallback_enabled"]) {
-        overall_test_recognition_fallback_enabled_ =
-          root["recognition_fallback_enabled"].as<bool>();
-      }
-      if (root["recognition_fallback_speed"]) {
-        overall_test_recognition_fallback_speed_ =
-          root["recognition_fallback_speed"].as<double>();
-      }
-      if (root["recognition_fallback_wait_sec"]) {
-        overall_test_recognition_fallback_wait_sec_ =
-          root["recognition_fallback_wait_sec"].as<double>();
-      }
-      if (root["recognition_fallback_timeout_sec"]) {
-        overall_test_recognition_fallback_timeout_sec_ =
-          root["recognition_fallback_timeout_sec"].as<double>();
-      }
-      if (root["recognition_fallback_sequence_m"]) {
-        overall_test_recognition_fallback_sequence_.clear();
-        for (const auto step_node : root["recognition_fallback_sequence_m"]) {
-          overall_test_recognition_fallback_sequence_.push_back(step_node.as<double>());
-        }
-      }
-      if (root["post_gap_detect_advance_enabled"]) {
-        post_gap_detect_advance_enabled_ = root["post_gap_detect_advance_enabled"].as<bool>();
-      }
-      if (root["post_gap_detect_advance_distance_m"]) {
-        post_gap_detect_advance_distance_m_ =
-          root["post_gap_detect_advance_distance_m"].as<double>();
-      }
-      if (root["post_gap_detect_advance_speed"]) {
-        post_gap_detect_advance_speed_ = root["post_gap_detect_advance_speed"].as<double>();
-      }
-      if (root["post_gap_detect_advance_timeout_sec"]) {
-        post_gap_detect_advance_timeout_sec_ =
-          root["post_gap_detect_advance_timeout_sec"].as<double>();
-      }
-      if (root["scan_layers"]) {
-        scan_layers_ = root["scan_layers"].as<int>();
-      }
-      if (root["scan_depth_count"]) {
-        scan_depth_count_ = root["scan_depth_count"].as<int>();
-      }
-      if (root["web_base_url"]) {
-        web_base_url_ = root["web_base_url"].as<std::string>();
-      }
-      if (root["web_open_gap_endpoint"]) {
-        web_open_gap_endpoint_ = root["web_open_gap_endpoint"].as<std::string>();
-      }
-      if (root["web_close_gap_endpoint"]) {
-        web_close_gap_endpoint_ = root["web_close_gap_endpoint"].as<std::string>();
-      }
-      if (root["web_status_endpoint"]) {
-        web_status_endpoint_ = root["web_status_endpoint"].as<std::string>();
-      }
-      if (root["web_result_endpoint"]) {
-        web_result_endpoint_ = root["web_result_endpoint"].as<std::string>();
-      }
-
-      const YAML::Node plan_root = root["test_inventory_plan"];
-      if (!plan_root || !plan_root.IsSequence() || plan_root.size() == 0U) {
-        reason = "test_gap_scan_params.yaml 缺少非空 test_inventory_plan";
-        return false;
-      }
-
-      std::vector<TestGapScanPlan> loaded_plans;
-      for (std::size_t i = 0; i < plan_root.size(); ++i) {
-        const YAML::Node item = plan_root[i];
-        if (!item || !item.IsMap() || !item["gap_id"] || !item["scan_cabinets"]) {
-          reason = "test_inventory_plan 条目必须包含 gap_id 和 scan_cabinets";
-          return false;
-        }
-
-        TestGapScanPlan plan;
-        plan.gap_id = item["gap_id"].as<std::string>();
-        const YAML::Node cabinets = item["scan_cabinets"];
-        if (!cabinets.IsSequence() || cabinets.size() == 0U) {
-          reason = "scan_cabinets 必须为非空序列: " + plan.gap_id;
-          return false;
-        }
-        for (std::size_t j = 0; j < cabinets.size(); ++j) {
-          plan.scan_cabinets.push_back(cabinets[j].as<int>());
-        }
-        loaded_plans.push_back(plan);
-      }
-
-      configured_test_inventory_plan_ = loaded_plans;
-      test_inventory_plan_by_gap_id_.clear();
-      for (const auto & plan : configured_test_inventory_plan_) {
-        test_inventory_plan_by_gap_id_[plan.gap_id] = plan.scan_cabinets;
-      }
-
-      std::string gap_map_reason;
-      if (!load_gap_scan_map_config(gap_map_reason)) {
-        RCLCPP_WARN(get_logger(), "测试 gap 映射加载失败，先使用 test_inventory_plan: %s", gap_map_reason.c_str());
-      }
-
-      apply_test_gap_scan_runtime_params();
-      RCLCPP_INFO(
-        get_logger(),
-        "已加载兼容盘库配置: %s mode=%s plan_count=%zu layers=%d depth_count=%d "
-        "scanner_duration=%.2f lift_duration=%.2f",
-        params_path.string().c_str(),
-        web_client_mode_.c_str(),
-        configured_test_inventory_plan_.size(),
-        scan_layers_,
-        scan_depth_count_,
-        scan_duration_sec_,
-        lift_motion_duration_sec_);
-      RCLCPP_INFO(
-        get_logger(),
-        "真实运动兼容配置: enabled=%s target_gap=%s target_cabinet=%d "
-        "stop_after_scan=%s final_recognition_wait=%.2f",
-        test_real_motion_enabled_ ? "true" : "false",
-        test_real_motion_target_gap_.c_str(),
-        test_real_motion_target_cabinet_,
-        test_real_motion_stop_after_scan_ ? "true" : "false",
-        test_real_final_recognition_wait_sec_);
-      RCLCPP_INFO(
-        get_logger(),
-        "测试侧排流程配置: enabled=%s name=%s first_gap=%s first_seq=%s "
-        "second_gap=%s second_seq=%s transfer_target=%d exit_distance=%.2f exit_speed=%.3f "
-        "exit_timeout=%.2f exit_turn=%s exit_turn_angular=%.3f exit_turn_tolerance=%.3f "
-        "exit_turn_timeout=%.2f grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
-        test_real_side_row_enabled_ ? "true" : "false",
-        test_real_side_row_name_.c_str(),
-        test_real_side_row_first_gap_.c_str(),
-        cabinet_unit_to_string(test_real_side_row_first_gap_scan_sequence_).c_str(),
-        test_real_side_row_second_gap_.c_str(),
-        cabinet_unit_to_string(test_real_side_row_second_gap_scan_sequence_).c_str(),
-        test_real_side_row_corridor_transfer_target_cabinet_,
-        test_real_exit_distance_m_,
-        test_real_exit_speed_,
-        test_real_exit_timeout_sec_,
-        test_real_exit_turn_enabled_ ? "true" : "false",
-        test_real_exit_turn_angular_speed_,
-        test_real_exit_turn_yaw_tolerance_rad_,
-        test_real_exit_turn_timeout_sec_,
-        test_real_grid_motion_enabled_ ? "true" : "false",
-        test_real_grid_spacing_m_,
-        test_real_grid_move_speed_,
-        test_real_grid_move_timeout_sec_);
-      RCLCPP_INFO(
-        get_logger(),
-        "整体盘库测试配置: enabled=%s sequence=%s left_route=%s right_route=%s "
-        "return_between_sides=%s return_after_done=%s recognize_during_nav=%s "
-        "same_side_search=%s speed=%.3f timeout=%.2f pose_hold=%s "
-        "left_fixed_y=%.3f left_fixed_yaw=%.4f right_fixed_y=%.3f right_fixed_yaw=%.4f "
-        "yaw_kp=%.3f yaw_deadband=%.3f y_kp=%.3f y_deadband=%.3f "
-        "y_sign=%.1f max_angular=%.3f final_recognition_wait=%.2f "
-        "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
-        "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
-        overall_test_enabled_ ? "true" : "false",
-        cabinet_unit_to_string(overall_test_sequence_).c_str(),
-        overall_test_left_route_.c_str(),
-        overall_test_right_route_.c_str(),
-        overall_test_return_home_between_sides_ ? "true" : "false",
-        overall_test_return_home_after_done_ ? "true" : "false",
-        overall_test_recognize_during_nav_ ? "true" : "false",
-        overall_test_same_side_next_search_enabled_ ? "true" : "false",
-        overall_test_same_side_search_speed_,
-        overall_test_same_side_search_timeout_sec_,
-        overall_test_same_side_pose_hold_enabled_ ? "true" : "false",
-        overall_test_same_side_left_fixed_y_m_,
-        overall_test_same_side_left_fixed_yaw_rad_,
-        overall_test_same_side_right_fixed_y_m_,
-        overall_test_same_side_right_fixed_yaw_rad_,
-        overall_test_same_side_yaw_kp_,
-        overall_test_same_side_yaw_deadband_rad_,
-        overall_test_same_side_y_kp_,
-        overall_test_same_side_y_deadband_m_,
-        overall_test_same_side_y_correction_sign_,
-        overall_test_same_side_max_angular_,
-        overall_test_final_recognition_wait_sec_,
-        overall_test_recognition_fallback_enabled_ ? "true" : "false",
-        overall_test_recognition_fallback_speed_,
-        overall_test_recognition_fallback_wait_sec_,
-        overall_test_recognition_fallback_timeout_sec_,
-        double_vector_to_string(overall_test_recognition_fallback_sequence_).c_str(),
-        post_gap_detect_advance_enabled_ ? "true" : "false",
-        post_gap_detect_advance_distance_m_,
-        post_gap_detect_advance_speed_,
-        post_gap_detect_advance_timeout_sec_);
-      return true;
-    } catch (const std::exception & ex) {
-      reason = "解析 test_gap_scan_params.yaml 失败: " + std::string(ex.what());
+    std::string gap_map_reason;
+    if (!load_gap_scan_map_config(gap_map_reason)) {
+      reason = gap_map_reason;
       return false;
     }
+
+    configured_gap_inventory_plan_.clear();
+    inventory_plan_by_gap_id_.clear();
+    for (const auto & item : gap_scan_map_cabinets_by_gap_id_) {
+      configured_gap_inventory_plan_.push_back(InventoryGapPlan{item.first, item.second});
+      inventory_plan_by_gap_id_[item.first] = item.second;
+    }
+
+    RCLCPP_INFO(
+      get_logger(),
+      "已加载盘库运行配置: mode=%s gap_count=%zu layers=%d depth_count=%d "
+      "scanner_duration=%.2f lift_duration=%.2f",
+      web_client_mode_.c_str(),
+      configured_gap_inventory_plan_.size(),
+      scan_layers_,
+      scan_depth_count_,
+      scan_duration_sec_,
+      lift_motion_duration_sec_);
+    RCLCPP_INFO(
+      get_logger(),
+      "单柜盘库配置: enabled=%s target_gap=%s target_cabinet=%d "
+      "stop_after_scan=%s final_recognition_wait=%.2f",
+      single_cabinet_motion_enabled_ ? "true" : "false",
+      single_cabinet_motion_target_gap_.c_str(),
+      single_cabinet_motion_target_cabinet_,
+      single_cabinet_motion_stop_after_scan_ ? "true" : "false",
+      single_cabinet_final_recognition_wait_sec_);
+    RCLCPP_INFO(
+      get_logger(),
+      "侧排盘库配置: enabled=%s name=%s first_gap=%s first_seq=%s "
+      "second_gap=%s second_seq=%s transfer_target=%d exit_distance=%.2f exit_speed=%.3f "
+      "exit_timeout=%.2f exit_turn=%s exit_turn_angular=%.3f exit_turn_tolerance=%.3f "
+      "exit_turn_timeout=%.2f grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
+      single_cabinet_side_row_enabled_ ? "true" : "false",
+      single_cabinet_side_row_name_.c_str(),
+      single_cabinet_side_row_first_gap_.c_str(),
+      cabinet_unit_to_string(single_cabinet_side_row_first_gap_scan_sequence_).c_str(),
+      single_cabinet_side_row_second_gap_.c_str(),
+      cabinet_unit_to_string(single_cabinet_side_row_second_gap_scan_sequence_).c_str(),
+      single_cabinet_side_row_corridor_transfer_target_cabinet_,
+      single_cabinet_exit_distance_m_,
+      single_cabinet_exit_speed_,
+      single_cabinet_exit_timeout_sec_,
+      single_cabinet_exit_turn_enabled_ ? "true" : "false",
+      single_cabinet_exit_turn_angular_speed_,
+      single_cabinet_exit_turn_yaw_tolerance_rad_,
+      single_cabinet_exit_turn_timeout_sec_,
+      single_cabinet_grid_motion_enabled_ ? "true" : "false",
+      single_cabinet_grid_spacing_m_,
+      single_cabinet_grid_move_speed_,
+      single_cabinet_grid_move_timeout_sec_);
+    RCLCPP_INFO(
+      get_logger(),
+      "全部盘库配置: enabled=%s sequence=%s left_route=%s right_route=%s "
+      "return_between_sides=%s return_after_done=%s recognize_during_nav=%s "
+      "same_side_search=%s speed=%.3f timeout=%.2f pose_hold=%s "
+      "left_fixed_y=%.3f left_fixed_yaw=%.4f right_fixed_y=%.3f right_fixed_yaw=%.4f "
+      "yaw_kp=%.3f yaw_deadband=%.3f y_kp=%.3f y_deadband=%.3f "
+      "y_sign=%.1f max_angular=%.3f final_recognition_wait=%.2f "
+      "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
+      "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
+      full_inventory_enabled_ ? "true" : "false",
+      cabinet_unit_to_string(full_inventory_sequence_).c_str(),
+      full_inventory_left_route_.c_str(),
+      full_inventory_right_route_.c_str(),
+      full_inventory_return_home_between_sides_ ? "true" : "false",
+      full_inventory_return_home_after_done_ ? "true" : "false",
+      full_inventory_recognize_during_nav_ ? "true" : "false",
+      full_inventory_same_side_next_search_enabled_ ? "true" : "false",
+      full_inventory_same_side_search_speed_,
+      full_inventory_same_side_search_timeout_sec_,
+      full_inventory_same_side_pose_hold_enabled_ ? "true" : "false",
+      full_inventory_same_side_left_fixed_y_m_,
+      full_inventory_same_side_left_fixed_yaw_rad_,
+      full_inventory_same_side_right_fixed_y_m_,
+      full_inventory_same_side_right_fixed_yaw_rad_,
+      full_inventory_same_side_yaw_kp_,
+      full_inventory_same_side_yaw_deadband_rad_,
+      full_inventory_same_side_y_kp_,
+      full_inventory_same_side_y_deadband_m_,
+      full_inventory_same_side_y_correction_sign_,
+      full_inventory_same_side_max_angular_,
+      full_inventory_final_recognition_wait_sec_,
+      full_inventory_recognition_fallback_enabled_ ? "true" : "false",
+      full_inventory_recognition_fallback_speed_,
+      full_inventory_recognition_fallback_wait_sec_,
+      full_inventory_recognition_fallback_timeout_sec_,
+      double_vector_to_string(full_inventory_recognition_fallback_sequence_).c_str(),
+      post_gap_detect_advance_enabled_ ? "true" : "false",
+      post_gap_detect_advance_distance_m_,
+      post_gap_detect_advance_speed_,
+      post_gap_detect_advance_timeout_sec_);
+    return true;
   }
 
   bool load_route_config(std::string & reason)
@@ -2387,23 +2037,23 @@ private:
     const bool gap_enabled =
       s == State::SEARCH_GAP ||
       s == State::WAITING_GAP ||
-      s == State::TEST_REAL_WAITING_GAP ||
-      s == State::OVERALL_TEST_SEARCH_GAP;
+      s == State::SINGLE_CABINET_WAITING_GAP ||
+      s == State::FULL_INVENTORY_SEARCH_GAP;
     const bool recognizer_enabled =
       s == State::IDLE ||
       s == State::NAV_ROUTE ||
       s == State::TARGET_TRACKING ||
-      s == State::TEST_REAL_NAV_TO_TARGET ||
-      s == State::TEST_REAL_TARGET_TRACKING ||
-      s == State::TEST_REAL_FINAL_RECOGNITION_WAIT ||
-      (s == State::OVERALL_TEST_NAV_TO_OBSERVE && overall_test_recognize_during_nav_) ||
-      s == State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT ||
-      s == State::OVERALL_TEST_RECOGNITION_FALLBACK ||
-      s == State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH;
+      s == State::SINGLE_CABINET_NAV_TO_TARGET ||
+      s == State::SINGLE_CABINET_TARGET_TRACKING ||
+      s == State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT ||
+      (s == State::FULL_INVENTORY_NAV_TO_OBSERVE && full_inventory_recognize_during_nav_) ||
+      s == State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT ||
+      s == State::FULL_INVENTORY_RECOGNITION_FALLBACK ||
+      s == State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH;
     const bool distance_enabled =
       s == State::TARGET_TRACKING ||
-      s == State::TEST_REAL_TARGET_TRACKING ||
-      s == State::OVERALL_TEST_TARGET_DISTANCE_ALIGN;
+      s == State::SINGLE_CABINET_TARGET_TRACKING ||
+      s == State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN;
 
     set_gap_detector_enabled(gap_enabled);
     set_distance_estimator_enabled(distance_enabled);
@@ -2723,24 +2373,24 @@ private:
     return (this->now() - latest_recognition_time_).seconds() <= recognition_timeout_sec_;
   }
 
-  void switch_test_real_to_waiting_gap_after_recognition(int rec_id)
+  void switch_single_cabinet_to_waiting_gap_after_recognition(int rec_id)
   {
     const bool in_side_row_transfer =
-      test_real_side_row_active_ &&
-      test_real_side_row_phase_ == TestRealSideRowPhase::CORRIDOR_TRANSFER;
-    if (state_ == State::TEST_REAL_FINAL_RECOGNITION_WAIT) {
-      publish_test_real_log(
+      single_cabinet_side_row_active_ &&
+      single_cabinet_side_row_phase_ == SingleCabinetSideRowPhase::CORRIDOR_TRANSFER;
+    if (state_ == State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT) {
+      publish_single_cabinet_log(
         "final recognition success cabinet=" + std::to_string(rec_id) +
         (in_side_row_transfer ?
-        ", switch to TEST_REAL_PREPARE_NEXT_GAP" : ", switch to TEST_REAL_WAITING_GAP"));
+        ", switch to SINGLE_CABINET_PREPARE_NEXT_GAP" : ", switch to SINGLE_CABINET_WAITING_GAP"));
     } else {
-      publish_test_real_log(
+      publish_single_cabinet_log(
         "recognized target cabinet=" + std::to_string(rec_id) +
         (in_side_row_transfer ?
-        ", switch to TEST_REAL_PREPARE_NEXT_GAP" : ", switch to TEST_REAL_WAITING_GAP"));
+        ", switch to SINGLE_CABINET_PREPARE_NEXT_GAP" : ", switch to SINGLE_CABINET_WAITING_GAP"));
     }
 
-    cancel_nav2_route_goal("测试真实运动稳定识别到目标货柜");
+    cancel_nav2_route_goal("单柜盘库稳定识别到目标货柜");
     nav2_route_stop_hold_active_ = false;
     nav2_route_cancel_requested_ = false;
     target_found_pending_ = false;
@@ -2749,21 +2399,21 @@ private:
     has_distance_ = false;
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     if (in_side_row_transfer) {
-      publish_test_real_log(
+      publish_single_cabinet_log(
         "[corridor_transfer] recognized target cabinet=" + std::to_string(rec_id));
-      publish_test_real_log(
-        "[corridor_transfer] switch to next gap=" + test_real_side_row_second_gap_);
-      set_test_real_state(
-        State::TEST_REAL_PREPARE_NEXT_GAP,
+      publish_single_cabinet_log(
+        "[corridor_transfer] switch to next gap=" + single_cabinet_side_row_second_gap_);
+      set_single_cabinet_state(
+        State::SINGLE_CABINET_PREPARE_NEXT_GAP,
         "走廊转移已稳定识别目标柜号，准备下一个缝隙");
       return;
     }
     begin_search_gap_flow();
   }
 
-  void begin_test_real_final_recognition_wait()
+  void begin_single_cabinet_final_recognition_wait()
   {
-    cancel_nav2_route_goal("测试真实运动巡航路线已走完，进入末端识别等待");
+    cancel_nav2_route_goal("单柜盘库巡航路线已走完，进入末端识别等待");
     nav2_route_goal_in_progress_ = false;
     nav2_route_result_ready_ = false;
     nav2_route_stop_hold_active_ = false;
@@ -2775,21 +2425,21 @@ private:
     set_recognizer_topic_enabled(true, true);
     has_distance_ = false;
     target_visible_ = false;
-    test_real_final_recognition_wait_start_ = this->now();
-    publish_test_real_log(
+    single_cabinet_final_recognition_wait_start_ = this->now();
+    publish_single_cabinet_log(
       "route finished, wait final recognition target=" +
       std::to_string(current_target_cabinet_) +
-      " timeout=" + format_seconds(test_real_final_recognition_wait_sec_));
-    set_test_real_state(
-      State::TEST_REAL_FINAL_RECOGNITION_WAIT,
+      " timeout=" + format_seconds(single_cabinet_final_recognition_wait_sec_));
+    set_single_cabinet_state(
+      State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT,
       "route finished, wait final recognition target=" +
       std::to_string(current_target_cabinet_) +
-      " timeout=" + format_seconds(test_real_final_recognition_wait_sec_) + " sec");
+      " timeout=" + format_seconds(single_cabinet_final_recognition_wait_sec_) + " sec");
   }
 
-  bool handle_test_real_recognition(int rec_id)
+  bool handle_single_cabinet_recognition(int rec_id)
   {
-    if (!is_test_real_recognition_state(state_)) {
+    if (!is_single_cabinet_recognition_state(state_)) {
       return false;
     }
 
@@ -2798,7 +2448,7 @@ private:
       reset_target_recognition_stability();
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][recognition] target_mismatch recognized=%d target=%d",
+        "[mission_manager][single_cabinet][recognition] target_mismatch recognized=%d target=%d",
         rec_id,
         current_target_cabinet_);
       return true;
@@ -2808,7 +2458,7 @@ private:
     const int required_count = std::max(1, target_recognition_stable_frames_);
     RCLCPP_INFO(
       get_logger(),
-      "[mission_manager][test_real][recognition] state=%s target=%d recognized=%d "
+      "[mission_manager][single_cabinet][recognition] state=%s target=%d recognized=%d "
       "stable_count=%d required=%d matched=true ready=%s",
       state_to_string(state_).c_str(),
       current_target_cabinet_,
@@ -2821,7 +2471,7 @@ private:
     target_visible_ = true;
 
     if (stable_ready) {
-      switch_test_real_to_waiting_gap_after_recognition(rec_id);
+      switch_single_cabinet_to_waiting_gap_after_recognition(rec_id);
     }
     return true;
   }
@@ -2831,10 +2481,10 @@ private:
   {
     latest_recognition_ = msg;
     latest_recognition_time_ = this->now();
-    if (test_real_motion_active_) {
+    if (single_cabinet_motion_active_) {
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][recognition_rx] state=%s target=%d raw_number=%s "
+        "[mission_manager][single_cabinet][recognition_rx] state=%s target=%d raw_number=%s "
         "valid=%s conf=%.3f",
         state_to_string(state_).c_str(),
         current_target_cabinet_,
@@ -2847,8 +2497,8 @@ private:
     }
     if (!msg->valid) {
       if (is_nav_route_like_state(state_) ||
-        is_test_real_recognition_state(state_) ||
-        is_overall_test_recognition_state(state_))
+        is_single_cabinet_recognition_state(state_) ||
+        is_full_inventory_recognition_state(state_))
       {
         reset_target_recognition_stability();
       }
@@ -2860,11 +2510,11 @@ private:
       return;
     }
 
-    if (handle_overall_test_recognition(rec_id)) {
+    if (handle_full_inventory_recognition(rec_id)) {
       return;
     }
 
-    if (handle_test_real_recognition(rec_id)) {
+    if (handle_single_cabinet_recognition(rec_id)) {
       return;
     }
 
@@ -2885,9 +2535,9 @@ private:
 
     if (is_nav_route_like_state(state_)) {
       if (update_target_recognition_stability(rec_id)) {
-        if (test_real_motion_active_ && !test_real_target_recognized_logged_) {
-          publish_test_real_log("recognized target cabinet=" + std::to_string(rec_id));
-          test_real_target_recognized_logged_ = true;
+        if (single_cabinet_motion_active_ && !single_cabinet_target_recognized_logged_) {
+          publish_single_cabinet_log("recognized target cabinet=" + std::to_string(rec_id));
+          single_cabinet_target_recognized_logged_ = true;
         }
         target_found_pending_ = true;
         begin_target_found_stop_hold();
@@ -3356,8 +3006,8 @@ private:
     publish_entry_side();
     set_corridor_mode(false, false);
     const bool recognizer_during_nav =
-      !(overall_test_active_ && nav_state == State::OVERALL_TEST_NAV_TO_OBSERVE &&
-      !overall_test_recognize_during_nav_);
+      !(full_inventory_active_ && nav_state == State::FULL_INVENTORY_NAV_TO_OBSERVE &&
+      !full_inventory_recognize_during_nav_);
     request_recognizer_enable(recognizer_during_nav);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
@@ -3371,10 +3021,10 @@ private:
       publish_stop();
       request_recognizer_enable(false);
       set_distance_estimator_enabled(false, true);
-      if (overall_test_active_) {
-        fail_overall_test("启动巡航路线失败: " + fail_reason);
-      } else if (test_real_motion_active_) {
-        fail_test_real_motion("启动巡航路线失败: " + fail_reason);
+      if (full_inventory_active_) {
+        fail_full_inventory("启动巡航路线失败: " + fail_reason);
+      } else if (single_cabinet_motion_active_) {
+        fail_single_cabinet_motion("启动巡航路线失败: " + fail_reason);
       } else {
         set_state(State::ERROR, "启动巡航路线失败: " + fail_reason);
       }
@@ -3403,13 +3053,13 @@ private:
     publish_stop();
     request_recognizer_enable(false);
 
-    if (test_real_motion_active_) {
-      fail_test_real_motion(reason);
+    if (single_cabinet_motion_active_) {
+      fail_single_cabinet_motion(reason);
       return;
     }
 
-    if (overall_test_active_) {
-      fail_overall_test(reason);
+    if (full_inventory_active_) {
+      fail_full_inventory(reason);
       return;
     }
 
@@ -3437,15 +3087,15 @@ private:
         nav2_route_cancel_requested_ = false;
         has_distance_ = false;
         tracking_stable_start_ = zero_time(get_clock());
-        if (overall_test_active_) {
-          publish_overall_test_log(
+        if (full_inventory_active_) {
+          publish_full_inventory_log(
             "recognized during nav target=" + std::to_string(current_target_cabinet_) +
             ", stop hold finished");
-          begin_overall_target_distance_align_after_recognition(
+          begin_full_inventory_target_distance_align_after_recognition(
             current_target_cabinet_, "nav recognition stop hold finished");
-        } else if (test_real_motion_active_) {
-          publish_test_real_log("enter real target tracking cabinet=" + std::to_string(current_target_cabinet_));
-          set_test_real_state(State::TEST_REAL_TARGET_TRACKING, "停车完成，进入目标跟踪");
+        } else if (single_cabinet_motion_active_) {
+          publish_single_cabinet_log("enter real target tracking cabinet=" + std::to_string(current_target_cabinet_));
+          set_single_cabinet_state(State::SINGLE_CABINET_TARGET_TRACKING, "停车完成，进入目标跟踪");
         } else {
           set_state(State::TARGET_TRACKING, "停车完成，进入目标跟踪");
         }
@@ -3473,12 +3123,12 @@ private:
 
     ++current_route_waypoint_index_;
     if (current_route_waypoint_index_ >= current_route_.waypoints.size()) {
-      if (overall_test_active_) {
-        begin_overall_test_post_route_recognition_wait();
+      if (full_inventory_active_) {
+        begin_full_inventory_post_route_recognition_wait();
         return;
       }
-      if (test_real_motion_active_) {
-        begin_test_real_final_recognition_wait();
+      if (single_cabinet_motion_active_) {
+        begin_single_cabinet_final_recognition_wait();
         return;
       }
       handle_route_search_failed("巡航路线已走完，仍未识别到目标货柜");
@@ -3656,8 +3306,8 @@ private:
     request_recognizer_enable(false);
 
     if (!latest_odom_ || !has_yaw_) {
-      if (overall_test_active_) {
-        fail_overall_test("返航失败：无可用里程计/航向");
+      if (full_inventory_active_) {
+        fail_full_inventory("返航失败：无可用里程计/航向");
         return false;
       }
       mission_active_ = false;
@@ -3676,8 +3326,8 @@ private:
 
     const Pose2D current = current_pose_2d();
     if (!current.valid) {
-      if (overall_test_active_) {
-        fail_overall_test("返航失败：当前位姿不可用");
+      if (full_inventory_active_) {
+        fail_full_inventory("返航失败：当前位姿不可用");
         return false;
       }
       mission_active_ = false;
@@ -3720,8 +3370,8 @@ private:
     reset_entry_gap_runtime();
     publish_gap_context();
 
-    if (overall_test_active_ && overall_test_return_reason_ != OverallTestReturnReason::NONE) {
-      on_return_home_finished_continue_overall_test();
+    if (full_inventory_active_ && full_inventory_return_reason_ != FullInventoryReturnReason::NONE) {
+      on_return_home_finished_continue_full_inventory();
       return;
     }
 
@@ -3844,8 +3494,8 @@ private:
     Pose2D target_pose;
     std::string target_mode_text;
     if (!resolve_return_pose(mode, target_pose, target_mode_text)) {
-      if (overall_test_active_) {
-        fail_overall_test("无法确定返航目标：" + target_mode_text);
+      if (full_inventory_active_) {
+        fail_full_inventory("无法确定返航目标：" + target_mode_text);
         return;
       }
       mission_active_ = false;
@@ -3998,33 +3648,33 @@ private:
     }
   }
 
-  void set_test_state(State s, const std::string & detail)
+  void set_flow_state(State s, const std::string & detail)
   {
-    test_state_enter_time_ = this->now();
+    state_enter_time_ = this->now();
     state_ = s;
     publish_state_text(state_to_string(state_));
-    publish_log("[" + state_to_string(state_) + "] [mission_manager][test_scan] " + detail);
+    publish_log("[" + state_to_string(state_) + "] [mission_manager][inventory_flow] " + detail);
   }
 
-  void set_test_real_state(State s, const std::string & detail)
+  void set_single_cabinet_state(State s, const std::string & detail)
   {
-    test_state_enter_time_ = this->now();
-    set_state(s, "[mission_manager][test_real] " + detail);
+    state_enter_time_ = this->now();
+    set_state(s, "[mission_manager][single_cabinet] " + detail);
   }
 
-  bool find_configured_test_cabinets(
+  bool find_configured_gap_cabinets(
     const std::string & gap_id,
     std::vector<int> & cabinets) const
   {
     cabinets.clear();
-    const auto plan_it = test_inventory_plan_by_gap_id_.find(gap_id);
-    if (plan_it != test_inventory_plan_by_gap_id_.end()) {
+    const auto plan_it = inventory_plan_by_gap_id_.find(gap_id);
+    if (plan_it != inventory_plan_by_gap_id_.end()) {
       cabinets = plan_it->second;
       return true;
     }
 
-    const auto map_it = test_gap_scan_map_cabinets_by_gap_id_.find(gap_id);
-    if (map_it != test_gap_scan_map_cabinets_by_gap_id_.end()) {
+    const auto map_it = gap_scan_map_cabinets_by_gap_id_.find(gap_id);
+    if (map_it != gap_scan_map_cabinets_by_gap_id_.end()) {
       cabinets = map_it->second;
       return true;
     }
@@ -4032,21 +3682,21 @@ private:
     return false;
   }
 
-  bool validate_test_gap_scan_plan(const TestGapScanPlan & plan, std::string & reason) const
+  bool validate_inventory_gap_plan(const InventoryGapPlan & plan, std::string & reason) const
   {
     reason.clear();
     if (wheeltec_inventory_system::trim(plan.gap_id).empty()) {
-      reason = "测试 gap_id 为空";
+      reason = "gap_id 为空";
       return false;
     }
     if (plan.scan_cabinets.empty()) {
-      reason = "测试 scan_cabinets 为空: gap=" + plan.gap_id;
+      reason = "scan_cabinets 为空: gap=" + plan.gap_id;
       return false;
     }
     for (const auto cabinet_id : plan.scan_cabinets) {
       if (cabinet_id <= 0) {
         reason =
-          "测试柜号必须大于 0: gap=" + plan.gap_id +
+          "柜号必须大于 0: gap=" + plan.gap_id +
           " cabinet=" + std::to_string(cabinet_id);
         return false;
       }
@@ -4054,79 +3704,79 @@ private:
     return true;
   }
 
-  void reset_test_real_side_row_context()
+  void reset_single_cabinet_side_row_context()
   {
-    test_real_side_row_active_ = false;
-    test_real_side_row_full_sequence_ = false;
-    test_real_side_row_requested_sequence_.clear();
-    test_real_side_row_phase_ = TestRealSideRowPhase::NONE;
-    test_real_after_exit_action_ = TestRealAfterExitAction::NONE;
-    test_real_active_gap_id_.clear();
-    test_real_current_scan_cabinet_ = -1;
-    test_real_adjusted_scan_cabinet_ = -1;
-    test_real_next_gap_target_cabinet_ = -1;
-    test_real_last_entering_straight_distance_ = 0.0;
-    test_real_exit_target_distance_ = test_real_exit_distance_m_;
-    test_real_exit_effective_timeout_sec_ = test_real_exit_timeout_sec_;
-    test_real_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    test_real_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
-    reset_test_real_scan_runtime();
+    single_cabinet_side_row_active_ = false;
+    single_cabinet_side_row_full_sequence_ = false;
+    single_cabinet_side_row_requested_sequence_.clear();
+    single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::NONE;
+    single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::NONE;
+    single_cabinet_active_gap_id_.clear();
+    single_cabinet_current_scan_cabinet_ = -1;
+    single_cabinet_adjusted_scan_cabinet_ = -1;
+    single_cabinet_next_gap_target_cabinet_ = -1;
+    single_cabinet_last_entering_straight_distance_ = 0.0;
+    single_cabinet_exit_target_distance_ = single_cabinet_exit_distance_m_;
+    single_cabinet_exit_effective_timeout_sec_ = single_cabinet_exit_timeout_sec_;
+    single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
+    reset_single_cabinet_scan_runtime();
   }
 
-  void reset_overall_test_context()
+  void reset_full_inventory_context()
   {
-    overall_test_active_ = false;
-    overall_test_index_ = 0;
-    overall_test_current_target_ = -1;
-    overall_test_next_target_ = -1;
-    overall_test_current_side_.clear();
-    overall_test_current_route_.clear();
-    overall_test_return_reason_ = OverallTestReturnReason::NONE;
-    overall_test_waiting_return_home_for_side_switch_ = false;
-    overall_test_waiting_return_home_for_done_ = false;
-    overall_test_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_final_recognition_wait_start_ =
+    full_inventory_active_ = false;
+    full_inventory_index_ = 0;
+    full_inventory_current_target_ = -1;
+    full_inventory_next_target_ = -1;
+    full_inventory_current_side_.clear();
+    full_inventory_current_route_.clear();
+    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
+    full_inventory_waiting_return_home_for_side_switch_ = false;
+    full_inventory_waiting_return_home_for_done_ = false;
+    full_inventory_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    full_inventory_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_start_ =
+    full_inventory_recognition_fallback_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_phase_start_ =
+    full_inventory_recognition_fallback_phase_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::IDLE;
-    overall_test_recognition_fallback_index_ = 0;
-    overall_test_post_gap_advance_start_ =
+    full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::IDLE;
+    full_inventory_recognition_fallback_index_ = 0;
+    full_inventory_post_gap_advance_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
-  std::string overall_return_reason_to_string(OverallTestReturnReason reason) const
+  std::string full_inventory_return_reason_to_string(FullInventoryReturnReason reason) const
   {
     switch (reason) {
-      case OverallTestReturnReason::BETWEEN_SIDES:
+      case FullInventoryReturnReason::BETWEEN_SIDES:
         return "BETWEEN_SIDES";
-      case OverallTestReturnReason::FINAL_DONE:
+      case FullInventoryReturnReason::FINAL_DONE:
         return "FINAL_DONE";
-      case OverallTestReturnReason::NONE:
+      case FullInventoryReturnReason::NONE:
       default:
         return "NONE";
     }
   }
 
-  bool apply_overall_test_route_overrides(std::string & reason)
+  bool apply_full_inventory_route_overrides(std::string & reason)
   {
     reason.clear();
-    if (!overall_test_left_route_.empty()) {
-      if (route_configs_.find(overall_test_left_route_) == route_configs_.end()) {
-        reason = "overall_test_left_route 不存在: " + overall_test_left_route_;
+    if (!full_inventory_left_route_.empty()) {
+      if (route_configs_.find(full_inventory_left_route_) == route_configs_.end()) {
+        reason = "full_inventory_left_route 不存在: " + full_inventory_left_route_;
         return false;
       }
-      side_route_map_["left"] = overall_test_left_route_;
+      side_route_map_["left"] = full_inventory_left_route_;
     }
-    if (!overall_test_right_route_.empty()) {
-      if (route_configs_.find(overall_test_right_route_) == route_configs_.end()) {
-        reason = "overall_test_right_route 不存在: " + overall_test_right_route_;
+    if (!full_inventory_right_route_.empty()) {
+      if (route_configs_.find(full_inventory_right_route_) == route_configs_.end()) {
+        reason = "full_inventory_right_route 不存在: " + full_inventory_right_route_;
         return false;
       }
-      side_route_map_["right"] = overall_test_right_route_;
+      side_route_map_["right"] = full_inventory_right_route_;
     }
     return true;
   }
@@ -4187,18 +3837,18 @@ private:
     return true;
   }
 
-  bool validate_overall_test_sequence(
+  bool validate_full_inventory_sequence(
     const std::vector<int> & sequence,
     std::string & reason) const
   {
     reason.clear();
     if (sequence.empty()) {
-      reason = "overall_test_sequence 为空";
+      reason = "full_inventory_sequence 为空";
       return false;
     }
     for (const auto cabinet_id : sequence) {
       if (cabinet_id <= 0) {
-        reason = "overall_test_sequence 中货柜号必须大于0: " + std::to_string(cabinet_id);
+        reason = "full_inventory_sequence 中货柜号必须大于0: " + std::to_string(cabinet_id);
         return false;
       }
     }
@@ -4212,8 +3862,8 @@ private:
     return true;
   }
 
-  std::vector<int> overall_test_sequence_from_request(
-    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  std::vector<int> full_inventory_sequence_from_request(
+    const wheeltec_inventory_system::srv::StartMission::Request & request) const
   {
     std::vector<int> sequence;
     for (const auto cabinet_id : request.scan_cabinets) {
@@ -4222,31 +3872,43 @@ private:
     if (!sequence.empty()) {
       return sequence;
     }
-    return overall_test_sequence_;
+    for (const auto & target_code : request.targets) {
+      int cabinet_id = -1;
+      if (parse_target_cabinet(target_code, cabinet_id)) {
+        sequence.push_back(cabinet_id);
+      }
+    }
+    if (!sequence.empty()) {
+      return sequence;
+    }
+    return full_inventory_sequence_;
   }
 
-  bool should_start_overall_test(
-    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  bool should_start_full_inventory(
+    const wheeltec_inventory_system::srv::StartMission::Request & request) const
   {
-    if (!overall_test_enabled_) {
+    if (!full_inventory_enabled_) {
       return false;
     }
-    const bool gap_empty = wheeltec_inventory_system::trim(request.gap_id).empty();
-    return (request.run_all_configured && gap_empty) || (!request.scan_cabinets.empty() && gap_empty);
+    if (request.run_full_inventory) {
+      return true;
+    }
+    const bool gap_empty = wheeltec_inventory_system::trim(request.target_gap).empty();
+    return gap_empty && (request.scan_cabinets.size() > 1U || request.targets.size() > 1U);
   }
 
-  void record_overall_test_start_pose()
+  void record_full_inventory_start_pose()
   {
     mission_start_distance_ = odom_cumulative_distance_;
     reset_segment_distance();
     mission_start_pose_ = current_pose_2d();
     mission_start_pose_nav2_ = Pose2D{};
     if (!mission_start_pose_.valid) {
-      RCLCPP_WARN(get_logger(), "[OVERALL_TEST] 启动时未获取到有效里程计位姿，返航将无法使用起点模式");
+      RCLCPP_WARN(get_logger(), "[FULL_INVENTORY] 启动时未获取到有效里程计位姿，返航将无法使用起点模式");
       return;
     }
 
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "record start pose x=" + std::to_string(mission_start_pose_.x) +
       " y=" + std::to_string(mission_start_pose_.y) +
       " yaw=" + std::to_string(mission_start_pose_.yaw) +
@@ -4254,7 +3916,7 @@ private:
 
     std::string tf_error;
     if (transform_pose_2d(mission_start_pose_, nav2_goal_frame_, mission_start_pose_nav2_, tf_error)) {
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "record Nav2 start pose x=" + std::to_string(mission_start_pose_nav2_.x) +
         " y=" + std::to_string(mission_start_pose_nav2_.y) +
         " yaw=" + std::to_string(mission_start_pose_nav2_.yaw) +
@@ -4262,12 +3924,12 @@ private:
     } else {
       RCLCPP_WARN(
         get_logger(),
-        "[OVERALL_TEST] 记录Nav2全局起点失败，将回退到里程计起点：%s",
+        "[FULL_INVENTORY] 记录Nav2全局起点失败，将回退到里程计起点：%s",
         tf_error.c_str());
     }
   }
 
-  bool prepare_overall_test_target(int cabinet_id, std::string & reason)
+  bool prepare_full_inventory_target(int cabinet_id, std::string & reason)
   {
     reason.clear();
     if (!routes_loaded_) {
@@ -4276,7 +3938,7 @@ private:
         return false;
       }
     }
-    if (!apply_overall_test_route_overrides(reason)) {
+    if (!apply_full_inventory_route_overrides(reason)) {
       return false;
     }
     if (!warehouse_layout_loaded_) {
@@ -4307,27 +3969,27 @@ private:
       return false;
     }
 
-    overall_test_current_target_ = cabinet_id;
-    overall_test_current_side_ = current_target_side_;
-    overall_test_current_route_ = current_route_name_;
+    full_inventory_current_target_ = cabinet_id;
+    full_inventory_current_side_ = current_target_side_;
+    full_inventory_current_route_ = current_route_name_;
     log_current_target_entry_plan();
     publish_entry_side();
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
-    publish_overall_test_log(
-      "current_target=" + std::to_string(overall_test_current_target_) +
-      " index=" + std::to_string(overall_test_index_) +
-      "/" + std::to_string(overall_test_sequence_.size()) +
-      " side=" + overall_test_current_side_ +
-      " route=" + overall_test_current_route_ +
+    publish_full_inventory_log(
+      "current_target=" + std::to_string(full_inventory_current_target_) +
+      " index=" + std::to_string(full_inventory_index_) +
+      "/" + std::to_string(full_inventory_sequence_.size()) +
+      " side=" + full_inventory_current_side_ +
+      " route=" + full_inventory_current_route_ +
       " entry_side=" + current_entry_side_ +
       " search_direction=" + search_direction_to_string(current_gap_plan_.search_direction));
     return true;
   }
 
-  bool start_overall_test_target_route(const std::string & context)
+  bool start_full_inventory_target_route(const std::string & context)
   {
     mission_active_ = true;
     cancel_requested_ = false;
@@ -4352,105 +4014,105 @@ private:
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "nav observe stage: recognizer=" +
-      std::string(overall_test_recognize_during_nav_ ? "on" : "off") +
+      std::string(full_inventory_recognize_during_nav_ ? "on" : "off") +
       " distance=off gap=off target=" + std::to_string(current_target_cabinet_));
 
     std::string fail_reason;
     if (!begin_nav_route_for_current_target(
-        "[OVERALL_TEST] " + context +
+        "[FULL_INVENTORY] " + context +
         " current_target=" + std::to_string(current_target_cabinet_) +
         " side=" + current_target_side_ +
         " route=" + current_route_name_,
         fail_reason,
-        State::OVERALL_TEST_NAV_TO_OBSERVE))
+        State::FULL_INVENTORY_NAV_TO_OBSERVE))
     {
-      fail_overall_test("启动目标侧路径失败: " + fail_reason);
+      fail_full_inventory("启动目标侧路径失败: " + fail_reason);
       return false;
     }
     return true;
   }
 
-  bool start_overall_test_sequence(
+  bool start_full_inventory_sequence(
     const std::vector<int> & sequence,
     std::string & reason)
   {
     reason.clear();
-    if (!validate_overall_test_sequence(sequence, reason)) {
+    if (!validate_full_inventory_sequence(sequence, reason)) {
       return false;
     }
 
-    overall_test_sequence_ = sequence;
-    overall_test_active_ = true;
-    overall_test_index_ = 0;
-    overall_test_current_target_ = -1;
-    overall_test_next_target_ =
-      overall_test_sequence_.size() > 1U ? overall_test_sequence_[1] : -1;
-    overall_test_return_reason_ = OverallTestReturnReason::NONE;
-    overall_test_waiting_return_home_for_side_switch_ = false;
-    overall_test_waiting_return_home_for_done_ = false;
-    overall_test_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_final_recognition_wait_start_ =
+    full_inventory_sequence_ = sequence;
+    full_inventory_active_ = true;
+    full_inventory_index_ = 0;
+    full_inventory_current_target_ = -1;
+    full_inventory_next_target_ =
+      full_inventory_sequence_.size() > 1U ? full_inventory_sequence_[1] : -1;
+    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
+    full_inventory_waiting_return_home_for_side_switch_ = false;
+    full_inventory_waiting_return_home_for_done_ = false;
+    full_inventory_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    full_inventory_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_start_ =
+    full_inventory_recognition_fallback_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_phase_start_ =
+    full_inventory_recognition_fallback_phase_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::IDLE;
-    overall_test_recognition_fallback_index_ = 0;
-    overall_test_post_gap_advance_start_ =
+    full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::IDLE;
+    full_inventory_recognition_fallback_index_ = 0;
+    full_inventory_post_gap_advance_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
-    test_gap_scan_queue_.clear();
-    test_current_gap_index_ = 0;
-    test_gap_scan_error_reason_.clear();
-    test_gap_scan_active_ = true;
-    test_real_motion_active_ = false;
-    test_real_gap_searching_ = false;
-    test_real_target_recognized_logged_ = false;
-    test_real_close_requested_ = false;
-    reset_test_real_side_row_context();
-    reset_test_real_scan_runtime();
-    record_overall_test_start_pose();
+    gap_request_queue_.clear();
+    current_gap_request_index_ = 0;
+    mission_error_reason_.clear();
+    inventory_flow_active_ = true;
+    single_cabinet_motion_active_ = false;
+    single_cabinet_gap_searching_ = false;
+    single_cabinet_target_recognized_logged_ = false;
+    single_cabinet_close_requested_ = false;
+    reset_single_cabinet_side_row_context();
+    reset_single_cabinet_scan_runtime();
+    record_full_inventory_start_pose();
 
-    publish_overall_test_log(
-      "START sequence=" + cabinet_unit_to_string(overall_test_sequence_));
-    set_test_state(
-      State::OVERALL_TEST_PREPARE_TARGET,
-      "[OVERALL_TEST] prepare first target");
+    publish_full_inventory_log(
+      "START sequence=" + cabinet_unit_to_string(full_inventory_sequence_));
+    set_flow_state(
+      State::FULL_INVENTORY_PREPARE_TARGET,
+      "[FULL_INVENTORY] prepare first target");
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
 
-    if (!prepare_overall_test_target(overall_test_sequence_[overall_test_index_], reason)) {
-      reset_overall_test_context();
-      test_gap_scan_active_ = false;
+    if (!prepare_full_inventory_target(full_inventory_sequence_[full_inventory_index_], reason)) {
+      reset_full_inventory_context();
+      inventory_flow_active_ = false;
       return false;
     }
-    return start_overall_test_target_route("start target route");
+    return start_full_inventory_target_route("start target route");
   }
 
-  void fail_overall_test(const std::string & reason)
+  void fail_full_inventory(const std::string & reason)
   {
-    publish_overall_test_log("FAILED: " + reason);
-    cancel_nav2_route_goal("整体盘库测试失败");
-    cancel_nav2_return_goal("整体盘库测试失败");
+    publish_full_inventory_log("FAILED: " + reason);
+    cancel_nav2_route_goal("全部盘库失败");
+    cancel_nav2_return_goal("全部盘库失败");
     set_corridor_mode(false, false);
     publish_stop();
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
-    reset_test_real_scan_runtime();
-    test_gap_scan_error_reason_ = reason;
-    set_test_state(State::ERROR, "[OVERALL_TEST] " + reason);
+    reset_single_cabinet_scan_runtime();
+    mission_error_reason_ = reason;
+    set_flow_state(State::ERROR, "[FULL_INVENTORY] " + reason);
   }
 
-  void begin_overall_test_post_route_recognition_wait()
+  void begin_full_inventory_post_route_recognition_wait()
   {
-    cancel_nav2_route_goal("整体盘库测试巡航路线已走完，进入停车识别等待");
+    cancel_nav2_route_goal("全部盘库巡航路线已走完，进入停车识别等待");
     nav2_route_goal_in_progress_ = false;
     nav2_route_result_ready_ = false;
     nav2_route_stop_hold_active_ = false;
@@ -4465,27 +4127,27 @@ private:
     reset_target_recognition_stability();
     has_distance_ = false;
     target_visible_ = false;
-    overall_test_final_recognition_wait_start_ = this->now();
-    publish_overall_test_log(
+    full_inventory_final_recognition_wait_start_ = this->now();
+    publish_full_inventory_log(
       "route finished, start recognition wait target=" +
       std::to_string(current_target_cabinet_) +
-      " timeout=" + format_seconds(overall_test_final_recognition_wait_sec_));
+      " timeout=" + format_seconds(full_inventory_final_recognition_wait_sec_));
     set_state(
-      State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT,
-      "[OVERALL_TEST] route finished, start recognition wait target=" +
+      State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT,
+      "[FULL_INVENTORY] route finished, start recognition wait target=" +
       std::to_string(current_target_cabinet_) +
-      " timeout=" + format_seconds(overall_test_final_recognition_wait_sec_));
+      " timeout=" + format_seconds(full_inventory_final_recognition_wait_sec_));
   }
 
-  void begin_overall_target_distance_align_after_recognition(
+  void begin_full_inventory_target_distance_align_after_recognition(
     int rec_id,
     const std::string & context)
   {
     const bool from_post_route_wait =
-      state_ == State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT;
+      state_ == State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT;
     const bool from_same_side_search =
-      state_ == State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH;
-    cancel_nav2_route_goal("整体盘库测试稳定识别到目标货柜");
+      state_ == State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH;
+    cancel_nav2_route_goal("全部盘库稳定识别到目标货柜");
     nav2_route_stop_hold_active_ = false;
     nav2_route_cancel_requested_ = false;
     target_found_pending_ = false;
@@ -4498,35 +4160,35 @@ private:
     set_distance_estimator_enabled(true, true);
     has_distance_ = false;
     latest_distance_ = 0.0;
-    overall_test_final_recognition_wait_start_ =
+    full_inventory_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_start_ =
+    full_inventory_recognition_fallback_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_phase_start_ =
+    full_inventory_recognition_fallback_phase_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::IDLE;
+    full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::IDLE;
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     if (from_post_route_wait) {
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "post-route recognition wait success target=" + std::to_string(rec_id));
     }
     if (from_same_side_search) {
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "same-side next target recognized=" + std::to_string(rec_id) +
         ", recognizer=off, distance=on");
     }
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "recognized target=" + std::to_string(rec_id) +
       ", recognizer=off, distance=on");
     set_state(
-      State::OVERALL_TEST_TARGET_DISTANCE_ALIGN,
-      "[OVERALL_TEST] recognized target cabinet=" + std::to_string(rec_id) +
+      State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN,
+      "[FULL_INVENTORY] recognized target cabinet=" + std::to_string(rec_id) +
       " stable, enter target distance align: " + context);
   }
 
-  bool handle_overall_test_recognition(int rec_id)
+  bool handle_full_inventory_recognition(int rec_id)
   {
-    if (!is_overall_test_recognition_state(state_)) {
+    if (!is_full_inventory_recognition_state(state_)) {
       return false;
     }
 
@@ -4535,7 +4197,7 @@ private:
       reset_target_recognition_stability();
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][OVERALL_TEST][recognition] mismatch recognized=%d target=%d",
+        "[mission_manager][FULL_INVENTORY][recognition] mismatch recognized=%d target=%d",
         rec_id,
         current_target_cabinet_);
       return true;
@@ -4548,7 +4210,7 @@ private:
     const int required_count = std::max(1, target_recognition_stable_frames_);
     RCLCPP_INFO(
       get_logger(),
-      "[mission_manager][OVERALL_TEST][recognition] state=%s target=%d recognized=%d "
+      "[mission_manager][FULL_INVENTORY][recognition] state=%s target=%d recognized=%d "
       "stable_count=%d required=%d ready=%s",
       state_to_string(state_).c_str(),
       current_target_cabinet_,
@@ -4558,21 +4220,21 @@ private:
       stable_ready ? "true" : "false");
 
     if (stable_ready) {
-      begin_overall_target_distance_align_after_recognition(
+      begin_full_inventory_target_distance_align_after_recognition(
         rec_id, "recognition stable in " + state_to_string(state_));
     }
     return true;
   }
 
-  void select_overall_same_side_pose_hold_target()
+  void select_full_inventory_same_side_pose_hold_target()
   {
-    const int target = overall_test_current_target_;
+    const int target = full_inventory_current_target_;
     std::string side;
     std::string reason;
     if (!get_cabinet_side(target, side, reason) || (side != "left" && side != "right")) {
       RCLCPP_WARN(
         get_logger(),
-        "[OVERALL_TEST] same-side pose hold side lookup failed target=%d reason=%s side=%s, "
+        "[FULL_INVENTORY] same-side pose hold side lookup failed target=%d reason=%s side=%s, "
         "fallback to left parameters",
         target,
         reason.c_str(),
@@ -4580,20 +4242,20 @@ private:
       side = "left";
     }
 
-    overall_test_same_side_active_map_side_ = side;
+    full_inventory_same_side_active_map_side_ = side;
     if (side == "right") {
-      overall_test_same_side_active_fixed_y_m_ = overall_test_same_side_right_fixed_y_m_;
-      overall_test_same_side_active_fixed_yaw_rad_ = overall_test_same_side_right_fixed_yaw_rad_;
+      full_inventory_same_side_active_fixed_y_m_ = full_inventory_same_side_right_fixed_y_m_;
+      full_inventory_same_side_active_fixed_yaw_rad_ = full_inventory_same_side_right_fixed_yaw_rad_;
     } else {
-      overall_test_same_side_active_fixed_y_m_ = overall_test_same_side_left_fixed_y_m_;
-      overall_test_same_side_active_fixed_yaw_rad_ = overall_test_same_side_left_fixed_yaw_rad_;
+      full_inventory_same_side_active_fixed_y_m_ = full_inventory_same_side_left_fixed_y_m_;
+      full_inventory_same_side_active_fixed_yaw_rad_ = full_inventory_same_side_left_fixed_yaw_rad_;
     }
   }
 
-  void start_overall_same_side_next_search()
+  void start_full_inventory_same_side_next_search()
   {
-    overall_test_same_side_search_start_ = this->now();
-    select_overall_same_side_pose_hold_target();
+    full_inventory_same_side_search_start_ = this->now();
+    select_full_inventory_same_side_pose_hold_target();
     reset_target_recognition_stability();
     target_visible_ = false;
     has_distance_ = false;
@@ -4603,24 +4265,24 @@ private:
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     set_corridor_mode(false, false);
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "same-side next search start target=" +
-      std::to_string(overall_test_current_target_) +
+      std::to_string(full_inventory_current_target_) +
       " recognizer=on distance=off gap=off speed=" +
-      format_seconds(overall_test_same_side_search_speed_) +
-      " timeout=" + format_seconds(overall_test_same_side_search_timeout_sec_));
-    if (overall_test_same_side_pose_hold_enabled_) {
-      publish_overall_test_log(
+      format_seconds(full_inventory_same_side_search_speed_) +
+      " timeout=" + format_seconds(full_inventory_same_side_search_timeout_sec_));
+    if (full_inventory_same_side_pose_hold_enabled_) {
+      publish_full_inventory_log(
         "same-side pose hold enabled target=" +
-        std::to_string(overall_test_current_target_) +
-        " map_side=" + overall_test_same_side_active_map_side_ +
-        " fixed_y=" + format_fixed(overall_test_same_side_active_fixed_y_m_, 3) +
-        " fixed_yaw=" + format_fixed(overall_test_same_side_active_fixed_yaw_rad_, 4));
+        std::to_string(full_inventory_current_target_) +
+        " map_side=" + full_inventory_same_side_active_map_side_ +
+        " fixed_y=" + format_fixed(full_inventory_same_side_active_fixed_y_m_, 3) +
+        " fixed_yaw=" + format_fixed(full_inventory_same_side_active_fixed_yaw_rad_, 4));
     }
     set_state(
-      State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH,
-      "[OVERALL_TEST] same-side next search target=" +
-      std::to_string(overall_test_current_target_));
+      State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
+      "[FULL_INVENTORY] same-side next search target=" +
+      std::to_string(full_inventory_current_target_));
   }
 
   bool current_same_side_pose_hold_pose(Pose2D & pose, std::string & pose_note) const
@@ -4648,27 +4310,27 @@ private:
     return true;
   }
 
-  void handle_overall_same_side_next_search_state()
+  void handle_full_inventory_same_side_next_search_state()
   {
     request_recognizer_enable(true);
     set_recognizer_topic_enabled(true);
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
-    if (overall_test_same_side_search_start_.nanoseconds() == 0) {
-      overall_test_same_side_search_start_ = this->now();
+    if (full_inventory_same_side_search_start_.nanoseconds() == 0) {
+      full_inventory_same_side_search_start_ = this->now();
     }
-    const double elapsed = (this->now() - overall_test_same_side_search_start_).seconds();
-    const double timeout = std::max(0.1, overall_test_same_side_search_timeout_sec_);
+    const double elapsed = (this->now() - full_inventory_same_side_search_start_).seconds();
+    const double timeout = std::max(0.1, full_inventory_same_side_search_timeout_sec_);
     if (elapsed >= timeout) {
       publish_stop();
-      fail_overall_test(
+      fail_full_inventory(
         "same side recognition search timeout target=" +
         std::to_string(current_target_cabinet_));
       return;
     }
 
     geometry_msgs::msg::Twist cmd;
-    cmd.linear.x = overall_test_same_side_search_speed_;
+    cmd.linear.x = full_inventory_same_side_search_speed_;
     cmd.angular.z = 0.0;
     Pose2D pose;
     std::string pose_note;
@@ -4678,22 +4340,22 @@ private:
     double yaw_cmd = 0.0;
     double y_cmd = 0.0;
 
-    if (overall_test_same_side_pose_hold_enabled_) {
+    if (full_inventory_same_side_pose_hold_enabled_) {
       if (current_same_side_pose_hold_pose(pose, pose_note)) {
         pose_hold_active = true;
-        y_error = overall_test_same_side_active_fixed_y_m_ - pose.y;
-        yaw_error = normalize_angle(overall_test_same_side_active_fixed_yaw_rad_ - pose.yaw);
-        if (std::abs(yaw_error) >= std::abs(overall_test_same_side_yaw_deadband_rad_)) {
-          yaw_cmd = overall_test_same_side_yaw_kp_ * yaw_error;
+        y_error = full_inventory_same_side_active_fixed_y_m_ - pose.y;
+        yaw_error = normalize_angle(full_inventory_same_side_active_fixed_yaw_rad_ - pose.yaw);
+        if (std::abs(yaw_error) >= std::abs(full_inventory_same_side_yaw_deadband_rad_)) {
+          yaw_cmd = full_inventory_same_side_yaw_kp_ * yaw_error;
         }
-        if (std::abs(y_error) >= std::abs(overall_test_same_side_y_deadband_m_)) {
-          y_cmd = overall_test_same_side_y_kp_ * y_error;
+        if (std::abs(y_error) >= std::abs(full_inventory_same_side_y_deadband_m_)) {
+          y_cmd = full_inventory_same_side_y_kp_ * y_error;
         }
         const double max_angular =
-          std::isfinite(overall_test_same_side_max_angular_) ?
-          std::max(0.0, std::abs(overall_test_same_side_max_angular_)) : 0.15;
+          std::isfinite(full_inventory_same_side_max_angular_) ?
+          std::max(0.0, std::abs(full_inventory_same_side_max_angular_)) : 0.15;
         cmd.angular.z = std::clamp(
-          yaw_cmd + overall_test_same_side_y_correction_sign_ * y_cmd,
+          yaw_cmd + full_inventory_same_side_y_correction_sign_ * y_cmd,
           -max_angular,
           max_angular);
       } else {
@@ -4701,7 +4363,7 @@ private:
           get_logger(),
           *get_clock(),
           1000,
-          "[OVERALL_TEST] same-side pose hold unavailable: %s, fallback to open-loop search",
+          "[FULL_INVENTORY] same-side pose hold unavailable: %s, fallback to open-loop search",
           pose_note.c_str());
       }
     }
@@ -4711,17 +4373,17 @@ private:
         get_logger(),
         *get_clock(),
         1000,
-        "[OVERALL_TEST] same_side_next_search target=%d map_side=%s speed=%.3f current_y=%.3f "
+        "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s speed=%.3f current_y=%.3f "
         "fixed_y=%.3f y_error=%.3f current_yaw=%.4f fixed_yaw=%.4f yaw_error=%.4f "
         "angular=%.3f elapsed=%.2f/%.2f pose=%s",
         current_target_cabinet_,
-        overall_test_same_side_active_map_side_.c_str(),
+        full_inventory_same_side_active_map_side_.c_str(),
         cmd.linear.x,
         pose.y,
-        overall_test_same_side_active_fixed_y_m_,
+        full_inventory_same_side_active_fixed_y_m_,
         y_error,
         pose.yaw,
-        overall_test_same_side_active_fixed_yaw_rad_,
+        full_inventory_same_side_active_fixed_yaw_rad_,
         yaw_error,
         cmd.angular.z,
         elapsed,
@@ -4732,10 +4394,10 @@ private:
         get_logger(),
         *get_clock(),
         1000,
-        "[OVERALL_TEST] same_side_next_search target=%d map_side=%s speed=%.3f angular=%.3f "
+        "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s speed=%.3f angular=%.3f "
         "elapsed=%.2f/%.2f open_loop=true",
         current_target_cabinet_,
-        overall_test_same_side_active_map_side_.c_str(),
+        full_inventory_same_side_active_map_side_.c_str(),
         cmd.linear.x,
         cmd.angular.z,
         elapsed,
@@ -4743,16 +4405,16 @@ private:
     }
   }
 
-  void begin_overall_recognition_fallback()
+  void begin_full_inventory_recognition_fallback()
   {
-    if (!overall_test_recognition_fallback_enabled_) {
-      fail_overall_test(
+    if (!full_inventory_recognition_fallback_enabled_) {
+      fail_full_inventory(
         "post-route recognition wait timeout and recognition fallback disabled target=" +
         std::to_string(current_target_cabinet_));
       return;
     }
-    if (overall_test_recognition_fallback_sequence_.empty()) {
-      fail_overall_test(
+    if (full_inventory_recognition_fallback_sequence_.empty()) {
+      fail_full_inventory(
         "post-route recognition wait timeout and fallback sequence empty target=" +
         std::to_string(current_target_cabinet_));
       return;
@@ -4764,97 +4426,97 @@ private:
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     reset_target_recognition_stability();
-    overall_test_recognition_fallback_start_ = this->now();
-    overall_test_recognition_fallback_phase_start_ = this->now();
-    overall_test_recognition_fallback_index_ = 0;
-    overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::MOVING;
+    full_inventory_recognition_fallback_start_ = this->now();
+    full_inventory_recognition_fallback_phase_start_ = this->now();
+    full_inventory_recognition_fallback_index_ = 0;
+    full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::MOVING;
     reset_segment_distance();
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "recognition fallback start sequence=" +
-      double_vector_to_string(overall_test_recognition_fallback_sequence_));
-    publish_overall_test_log(
+      double_vector_to_string(full_inventory_recognition_fallback_sequence_));
+    publish_full_inventory_log(
       "recognition fallback step=1 move=" +
-      format_seconds(overall_test_recognition_fallback_sequence_.front()));
+      format_seconds(full_inventory_recognition_fallback_sequence_.front()));
     set_state(
-      State::OVERALL_TEST_RECOGNITION_FALLBACK,
-      "[OVERALL_TEST] recognition fallback target=" +
+      State::FULL_INVENTORY_RECOGNITION_FALLBACK,
+      "[FULL_INVENTORY] recognition fallback target=" +
       std::to_string(current_target_cabinet_));
   }
 
-  void handle_overall_test_post_route_recognition_wait_state()
+  void handle_full_inventory_post_route_recognition_wait_state()
   {
     publish_stop();
     request_recognizer_enable(true);
     set_recognizer_topic_enabled(true);
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
-    if (overall_test_final_recognition_wait_start_.nanoseconds() == 0) {
-      overall_test_final_recognition_wait_start_ = this->now();
+    if (full_inventory_final_recognition_wait_start_.nanoseconds() == 0) {
+      full_inventory_final_recognition_wait_start_ = this->now();
     }
 
     const double elapsed =
-      (this->now() - overall_test_final_recognition_wait_start_).seconds();
-    const double timeout = std::max(0.0, overall_test_final_recognition_wait_sec_);
+      (this->now() - full_inventory_final_recognition_wait_start_).seconds();
+    const double timeout = std::max(0.0, full_inventory_final_recognition_wait_sec_);
     RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][OVERALL_TEST] post-route recognition wait: target=%d elapsed=%.2f/%.2f",
+      "[mission_manager][FULL_INVENTORY] post-route recognition wait: target=%d elapsed=%.2f/%.2f",
       current_target_cabinet_,
       elapsed,
       timeout);
 
     if (elapsed >= timeout) {
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "post-route recognition wait timeout: target=" +
         std::to_string(current_target_cabinet_));
-      begin_overall_recognition_fallback();
+      begin_full_inventory_recognition_fallback();
     }
   }
 
-  void handle_overall_recognition_fallback_state()
+  void handle_full_inventory_recognition_fallback_state()
   {
     request_recognizer_enable(true);
     set_recognizer_topic_enabled(true);
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
 
-    if (overall_test_recognition_fallback_start_.nanoseconds() == 0) {
-      begin_overall_recognition_fallback();
+    if (full_inventory_recognition_fallback_start_.nanoseconds() == 0) {
+      begin_full_inventory_recognition_fallback();
       return;
     }
 
     const double elapsed_total =
-      (this->now() - overall_test_recognition_fallback_start_).seconds();
+      (this->now() - full_inventory_recognition_fallback_start_).seconds();
     const double fallback_step_timeout =
-      std::max(0.1, overall_test_recognition_fallback_timeout_sec_);
+      std::max(0.1, full_inventory_recognition_fallback_timeout_sec_);
 
-    if (overall_test_recognition_fallback_index_ >=
-      overall_test_recognition_fallback_sequence_.size())
+    if (full_inventory_recognition_fallback_index_ >=
+      full_inventory_recognition_fallback_sequence_.size())
     {
       publish_stop();
-      fail_overall_test(
+      fail_full_inventory(
         "recognition fallback sequence exhausted target=" +
         std::to_string(current_target_cabinet_));
       return;
     }
 
     const double step =
-      overall_test_recognition_fallback_sequence_[overall_test_recognition_fallback_index_];
-    switch (overall_test_recognition_fallback_phase_) {
-      case OverallRecognitionFallbackPhase::MOVING: {
+      full_inventory_recognition_fallback_sequence_[full_inventory_recognition_fallback_index_];
+    switch (full_inventory_recognition_fallback_phase_) {
+      case FullInventoryRecognitionFallbackPhase::MOVING: {
         const double target_distance = std::abs(step);
-        const double speed = std::abs(overall_test_recognition_fallback_speed_);
+        const double speed = std::abs(full_inventory_recognition_fallback_speed_);
         const double move_elapsed =
-          (this->now() - overall_test_recognition_fallback_phase_start_).seconds();
+          (this->now() - full_inventory_recognition_fallback_phase_start_).seconds();
         const double required_time = speed > 1e-4 ? target_distance / speed : fallback_step_timeout;
         const double move_timeout = std::max(fallback_step_timeout, required_time + 2.0);
         if (move_elapsed >= move_timeout) {
           publish_stop();
-          fail_overall_test(
+          fail_full_inventory(
             "recognition fallback move timeout target=" +
             std::to_string(current_target_cabinet_) +
-            " step=" + std::to_string(overall_test_recognition_fallback_index_ + 1U) +
+            " step=" + std::to_string(full_inventory_recognition_fallback_index_ + 1U) +
             " move=" + format_seconds(step) +
             " elapsed=" + format_seconds(move_elapsed) +
             " timeout=" + format_seconds(move_timeout));
@@ -4862,24 +4524,24 @@ private:
         }
         if (target_distance <= 1e-4 || segment_distance() >= target_distance) {
           publish_stop();
-          overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::WAITING;
-          overall_test_recognition_fallback_phase_start_ = this->now();
+          full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::WAITING;
+          full_inventory_recognition_fallback_phase_start_ = this->now();
           break;
         }
 
         geometry_msgs::msg::Twist cmd;
         cmd.linear.x = (step >= 0.0 ? 1.0 : -1.0) *
-          std::abs(overall_test_recognition_fallback_speed_);
+          std::abs(full_inventory_recognition_fallback_speed_);
         cmd.angular.z = 0.0;
         cmd_pub_->publish(cmd);
         RCLCPP_INFO_THROTTLE(
           get_logger(),
           *get_clock(),
           1000,
-          "[mission_manager][OVERALL_TEST] recognition_fallback moving step=%zu/%zu "
+          "[mission_manager][FULL_INVENTORY] recognition_fallback moving step=%zu/%zu "
           "move=%.2f traveled=%.2f/%.2f elapsed=%.2f/%.2f",
-          overall_test_recognition_fallback_index_ + 1U,
-          overall_test_recognition_fallback_sequence_.size(),
+          full_inventory_recognition_fallback_index_ + 1U,
+          full_inventory_recognition_fallback_sequence_.size(),
           step,
           segment_distance(),
           target_distance,
@@ -4888,46 +4550,46 @@ private:
         break;
       }
 
-      case OverallRecognitionFallbackPhase::WAITING: {
+      case FullInventoryRecognitionFallbackPhase::WAITING: {
         publish_stop();
         const double wait_elapsed =
-          (this->now() - overall_test_recognition_fallback_phase_start_).seconds();
-        if (wait_elapsed < std::max(0.0, overall_test_recognition_fallback_wait_sec_)) {
+          (this->now() - full_inventory_recognition_fallback_phase_start_).seconds();
+        if (wait_elapsed < std::max(0.0, full_inventory_recognition_fallback_wait_sec_)) {
           break;
         }
 
-        ++overall_test_recognition_fallback_index_;
-        if (overall_test_recognition_fallback_index_ >=
-          overall_test_recognition_fallback_sequence_.size())
+        ++full_inventory_recognition_fallback_index_;
+        if (full_inventory_recognition_fallback_index_ >=
+          full_inventory_recognition_fallback_sequence_.size())
         {
-          fail_overall_test(
+          fail_full_inventory(
             "recognition fallback sequence exhausted target=" +
             std::to_string(current_target_cabinet_));
           return;
         }
 
-        overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::MOVING;
-        overall_test_recognition_fallback_phase_start_ = this->now();
+        full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::MOVING;
+        full_inventory_recognition_fallback_phase_start_ = this->now();
         reset_segment_distance();
-        publish_overall_test_log(
+        publish_full_inventory_log(
           "recognition fallback step=" +
-          std::to_string(overall_test_recognition_fallback_index_ + 1U) +
+          std::to_string(full_inventory_recognition_fallback_index_ + 1U) +
           " move=" +
           format_seconds(
-            overall_test_recognition_fallback_sequence_[overall_test_recognition_fallback_index_]));
+            full_inventory_recognition_fallback_sequence_[full_inventory_recognition_fallback_index_]));
         break;
       }
 
-      case OverallRecognitionFallbackPhase::IDLE:
+      case FullInventoryRecognitionFallbackPhase::IDLE:
       default:
-        overall_test_recognition_fallback_phase_ = OverallRecognitionFallbackPhase::MOVING;
-        overall_test_recognition_fallback_phase_start_ = this->now();
+        full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::MOVING;
+        full_inventory_recognition_fallback_phase_start_ = this->now();
         reset_segment_distance();
         break;
     }
   }
 
-  void handle_overall_target_distance_align_state()
+  void handle_full_inventory_target_distance_align_state()
   {
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false);
@@ -4940,7 +4602,7 @@ private:
         get_logger(),
         *get_clock(),
         1000,
-        "[mission_manager][OVERALL_TEST] target distance align waiting for distance target=%d",
+        "[mission_manager][FULL_INVENTORY] target distance align waiting for distance target=%d",
         current_target_cabinet_);
       return;
     }
@@ -4958,7 +4620,7 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][OVERALL_TEST] target distance align target=%d distance=%.2f "
+      "[mission_manager][FULL_INVENTORY] target distance align target=%d distance=%.2f "
       "follow=%.2f tolerance=%.2f cmd.linear.x=%.3f",
       current_target_cabinet_,
       latest_distance_,
@@ -4973,7 +4635,7 @@ private:
       if ((this->now() - tracking_stable_start_).seconds() >= distance_stable_time_sec_) {
         publish_stop();
         set_distance_estimator_enabled(false, true);
-        publish_overall_test_log("target distance stable, distance=off, gap_detector=on");
+        publish_full_inventory_log("target distance stable, distance=off, gap_detector=on");
         begin_search_gap_flow();
       }
     } else {
@@ -4981,11 +4643,11 @@ private:
     }
   }
 
-  void handle_overall_test_scan_state()
+  void handle_full_inventory_scan_state()
   {
-    const int cabinet_id = overall_test_current_target_;
+    const int cabinet_id = full_inventory_current_target_;
     if (cabinet_id <= 0) {
-      fail_overall_test("整体盘库测试扫描柜号非法");
+      fail_full_inventory("全部盘库扫描柜号非法");
       return;
     }
     request_recognizer_enable(false);
@@ -4993,21 +4655,21 @@ private:
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
 
-    if (!test_real_scan_active_ || test_real_scan_cabinet_ != cabinet_id) {
-      publish_overall_test_log(
-        "OVERALL_TEST_IN_GAP_SCAN runtime start cabinet=" + std::to_string(cabinet_id) +
+    if (!single_cabinet_scan_active_ || single_cabinet_scan_cabinet_ != cabinet_id) {
+      publish_full_inventory_log(
+        "FULL_INVENTORY_IN_GAP_SCAN runtime start cabinet=" + std::to_string(cabinet_id) +
         " current_depth=" + std::to_string(current_target_depth_index_));
     }
 
-    if (!execute_test_real_scan_runtime_tick(cabinet_id, InGapScanRuntimeMode::OVERALL_TEST)) {
+    if (!execute_single_cabinet_scan_runtime_tick(cabinet_id, InGapScanRuntimeMode::FULL_INVENTORY)) {
       return;
     }
 
-    publish_overall_test_log(
-      "OVERALL_TEST_IN_GAP_SCAN runtime finished cabinet=" + std::to_string(cabinet_id));
+    publish_full_inventory_log(
+      "FULL_INVENTORY_IN_GAP_SCAN runtime finished cabinet=" + std::to_string(cabinet_id));
     set_state(
-      State::OVERALL_TEST_EXIT_GAP,
-      "[OVERALL_TEST] in-gap sequence finished, reverse exit gap cabinet=" +
+      State::FULL_INVENTORY_EXIT_GAP,
+      "[FULL_INVENTORY] in-gap sequence finished, reverse exit gap cabinet=" +
       std::to_string(cabinet_id));
   }
 
@@ -5024,208 +4686,206 @@ private:
     if (!get_cabinet_side(next_target, next_side, reason)) {
       return false;
     }
-    return overall_test_return_home_between_sides_ && current_side != next_side;
+    return full_inventory_return_home_between_sides_ && current_side != next_side;
   }
 
-  void start_existing_return_home_for_overall_test(OverallTestReturnReason reason)
+  void start_existing_return_home_for_full_inventory(FullInventoryReturnReason reason)
   {
-    overall_test_return_reason_ = reason;
-    overall_test_waiting_return_home_for_side_switch_ =
-      reason == OverallTestReturnReason::BETWEEN_SIDES;
-    overall_test_waiting_return_home_for_done_ =
-      reason == OverallTestReturnReason::FINAL_DONE;
-    const std::string reason_text = overall_return_reason_to_string(reason);
-    publish_overall_test_log("start existing return home reason=" + reason_text);
-    set_test_state(
-      State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES,
-      "[OVERALL_TEST] start return home reason=" + reason_text);
-    switch_to_returning(ReturnMode::FINISH_HOME, "[OVERALL_TEST] return home reason=" + reason_text);
+    full_inventory_return_reason_ = reason;
+    full_inventory_waiting_return_home_for_side_switch_ =
+      reason == FullInventoryReturnReason::BETWEEN_SIDES;
+    full_inventory_waiting_return_home_for_done_ =
+      reason == FullInventoryReturnReason::FINAL_DONE;
+    const std::string reason_text = full_inventory_return_reason_to_string(reason);
+    publish_full_inventory_log("start existing return home reason=" + reason_text);
+    set_flow_state(
+      State::FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES,
+      "[FULL_INVENTORY] start return home reason=" + reason_text);
+    switch_to_returning(ReturnMode::FINISH_HOME, "[FULL_INVENTORY] return home reason=" + reason_text);
   }
 
-  void finish_overall_test_done_after_return()
+  void finish_full_inventory_done_after_return()
   {
-    publish_overall_test_log("DONE");
+    publish_full_inventory_log("DONE");
     mission_active_ = false;
-    test_gap_scan_active_ = false;
-    test_real_motion_active_ = false;
-    test_real_gap_searching_ = false;
-    test_real_target_recognized_logged_ = false;
-    test_real_close_requested_ = false;
-    overall_test_return_reason_ = OverallTestReturnReason::NONE;
-    overall_test_waiting_return_home_for_side_switch_ = false;
-    overall_test_waiting_return_home_for_done_ = false;
-    set_state(State::OVERALL_TEST_COMPLETE, "[OVERALL_TEST] done");
-    reset_overall_test_context();
-    test_gap_scan_queue_.clear();
-    test_current_gap_index_ = 0;
+    inventory_flow_active_ = false;
+    single_cabinet_motion_active_ = false;
+    single_cabinet_gap_searching_ = false;
+    single_cabinet_target_recognized_logged_ = false;
+    single_cabinet_close_requested_ = false;
+    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
+    full_inventory_waiting_return_home_for_side_switch_ = false;
+    full_inventory_waiting_return_home_for_done_ = false;
+    set_state(State::FULL_INVENTORY_COMPLETE, "[FULL_INVENTORY] done");
+    reset_full_inventory_context();
+    gap_request_queue_.clear();
+    current_gap_request_index_ = 0;
   }
 
-  void on_return_home_finished_continue_overall_test()
+  void on_return_home_finished_continue_full_inventory()
   {
-    const auto reason = overall_test_return_reason_;
+    const auto reason = full_inventory_return_reason_;
     return_mode_ = ReturnMode::NONE;
-    overall_test_return_reason_ = OverallTestReturnReason::NONE;
-    overall_test_waiting_return_home_for_side_switch_ = false;
-    overall_test_waiting_return_home_for_done_ = false;
+    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
+    full_inventory_waiting_return_home_for_side_switch_ = false;
+    full_inventory_waiting_return_home_for_done_ = false;
 
-    if (reason == OverallTestReturnReason::FINAL_DONE) {
-      finish_overall_test_done_after_return();
+    if (reason == FullInventoryReturnReason::FINAL_DONE) {
+      finish_full_inventory_done_after_return();
       return;
     }
 
-    if (reason != OverallTestReturnReason::BETWEEN_SIDES) {
-      fail_overall_test("未知整体盘库测试返航目的");
+    if (reason != FullInventoryReturnReason::BETWEEN_SIDES) {
+      fail_full_inventory("未知全部盘库返航目的");
       return;
     }
 
-    if (overall_test_index_ >= overall_test_sequence_.size()) {
-      fail_overall_test("换侧返航后 overall_test_index 越界");
+    if (full_inventory_index_ >= full_inventory_sequence_.size()) {
+      fail_full_inventory("换侧返航后 full_inventory_index 越界");
       return;
     }
 
-    const int target = overall_test_sequence_[overall_test_index_];
+    const int target = full_inventory_sequence_[full_inventory_index_];
     std::string prepare_reason;
-    if (!prepare_overall_test_target(target, prepare_reason)) {
-      fail_overall_test("换侧返航后准备目标失败: " + prepare_reason);
+    if (!prepare_full_inventory_target(target, prepare_reason)) {
+      fail_full_inventory("换侧返航后准备目标失败: " + prepare_reason);
       return;
     }
-    publish_overall_test_log(
-      "return home finished, switch to side=" + overall_test_current_side_ +
-      " route=" + overall_test_current_route_ +
+    publish_full_inventory_log(
+      "return home finished, switch to side=" + full_inventory_current_side_ +
+      " route=" + full_inventory_current_route_ +
       " target=" + std::to_string(target));
-    (void)start_overall_test_target_route("return home finished, switch side");
+    (void)start_full_inventory_target_route("return home finished, switch side");
   }
 
-  void advance_overall_test_sequence()
+  void advance_full_inventory_sequence()
   {
-    if (!overall_test_active_) {
-      fail_overall_test("advance requested while overall test inactive");
+    if (!full_inventory_active_) {
+      fail_full_inventory("advance requested while full inventory inactive");
       return;
     }
-    if (overall_test_index_ >= overall_test_sequence_.size()) {
-      fail_overall_test("overall_test_index 越界");
+    if (full_inventory_index_ >= full_inventory_sequence_.size()) {
+      fail_full_inventory("full_inventory_index 越界");
       return;
     }
 
-    const int finished_target = overall_test_sequence_[overall_test_index_];
+    const int finished_target = full_inventory_sequence_[full_inventory_index_];
 
-    if (overall_test_index_ + 1U >= overall_test_sequence_.size()) {
-      publish_overall_test_log(
+    if (full_inventory_index_ + 1U >= full_inventory_sequence_.size()) {
+      publish_full_inventory_log(
         "exit gap done target=" + std::to_string(finished_target) +
         " next_target=-1 same_side=false");
-      publish_overall_test_log("all targets completed, final return home");
-      if (overall_test_return_home_after_done_) {
-        start_existing_return_home_for_overall_test(OverallTestReturnReason::FINAL_DONE);
+      publish_full_inventory_log("all targets completed, final return home");
+      if (full_inventory_return_home_after_done_) {
+        start_existing_return_home_for_full_inventory(FullInventoryReturnReason::FINAL_DONE);
       } else {
-        finish_overall_test_done_after_return();
+        finish_full_inventory_done_after_return();
       }
       return;
     }
 
-    const int next_target = overall_test_sequence_[overall_test_index_ + 1U];
+    const int next_target = full_inventory_sequence_[full_inventory_index_ + 1U];
     std::string current_side;
     std::string next_side;
     std::string side_reason;
     const bool return_between =
       should_return_home_between_targets(finished_target, next_target, current_side, next_side, side_reason);
     if (!side_reason.empty()) {
-      fail_overall_test("判断目标侧失败: " + side_reason);
+      fail_full_inventory("判断目标侧失败: " + side_reason);
       return;
     }
     const bool same_side = current_side == next_side;
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "exit gap done target=" + std::to_string(finished_target) +
       " next_target=" + std::to_string(next_target) +
       " same_side=" + std::string(same_side ? "true" : "false"));
 
-    ++overall_test_index_;
-    overall_test_next_target_ =
-      overall_test_index_ + 1U < overall_test_sequence_.size() ?
-      overall_test_sequence_[overall_test_index_ + 1U] : -1;
+    ++full_inventory_index_;
+    full_inventory_next_target_ =
+      full_inventory_index_ + 1U < full_inventory_sequence_.size() ?
+      full_inventory_sequence_[full_inventory_index_ + 1U] : -1;
 
     if (return_between) {
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "next_target=" + std::to_string(next_target) +
         " side changed " + current_side + " -> " + next_side +
         ", return home first");
-      start_existing_return_home_for_overall_test(OverallTestReturnReason::BETWEEN_SIDES);
+      start_existing_return_home_for_full_inventory(FullInventoryReturnReason::BETWEEN_SIDES);
       return;
     }
 
     std::string prepare_reason;
-    if (!prepare_overall_test_target(next_target, prepare_reason)) {
-      fail_overall_test("准备同侧下一个目标失败: " + prepare_reason);
+    if (!prepare_full_inventory_target(next_target, prepare_reason)) {
+      fail_full_inventory("准备同侧下一个目标失败: " + prepare_reason);
       return;
     }
 
-    if (same_side && overall_test_same_side_next_search_enabled_) {
-      start_overall_same_side_next_search();
+    if (same_side && full_inventory_same_side_next_search_enabled_) {
+      start_full_inventory_same_side_next_search();
       return;
     }
 
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "next_target=" + std::to_string(next_target) +
       " route restart side=" + next_side);
-    (void)start_overall_test_target_route("advance next target");
+    (void)start_full_inventory_target_route("advance next target");
   }
 
   bool is_side_row_sequence_request(const std::vector<int> & cabinets) const
   {
-    std::vector<int> first_gap_full = test_real_side_row_first_gap_scan_sequence_;
-    std::vector<int> full = test_real_side_row_first_gap_scan_sequence_;
+    std::vector<int> first_gap_full = single_cabinet_side_row_first_gap_scan_sequence_;
+    std::vector<int> full = single_cabinet_side_row_first_gap_scan_sequence_;
     full.insert(
       full.end(),
-      test_real_side_row_second_gap_scan_sequence_.begin(),
-      test_real_side_row_second_gap_scan_sequence_.end());
+      single_cabinet_side_row_second_gap_scan_sequence_.begin(),
+      single_cabinet_side_row_second_gap_scan_sequence_.end());
     return int_vectors_equal(cabinets, first_gap_full) || int_vectors_equal(cabinets, full);
   }
 
-  bool is_valid_test_real_side_row_request(
-    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  bool is_valid_single_cabinet_side_row_request(
+    const std::string & gap_id,
+    const std::vector<int> & scan_cabinets,
+    bool run_full_inventory) const
   {
-    if (!test_real_side_row_enabled_ || request.run_all_configured) {
+    if (!single_cabinet_side_row_enabled_ || run_full_inventory) {
       return false;
     }
-    if (wheeltec_inventory_system::trim(request.gap_id) != test_real_side_row_first_gap_) {
+    if (wheeltec_inventory_system::trim(gap_id) != single_cabinet_side_row_first_gap_) {
       return false;
     }
-    std::vector<int> cabinets;
-    for (const auto cabinet_id : request.scan_cabinets) {
-      cabinets.push_back(static_cast<int>(cabinet_id));
-    }
-    return is_side_row_sequence_request(cabinets);
+    return is_side_row_sequence_request(scan_cabinets);
   }
 
   std::string side_row_reject_message() const
   {
-    std::vector<int> full = test_real_side_row_first_gap_scan_sequence_;
+    std::vector<int> full = single_cabinet_side_row_first_gap_scan_sequence_;
     full.insert(
       full.end(),
-      test_real_side_row_second_gap_scan_sequence_.begin(),
-      test_real_side_row_second_gap_scan_sequence_.end());
+      single_cabinet_side_row_second_gap_scan_sequence_.begin(),
+      single_cabinet_side_row_second_gap_scan_sequence_.end());
     return
-      "side row real motion test only supports " + test_real_side_row_name_ +
-      " starting from " + test_real_side_row_first_gap_ +
+      "side row inventory only supports " + single_cabinet_side_row_name_ +
+      " starting from " + single_cabinet_side_row_first_gap_ +
       " with scan_cabinets=" + cabinet_unit_to_string(full);
   }
 
-  std::string active_test_real_gap_id() const
+  std::string active_single_cabinet_gap_id() const
   {
-    if (test_real_side_row_active_ && !test_real_active_gap_id_.empty()) {
-      return test_real_active_gap_id_;
+    if (single_cabinet_side_row_active_ && !single_cabinet_active_gap_id_.empty()) {
+      return single_cabinet_active_gap_id_;
     }
-    return test_real_motion_target_gap_;
+    return single_cabinet_motion_target_gap_;
   }
 
-  int active_test_real_scan_cabinet() const
+  int active_single_cabinet_scan_cabinet() const
   {
-    if (test_real_side_row_active_ && test_real_current_scan_cabinet_ > 0) {
-      return test_real_current_scan_cabinet_;
+    if (single_cabinet_side_row_active_ && single_cabinet_current_scan_cabinet_ > 0) {
+      return single_cabinet_current_scan_cabinet_;
     }
-    return test_real_motion_target_cabinet_;
+    return single_cabinet_motion_target_cabinet_;
   }
 
-  bool prepare_test_real_target_cabinet(int cabinet_id, std::string & reason)
+  bool prepare_single_cabinet_target_cabinet(int cabinet_id, std::string & reason)
   {
     targets_ = {std::to_string(cabinet_id)};
     current_target_index_ = 0;
@@ -5235,75 +4895,76 @@ private:
     return true;
   }
 
-  bool is_valid_test_real_motion_request(
-    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request) const
+  bool is_valid_single_cabinet_motion_request(
+    const std::string & gap_id,
+    const std::vector<int> & scan_cabinets,
+    bool run_full_inventory) const
   {
-    if (request.run_all_configured) {
+    if (run_full_inventory) {
       return false;
     }
-    if (wheeltec_inventory_system::trim(request.gap_id) != test_real_motion_target_gap_) {
+    if (wheeltec_inventory_system::trim(gap_id) != single_cabinet_motion_target_gap_) {
       return false;
     }
-    if (request.scan_cabinets.size() != 1U) {
+    if (scan_cabinets.size() != 1U) {
       return false;
     }
-    return request.scan_cabinets[0] == test_real_motion_target_cabinet_;
+    return scan_cabinets[0] == single_cabinet_motion_target_cabinet_;
   }
 
-  bool start_test_real_side_row_context(
-    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request,
-    TestGapScanPlan & plan,
+  bool start_single_cabinet_side_row_context(
+    const std::string & gap_id,
+    const std::vector<int> & scan_cabinets,
+    InventoryGapPlan & plan,
     std::string & reason)
   {
     reason.clear();
-    if (test_real_side_row_first_gap_scan_sequence_.size() < 2U ||
-      test_real_side_row_second_gap_scan_sequence_.size() < 2U)
+    if (single_cabinet_side_row_first_gap_scan_sequence_.size() < 2U ||
+      single_cabinet_side_row_second_gap_scan_sequence_.size() < 2U)
     {
       reason = "side-row 配置至少需要 first_gap/second_gap 各两个扫描柜号";
       return false;
     }
-    if (!is_valid_test_real_side_row_request(request)) {
+    if (!is_valid_single_cabinet_side_row_request(gap_id, scan_cabinets, false)) {
       reason = side_row_reject_message();
       return false;
     }
 
-    reset_test_real_side_row_context();
-    for (const auto cabinet_id : request.scan_cabinets) {
-      test_real_side_row_requested_sequence_.push_back(static_cast<int>(cabinet_id));
-    }
+    reset_single_cabinet_side_row_context();
+    single_cabinet_side_row_requested_sequence_ = scan_cabinets;
 
-    std::vector<int> full = test_real_side_row_first_gap_scan_sequence_;
+    std::vector<int> full = single_cabinet_side_row_first_gap_scan_sequence_;
     full.insert(
       full.end(),
-      test_real_side_row_second_gap_scan_sequence_.begin(),
-      test_real_side_row_second_gap_scan_sequence_.end());
-    test_real_side_row_full_sequence_ =
-      int_vectors_equal(test_real_side_row_requested_sequence_, full);
-    test_real_side_row_active_ = true;
-    test_real_side_row_phase_ = TestRealSideRowPhase::FIRST_PRIMARY_SCAN;
-    test_real_active_gap_id_ = test_real_side_row_first_gap_;
-    test_real_current_scan_cabinet_ = test_real_side_row_first_gap_scan_sequence_.front();
-    test_real_adjusted_scan_cabinet_ =
-      test_real_side_row_first_gap_scan_sequence_.size() > 1U ?
-      test_real_side_row_first_gap_scan_sequence_[1] : -1;
-    test_real_next_gap_target_cabinet_ = test_real_side_row_corridor_transfer_target_cabinet_;
+      single_cabinet_side_row_second_gap_scan_sequence_.begin(),
+      single_cabinet_side_row_second_gap_scan_sequence_.end());
+    single_cabinet_side_row_full_sequence_ =
+      int_vectors_equal(single_cabinet_side_row_requested_sequence_, full);
+    single_cabinet_side_row_active_ = true;
+    single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::FIRST_PRIMARY_SCAN;
+    single_cabinet_active_gap_id_ = single_cabinet_side_row_first_gap_;
+    single_cabinet_current_scan_cabinet_ = single_cabinet_side_row_first_gap_scan_sequence_.front();
+    single_cabinet_adjusted_scan_cabinet_ =
+      single_cabinet_side_row_first_gap_scan_sequence_.size() > 1U ?
+      single_cabinet_side_row_first_gap_scan_sequence_[1] : -1;
+    single_cabinet_next_gap_target_cabinet_ = single_cabinet_side_row_corridor_transfer_target_cabinet_;
 
-    plan.gap_id = test_real_active_gap_id_;
-    plan.scan_cabinets = test_real_side_row_requested_sequence_;
+    plan.gap_id = single_cabinet_active_gap_id_;
+    plan.scan_cabinets = single_cabinet_side_row_requested_sequence_;
     return true;
   }
 
-  void publish_test_real_side_row_log(const std::string & text)
+  void publish_single_cabinet_side_row_log(const std::string & text)
   {
-    publish_test_real_log("[side_row] " + text);
+    publish_single_cabinet_log("[side_row] " + text);
   }
 
-  bool prepare_test_real_target_search(int cabinet_id, const std::string & context)
+  bool prepare_single_cabinet_target_search(int cabinet_id, const std::string & context)
   {
-    test_real_current_scan_cabinet_ = cabinet_id;
+    single_cabinet_current_scan_cabinet_ = cabinet_id;
     std::string reason;
-    if (!prepare_test_real_target_cabinet(cabinet_id, reason)) {
-      fail_test_real_motion(context + "失败: " + reason);
+    if (!prepare_single_cabinet_target_cabinet(cabinet_id, reason)) {
+      fail_single_cabinet_motion(context + "失败: " + reason);
       return false;
     }
 
@@ -5321,79 +4982,79 @@ private:
     return true;
   }
 
-  void reset_test_real_scan_runtime()
+  void reset_single_cabinet_scan_runtime()
   {
-    test_real_scan_steps_.clear();
-    test_real_scan_step_index_ = 0;
-    test_real_scan_cabinet_ = -1;
-    test_real_scan_active_ = false;
-    test_real_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_scan_steps_.clear();
+    single_cabinet_scan_step_index_ = 0;
+    single_cabinet_scan_cabinet_ = -1;
+    single_cabinet_scan_active_ = false;
+    single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
-    test_real_grid_have_previous_depth_ = false;
-    test_real_grid_previous_cabinet_ = -1;
-    test_real_grid_previous_layer_ = -1;
-    test_real_grid_previous_depth_ = -1;
-    test_real_grid_move_active_ = false;
-    test_real_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    test_real_grid_move_target_distance_ = 0.0;
-    test_real_grid_move_cmd_speed_ = 0.0;
-    test_real_grid_move_step_ = wheeltec_inventory_system::ScanStep{};
-    test_real_grid_move_start_pose_ = Pose2D{};
+    single_cabinet_grid_have_previous_depth_ = false;
+    single_cabinet_grid_previous_cabinet_ = -1;
+    single_cabinet_grid_previous_layer_ = -1;
+    single_cabinet_grid_previous_depth_ = -1;
+    single_cabinet_grid_move_active_ = false;
+    single_cabinet_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_grid_move_target_distance_ = 0.0;
+    single_cabinet_grid_move_cmd_speed_ = 0.0;
+    single_cabinet_grid_move_step_ = wheeltec_inventory_system::ScanStep{};
+    single_cabinet_grid_move_start_pose_ = Pose2D{};
     inventory_scanner_.reset();
     lift_controller_.reset();
   }
 
-  bool begin_test_real_scan_runtime(
+  bool begin_single_cabinet_scan_runtime(
     int cabinet_id,
-    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
-    test_real_scan_steps_ = scan_sequence_generator_.generateCabinetSnakeSequence(
+    single_cabinet_scan_steps_ = scan_sequence_generator_.generateCabinetSnakeSequence(
       cabinet_id,
       scan_layers_,
       scan_depth_count_);
-    if (test_real_scan_steps_.empty()) {
+    if (single_cabinet_scan_steps_.empty()) {
       fail_in_gap_scan_runtime(mode, "生成扫描序列为空: cabinet=" + std::to_string(cabinet_id));
       return false;
     }
 
-    test_real_scan_step_index_ = 0;
-    test_real_scan_cabinet_ = cabinet_id;
-    test_real_scan_active_ = true;
-    test_real_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_scan_step_index_ = 0;
+    single_cabinet_scan_cabinet_ = cabinet_id;
+    single_cabinet_scan_active_ = true;
+    single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     inventory_scanner_.reset();
     lift_controller_.reset();
-    if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
+    if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
       const int initial_depth = std::max(1, current_target_depth_index_);
-      test_real_grid_have_previous_depth_ = true;
-      test_real_grid_previous_cabinet_ = cabinet_id;
-      test_real_grid_previous_layer_ = 1;
-      test_real_grid_previous_depth_ = initial_depth;
+      single_cabinet_grid_have_previous_depth_ = true;
+      single_cabinet_grid_previous_cabinet_ = cabinet_id;
+      single_cabinet_grid_previous_layer_ = 1;
+      single_cabinet_grid_previous_depth_ = initial_depth;
     } else {
-      test_real_grid_have_previous_depth_ = false;
-      test_real_grid_previous_cabinet_ = -1;
-      test_real_grid_previous_layer_ = -1;
-      test_real_grid_previous_depth_ = -1;
+      single_cabinet_grid_have_previous_depth_ = false;
+      single_cabinet_grid_previous_cabinet_ = -1;
+      single_cabinet_grid_previous_layer_ = -1;
+      single_cabinet_grid_previous_depth_ = -1;
     }
-    test_real_grid_move_active_ = false;
-    test_real_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_grid_move_active_ = false;
+    single_cabinet_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
     publish_in_gap_scan_log(
       mode,
       "in gap, start runtime scan cabinet=" + std::to_string(cabinet_id) +
-      " step_count=" + std::to_string(test_real_scan_steps_.size()) +
-      " previous_depth=" + std::to_string(test_real_grid_previous_depth_));
+      " step_count=" + std::to_string(single_cabinet_scan_steps_.size()) +
+      " previous_depth=" + std::to_string(single_cabinet_grid_previous_depth_));
     RCLCPP_INFO(
       get_logger(),
       "[mission_manager][%s][scan_runtime] start cabinet=%d step_count=%zu "
       "previous_depth=%d grid_motion=%s spacing=%.2f speed=%.3f timeout=%.2f",
       in_gap_scan_mode_label(mode),
       cabinet_id,
-      test_real_scan_steps_.size(),
-      test_real_grid_previous_depth_,
-      test_real_grid_motion_enabled_ ? "true" : "false",
-      test_real_grid_spacing_m_,
-      test_real_grid_move_speed_,
-      test_real_grid_move_timeout_sec_);
+      single_cabinet_scan_steps_.size(),
+      single_cabinet_grid_previous_depth_,
+      single_cabinet_grid_motion_enabled_ ? "true" : "false",
+      single_cabinet_grid_spacing_m_,
+      single_cabinet_grid_move_speed_,
+      single_cabinet_grid_move_timeout_sec_);
     return true;
   }
 
@@ -5401,11 +5062,11 @@ private:
     const wheeltec_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode)
   {
-    if (test_real_scan_step_start_time_.nanoseconds() != 0) {
+    if (single_cabinet_scan_step_start_time_.nanoseconds() != 0) {
       return true;
     }
 
-    test_real_scan_step_start_time_ = this->now();
+    single_cabinet_scan_step_start_time_ = this->now();
     const std::string step_type =
       wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type);
     std::string action_text = "device action";
@@ -5439,8 +5100,8 @@ private:
       "cabinet=%d layer=%d depth=%d",
       in_gap_scan_mode_label(mode),
       action_text.c_str(),
-      test_real_scan_step_index_,
-      test_real_scan_steps_.size(),
+      single_cabinet_scan_step_index_,
+      single_cabinet_scan_steps_.size(),
       step_type.c_str(),
       step.cabinet_id,
       step.layer_index,
@@ -5451,13 +5112,13 @@ private:
       " cabinet=" + std::to_string(step.cabinet_id) +
       " layer=" + std::to_string(step.layer_index) +
       " depth=" + std::to_string(step.depth_index) +
-      " step_index=" + std::to_string(test_real_scan_step_index_));
+      " step_index=" + std::to_string(single_cabinet_scan_step_index_));
     return false;
   }
 
   bool execute_inventory_device_step(
     const wheeltec_inventory_system::ScanStep & step,
-    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
     const bool already_started = inventory_device_step_started(step, mode);
     (void)already_started;
@@ -5506,58 +5167,58 @@ private:
       "[mission_manager][%s][scan_runtime] device step finished step_index=%zu/%zu "
       "cabinet=%d layer=%d depth=%d step=%s",
       in_gap_scan_mode_label(mode),
-      test_real_scan_step_index_,
-      test_real_scan_steps_.size(),
+      single_cabinet_scan_step_index_,
+      single_cabinet_scan_steps_.size(),
       step.cabinet_id,
       step.layer_index,
       step.depth_index,
       wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str());
-    test_real_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     return true;
   }
 
-  bool test_real_grid_move_step_matches(const wheeltec_inventory_system::ScanStep & step) const
+  bool single_cabinet_grid_move_step_matches(const wheeltec_inventory_system::ScanStep & step) const
   {
     return
-      test_real_grid_move_step_.cabinet_id == step.cabinet_id &&
-      test_real_grid_move_step_.layer_index == step.layer_index &&
-      test_real_grid_move_step_.depth_index == step.depth_index &&
-      test_real_grid_move_step_.step_type == step.step_type;
+      single_cabinet_grid_move_step_.cabinet_id == step.cabinet_id &&
+      single_cabinet_grid_move_step_.layer_index == step.layer_index &&
+      single_cabinet_grid_move_step_.depth_index == step.depth_index &&
+      single_cabinet_grid_move_step_.step_type == step.step_type;
   }
 
-  bool execute_test_real_grid_move_step(
+  bool execute_single_cabinet_grid_move_step(
     const wheeltec_inventory_system::ScanStep & step,
-    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
-    if (!test_real_grid_motion_enabled_) {
-      if (mode == InGapScanRuntimeMode::OVERALL_TEST) {
-        fail_overall_test(
-          "overall test in-gap MOVE_TO_GRID requires test_real_grid_motion_enabled=true");
+    if (!single_cabinet_grid_motion_enabled_) {
+      if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
+        fail_full_inventory(
+          "full inventory in-gap MOVE_TO_GRID requires single_cabinet_grid_motion_enabled=true");
         return false;
       }
       return true;
     }
 
     const bool cabinet_changed =
-      !test_real_grid_have_previous_depth_ ||
-      test_real_grid_previous_cabinet_ != step.cabinet_id;
+      !single_cabinet_grid_have_previous_depth_ ||
+      single_cabinet_grid_previous_cabinet_ != step.cabinet_id;
     const bool layer_changed =
-      test_real_grid_have_previous_depth_ &&
-      test_real_grid_previous_layer_ != step.layer_index;
+      single_cabinet_grid_have_previous_depth_ &&
+      single_cabinet_grid_previous_layer_ != step.layer_index;
     if (cabinet_changed ||
-      (layer_changed && test_real_grid_move_return_between_layers_))
+      (layer_changed && single_cabinet_grid_move_return_between_layers_))
     {
-      test_real_grid_have_previous_depth_ = true;
-      test_real_grid_previous_cabinet_ = step.cabinet_id;
-      test_real_grid_previous_layer_ = step.layer_index;
-      test_real_grid_previous_depth_ = step.depth_index;
+      single_cabinet_grid_have_previous_depth_ = true;
+      single_cabinet_grid_previous_cabinet_ = step.cabinet_id;
+      single_cabinet_grid_previous_layer_ = step.layer_index;
+      single_cabinet_grid_previous_depth_ = step.depth_index;
       RCLCPP_INFO(
         get_logger(),
         "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
         "target_depth=%d first depth, no move",
         in_gap_scan_mode_label(mode),
-        test_real_scan_step_index_,
-        test_real_scan_steps_.size(),
+        single_cabinet_scan_step_index_,
+        single_cabinet_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
         step.depth_index);
@@ -5566,23 +5227,23 @@ private:
         "[grid_move] cabinet=" + std::to_string(step.cabinet_id) +
         " layer=" + std::to_string(step.layer_index) +
         " depth=" + std::to_string(step.depth_index) +
-        " step_index=" + std::to_string(test_real_scan_step_index_) +
+        " step_index=" + std::to_string(single_cabinet_scan_step_index_) +
         " first depth, no move");
       return true;
     }
 
-    const int delta_depth = step.depth_index - test_real_grid_previous_depth_;
+    const int delta_depth = step.depth_index - single_cabinet_grid_previous_depth_;
     if (delta_depth == 0) {
-      const int previous_depth = test_real_grid_previous_depth_;
-      test_real_grid_previous_layer_ = step.layer_index;
-      test_real_grid_previous_depth_ = step.depth_index;
+      const int previous_depth = single_cabinet_grid_previous_depth_;
+      single_cabinet_grid_previous_layer_ = step.layer_index;
+      single_cabinet_grid_previous_depth_ = step.depth_index;
       RCLCPP_INFO(
         get_logger(),
         "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
         "previous_depth=%d target_depth=%d delta_depth=0 no move",
         in_gap_scan_mode_label(mode),
-        test_real_scan_step_index_,
-        test_real_scan_steps_.size(),
+        single_cabinet_scan_step_index_,
+        single_cabinet_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
         previous_depth,
@@ -5590,19 +5251,19 @@ private:
       return true;
     }
 
-    const double spacing = std::max(0.0, test_real_grid_spacing_m_);
+    const double spacing = std::max(0.0, single_cabinet_grid_spacing_m_);
     const double target_distance = std::abs(delta_depth) * spacing;
     if (target_distance <= 1e-4) {
-      const int previous_depth = test_real_grid_previous_depth_;
-      test_real_grid_previous_layer_ = step.layer_index;
-      test_real_grid_previous_depth_ = step.depth_index;
+      const int previous_depth = single_cabinet_grid_previous_depth_;
+      single_cabinet_grid_previous_layer_ = step.layer_index;
+      single_cabinet_grid_previous_depth_ = step.depth_index;
       RCLCPP_INFO(
         get_logger(),
         "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
         "previous_depth=%d target_depth=%d delta_depth=%d distance=%.2f no move",
         in_gap_scan_mode_label(mode),
-        test_real_scan_step_index_,
-        test_real_scan_steps_.size(),
+        single_cabinet_scan_step_index_,
+        single_cabinet_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
         previous_depth,
@@ -5612,16 +5273,16 @@ private:
       return true;
     }
 
-    const double speed_abs = std::clamp(std::abs(test_real_grid_move_speed_), 0.0, 0.05);
+    const double speed_abs = std::clamp(std::abs(single_cabinet_grid_move_speed_), 0.0, 0.05);
     if (speed_abs <= 1e-4) {
       fail_in_gap_scan_runtime(
         mode,
-        "深度格移动速度非法: " + std::to_string(test_real_grid_move_speed_));
+        "深度格移动速度非法: " + std::to_string(single_cabinet_grid_move_speed_));
       return false;
     }
     const double signed_speed = delta_depth > 0 ? speed_abs : -speed_abs;
 
-    if (!test_real_grid_move_active_ || !test_real_grid_move_step_matches(step)) {
+    if (!single_cabinet_grid_move_active_ || !single_cabinet_grid_move_step_matches(step)) {
       std::string reason;
       if (!current_odom_ready_for_entry(reason)) {
         fail_in_gap_scan_runtime(mode, "深度格移动前里程计异常: " + reason);
@@ -5633,12 +5294,12 @@ private:
         return false;
       }
 
-      test_real_grid_move_active_ = true;
-      test_real_grid_move_step_ = step;
-      test_real_grid_move_start_pose_ = current;
-      test_real_grid_move_target_distance_ = target_distance;
-      test_real_grid_move_cmd_speed_ = signed_speed;
-      test_real_grid_move_start_time_ = this->now();
+      single_cabinet_grid_move_active_ = true;
+      single_cabinet_grid_move_step_ = step;
+      single_cabinet_grid_move_start_pose_ = current;
+      single_cabinet_grid_move_target_distance_ = target_distance;
+      single_cabinet_grid_move_cmd_speed_ = signed_speed;
+      single_cabinet_grid_move_start_time_ = this->now();
       reset_segment_distance();
 
       RCLCPP_INFO(
@@ -5647,16 +5308,16 @@ private:
         "previous_depth=%d target_depth=%d delta_depth=%d target_distance=%.2f "
         "speed=%.3f timeout=%.2f",
         in_gap_scan_mode_label(mode),
-        test_real_scan_step_index_,
-        test_real_scan_steps_.size(),
+        single_cabinet_scan_step_index_,
+        single_cabinet_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
-        test_real_grid_previous_depth_,
+        single_cabinet_grid_previous_depth_,
         step.depth_index,
         delta_depth,
-        test_real_grid_move_target_distance_,
-        test_real_grid_move_cmd_speed_,
-        test_real_grid_move_timeout_sec_);
+        single_cabinet_grid_move_target_distance_,
+        single_cabinet_grid_move_cmd_speed_,
+        single_cabinet_grid_move_timeout_sec_);
       RCLCPP_INFO(
         get_logger(),
         "[mission_manager][%s][grid_move] start_pose x=%.3f y=%.3f yaw=%.3f frame=%s",
@@ -5669,12 +5330,12 @@ private:
         mode,
         "[grid_move] cabinet=" + std::to_string(step.cabinet_id) +
         " layer=" + std::to_string(step.layer_index) +
-        " previous_depth=" + std::to_string(test_real_grid_previous_depth_) +
+        " previous_depth=" + std::to_string(single_cabinet_grid_previous_depth_) +
         " target_depth=" + std::to_string(step.depth_index) +
         " delta_depth=" + std::to_string(delta_depth) +
-        " target_distance=" + format_fixed(test_real_grid_move_target_distance_, 2) +
-        " speed=" + format_fixed(test_real_grid_move_cmd_speed_, 3) +
-        " step_index=" + std::to_string(test_real_scan_step_index_));
+        " target_distance=" + format_fixed(single_cabinet_grid_move_target_distance_, 2) +
+        " speed=" + format_fixed(single_cabinet_grid_move_cmd_speed_, 3) +
+        " step_index=" + std::to_string(single_cabinet_scan_step_index_));
       return false;
     }
 
@@ -5685,9 +5346,9 @@ private:
       return false;
     }
 
-    const double elapsed = (this->now() - test_real_grid_move_start_time_).seconds();
+    const double elapsed = (this->now() - single_cabinet_grid_move_start_time_).seconds();
     const double traveled = segment_distance();
-    const double timeout = std::max(0.1, test_real_grid_move_timeout_sec_);
+    const double timeout = std::max(0.1, single_cabinet_grid_move_timeout_sec_);
     if (elapsed > timeout) {
       publish_stop();
       RCLCPP_ERROR(
@@ -5696,15 +5357,15 @@ private:
         "layer=%d previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f "
         "target=%.2f elapsed=%.2f",
         in_gap_scan_mode_label(mode),
-        test_real_scan_step_index_,
-        test_real_scan_steps_.size(),
+        single_cabinet_scan_step_index_,
+        single_cabinet_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
-        test_real_grid_previous_depth_,
+        single_cabinet_grid_previous_depth_,
         step.depth_index,
         delta_depth,
         traveled,
-        test_real_grid_move_target_distance_,
+        single_cabinet_grid_move_target_distance_,
         elapsed);
       fail_in_gap_scan_runtime(
         mode,
@@ -5714,20 +5375,20 @@ private:
       return false;
     }
 
-    if (traveled >= test_real_grid_move_target_distance_) {
+    if (traveled >= single_cabinet_grid_move_target_distance_) {
       publish_stop();
-      const int previous_depth = test_real_grid_previous_depth_;
-      test_real_grid_previous_layer_ = step.layer_index;
-      test_real_grid_previous_depth_ = step.depth_index;
-      test_real_grid_move_active_ = false;
-      test_real_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+      const int previous_depth = single_cabinet_grid_previous_depth_;
+      single_cabinet_grid_previous_layer_ = step.layer_index;
+      single_cabinet_grid_previous_depth_ = step.depth_index;
+      single_cabinet_grid_move_active_ = false;
+      single_cabinet_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
       RCLCPP_INFO(
         get_logger(),
         "[mission_manager][%s][grid_move] move finished step_index=%zu/%zu cabinet=%d "
         "layer=%d previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f",
         in_gap_scan_mode_label(mode),
-        test_real_scan_step_index_,
-        test_real_scan_steps_.size(),
+        single_cabinet_scan_step_index_,
+        single_cabinet_scan_steps_.size(),
         step.cabinet_id,
         step.layer_index,
         previous_depth,
@@ -5741,11 +5402,11 @@ private:
         " previous_depth=" + std::to_string(previous_depth) +
         " target_depth=" + std::to_string(step.depth_index) +
         " traveled=" + format_fixed(traveled, 2) +
-        " step_index=" + std::to_string(test_real_scan_step_index_));
+        " step_index=" + std::to_string(single_cabinet_scan_step_index_));
       return true;
     }
 
-    if (test_real_grid_move_cmd_speed_ > 0.0) {
+    if (single_cabinet_grid_move_cmd_speed_ > 0.0) {
       const auto safety = evaluate_entering_safety();
       if (safety.blocked) {
         publish_stop();
@@ -5764,7 +5425,7 @@ private:
     }
 
     geometry_msgs::msg::Twist cmd;
-    cmd.linear.x = test_real_grid_move_cmd_speed_;
+    cmd.linear.x = single_cabinet_grid_move_cmd_speed_;
     cmd.angular.z = 0.0;
     cmd_pub_->publish(cmd);
     RCLCPP_INFO_THROTTLE(
@@ -5775,38 +5436,38 @@ private:
       "previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f target=%.2f "
       "elapsed=%.2f",
       in_gap_scan_mode_label(mode),
-      test_real_scan_step_index_,
-      test_real_scan_steps_.size(),
+      single_cabinet_scan_step_index_,
+      single_cabinet_scan_steps_.size(),
       step.cabinet_id,
-      test_real_grid_previous_depth_,
+      single_cabinet_grid_previous_depth_,
       step.depth_index,
       delta_depth,
       traveled,
-      test_real_grid_move_target_distance_,
+      single_cabinet_grid_move_target_distance_,
       elapsed);
     return false;
   }
 
-  bool execute_test_real_scan_runtime_tick(
+  bool execute_single_cabinet_scan_runtime_tick(
     int cabinet_id,
-    InGapScanRuntimeMode mode = InGapScanRuntimeMode::TEST_REAL)
+    InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
-    if (!test_real_scan_active_ || test_real_scan_cabinet_ != cabinet_id) {
-      if (!begin_test_real_scan_runtime(cabinet_id, mode)) {
+    if (!single_cabinet_scan_active_ || single_cabinet_scan_cabinet_ != cabinet_id) {
+      if (!begin_single_cabinet_scan_runtime(cabinet_id, mode)) {
         return false;
       }
     }
 
-    if (test_real_scan_step_index_ >= test_real_scan_steps_.size()) {
-      reset_test_real_scan_runtime();
+    if (single_cabinet_scan_step_index_ >= single_cabinet_scan_steps_.size()) {
+      reset_single_cabinet_scan_runtime();
       return true;
     }
 
-    const auto & step = test_real_scan_steps_[test_real_scan_step_index_];
+    const auto & step = single_cabinet_scan_steps_[single_cabinet_scan_step_index_];
     bool step_done = false;
     switch (step.step_type) {
       case wheeltec_inventory_system::ScanStepType::MOVE_TO_GRID:
-        step_done = execute_test_real_grid_move_step(step, mode);
+        step_done = execute_single_cabinet_grid_move_step(step, mode);
         break;
       case wheeltec_inventory_system::ScanStepType::SCAN_GRID:
         step_done = execute_inventory_device_step(step, mode);
@@ -5821,137 +5482,137 @@ private:
       return false;
     }
 
-    ++test_real_scan_step_index_;
-    if (test_real_scan_step_index_ >= test_real_scan_steps_.size()) {
+    ++single_cabinet_scan_step_index_;
+    if (single_cabinet_scan_step_index_ >= single_cabinet_scan_steps_.size()) {
       publish_in_gap_scan_log(
         mode,
         "in-gap runtime sequence complete cabinet=" + std::to_string(cabinet_id));
-      reset_test_real_scan_runtime();
+      reset_single_cabinet_scan_runtime();
       return true;
     }
 
     return false;
   }
 
-  void finish_test_real_exit_gap()
+  void finish_single_cabinet_exit_gap()
   {
     publish_stop();
-    test_real_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    test_real_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
-    test_real_exit_effective_timeout_sec_ = test_real_exit_timeout_sec_;
+    single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
+    single_cabinet_exit_effective_timeout_sec_ = single_cabinet_exit_timeout_sec_;
 
-    if (overall_test_active_) {
+    if (full_inventory_active_) {
       set_state(
-        State::OVERALL_TEST_ADVANCE_NEXT_TARGET,
-        "[OVERALL_TEST] exit gap finished, advance sequence");
-      advance_overall_test_sequence();
+        State::FULL_INVENTORY_ADVANCE_NEXT_TARGET,
+        "[FULL_INVENTORY] exit gap finished, advance sequence");
+      advance_full_inventory_sequence();
       return;
     }
 
-    const auto action = test_real_after_exit_action_;
-    test_real_after_exit_action_ = TestRealAfterExitAction::NONE;
+    const auto action = single_cabinet_after_exit_action_;
+    single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::NONE;
 
     switch (action) {
-      case TestRealAfterExitAction::REENTER_ADJUSTED:
-        set_test_real_state(
-          State::TEST_REAL_REENTER_FOR_ADJUSTED_SCAN,
+      case SingleCabinetAfterExitAction::REENTER_ADJUSTED:
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN,
           "倒退出缝完成，准备再次入缝做临时位置调整");
         return;
-      case TestRealAfterExitAction::CORRIDOR_TRANSFER:
-        set_test_real_state(
-          State::TEST_REAL_CORRIDOR_TRANSFER,
+      case SingleCabinetAfterExitAction::CORRIDOR_TRANSFER:
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_CORRIDOR_TRANSFER,
           "倒退出缝完成，准备走廊转移到下一目标柜");
         return;
-      case TestRealAfterExitAction::CLOSE_AND_DONE:
-        set_test_real_state(State::REQUEST_CLOSE_GAP, "出缝完成，准备请求关柜");
+      case SingleCabinetAfterExitAction::CLOSE_AND_DONE:
+        set_single_cabinet_state(State::REQUEST_CLOSE_GAP, "出缝完成，准备请求关柜");
         return;
-      case TestRealAfterExitAction::FINAL_CLOSE_AND_DONE:
-        if (!test_real_close_gap_after_final_exit_) {
-          set_test_real_state(State::DONE, "最终出缝完成，配置为不请求关柜");
+      case SingleCabinetAfterExitAction::FINAL_CLOSE_AND_DONE:
+        if (!single_cabinet_close_gap_after_final_exit_) {
+          set_single_cabinet_state(State::DONE, "最终出缝完成，配置为不请求关柜");
           return;
         }
-        set_test_real_state(State::REQUEST_CLOSE_GAP, "最终出缝完成，准备请求关柜");
+        set_single_cabinet_state(State::REQUEST_CLOSE_GAP, "最终出缝完成，准备请求关柜");
         return;
-      case TestRealAfterExitAction::NONE:
+      case SingleCabinetAfterExitAction::NONE:
       default:
-        fail_test_real_motion("出缝完成后缺少下一步动作");
+        fail_single_cabinet_motion("出缝完成后缺少下一步动作");
         return;
     }
   }
 
-  void handle_test_real_exit_gap_state()
+  void handle_single_cabinet_exit_gap_state()
   {
-    std::string mode = test_real_exit_mode_;
+    std::string mode = single_cabinet_exit_mode_;
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
     });
     if (mode != "reverse") {
-      if (overall_test_active_) {
-        fail_overall_test("当前只支持 reverse 出缝模式: " + test_real_exit_mode_);
+      if (full_inventory_active_) {
+        fail_full_inventory("当前只支持 reverse 出缝模式: " + single_cabinet_exit_mode_);
       } else {
-        fail_test_real_motion("当前只支持 reverse 出缝模式: " + test_real_exit_mode_);
+        fail_single_cabinet_motion("当前只支持 reverse 出缝模式: " + single_cabinet_exit_mode_);
       }
       return;
     }
 
-    const double speed = std::clamp(std::abs(test_real_exit_speed_), 0.0, 0.05);
+    const double speed = std::clamp(std::abs(single_cabinet_exit_speed_), 0.0, 0.05);
     if (speed <= 1e-4) {
-      if (overall_test_active_) {
-        fail_overall_test("倒退出缝速度非法: " + std::to_string(test_real_exit_speed_));
+      if (full_inventory_active_) {
+        fail_full_inventory("倒退出缝速度非法: " + std::to_string(single_cabinet_exit_speed_));
       } else {
-        fail_test_real_motion("倒退出缝速度非法: " + std::to_string(test_real_exit_speed_));
+        fail_single_cabinet_motion("倒退出缝速度非法: " + std::to_string(single_cabinet_exit_speed_));
       }
       return;
     }
 
-    if (test_real_exit_start_time_.nanoseconds() == 0) {
+    if (single_cabinet_exit_start_time_.nanoseconds() == 0) {
       const double measured_distance =
-        std::isfinite(test_real_last_entering_straight_distance_) &&
-        test_real_last_entering_straight_distance_ > 0.05 ?
-        test_real_last_entering_straight_distance_ + test_real_exit_extra_distance_m_ :
-        test_real_exit_distance_m_;
-      test_real_exit_target_distance_ =
-        std::max(0.05, std::isfinite(measured_distance) ? measured_distance : test_real_exit_distance_m_);
-      const double required_time = test_real_exit_target_distance_ / speed;
+        std::isfinite(single_cabinet_last_entering_straight_distance_) &&
+        single_cabinet_last_entering_straight_distance_ > 0.05 ?
+        single_cabinet_last_entering_straight_distance_ + single_cabinet_exit_extra_distance_m_ :
+        single_cabinet_exit_distance_m_;
+      single_cabinet_exit_target_distance_ =
+        std::max(0.05, std::isfinite(measured_distance) ? measured_distance : single_cabinet_exit_distance_m_);
+      const double required_time = single_cabinet_exit_target_distance_ / speed;
       const double configured_timeout =
-        std::isfinite(test_real_exit_timeout_sec_) ? test_real_exit_timeout_sec_ : 0.0;
+        std::isfinite(single_cabinet_exit_timeout_sec_) ? single_cabinet_exit_timeout_sec_ : 0.0;
       const double minimum_timeout = required_time + 5.0;
-      test_real_exit_effective_timeout_sec_ =
+      single_cabinet_exit_effective_timeout_sec_ =
         std::max(std::max(0.1, configured_timeout), minimum_timeout);
       if (configured_timeout < minimum_timeout) {
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] warning: timeout too short for distance/speed, "
+          "[mission_manager][single_cabinet][exit_gap] warning: timeout too short for distance/speed, "
           "required=%.2f configured=%.2f",
           required_time,
           configured_timeout);
-        publish_motion_test_log(
+        publish_motion_log(
           "[exit_gap] warning: timeout too short for distance/speed, required=" +
           format_seconds(required_time) +
           ", configured=" + format_seconds(configured_timeout));
       }
       reset_segment_distance();
-      test_real_exit_start_time_ = this->now();
-      test_real_exit_phase_start_time_ = test_real_exit_start_time_;
-      test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
+      single_cabinet_exit_start_time_ = this->now();
+      single_cabinet_exit_phase_start_time_ = single_cabinet_exit_start_time_;
+      single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
       RCLCPP_INFO(
         get_logger(),
-        "[mission_manager][test_real][exit_gap] start reverse exit phase=%s distance=%.2f "
+        "[mission_manager][single_cabinet][exit_gap] start reverse exit phase=%s distance=%.2f "
         "speed=%.3f timeout=%.2f turn_enabled=%s",
-        test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
-        test_real_exit_target_distance_,
+        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
+        single_cabinet_exit_target_distance_,
         speed,
-        test_real_exit_effective_timeout_sec_,
-        test_real_exit_turn_enabled_ ? "true" : "false");
-      publish_motion_test_log(
+        single_cabinet_exit_effective_timeout_sec_,
+        single_cabinet_exit_turn_enabled_ ? "true" : "false");
+      publish_motion_log(
         "[exit_gap] start reverse exit phase=" +
-        test_real_exit_phase_to_string(test_real_exit_phase_) +
+        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_) +
         " distance=" +
-        format_seconds(test_real_exit_target_distance_) +
+        format_seconds(single_cabinet_exit_target_distance_) +
         " speed=" + format_seconds(speed) +
-        " timeout=" + format_seconds(test_real_exit_effective_timeout_sec_) +
-        " turn_enabled=" + (test_real_exit_turn_enabled_ ? "true" : "false"));
+        " timeout=" + format_seconds(single_cabinet_exit_effective_timeout_sec_) +
+        " turn_enabled=" + (single_cabinet_exit_turn_enabled_ ? "true" : "false"));
     }
 
     const double ultrasonic_range = min_ultrasonic_range();
@@ -5959,62 +5620,62 @@ private:
       publish_stop();
       const std::string reason =
         "倒退出缝被超声波安全策略阻塞 range=" + std::to_string(ultrasonic_range);
-      if (overall_test_active_) {
-        fail_overall_test(reason);
+      if (full_inventory_active_) {
+        fail_full_inventory(reason);
       } else {
-        fail_test_real_motion(reason);
+        fail_single_cabinet_motion(reason);
       }
       return;
     }
 
-    if (test_real_exit_phase_ == TestRealExitPhase::STRAIGHT_REVERSE) {
-      const double elapsed = (this->now() - test_real_exit_phase_start_time_).seconds();
+    if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::STRAIGHT_REVERSE) {
+      const double elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
       const double traveled = segment_distance();
-      if (elapsed > std::max(0.1, test_real_exit_effective_timeout_sec_)) {
+      if (elapsed > std::max(0.1, single_cabinet_exit_effective_timeout_sec_)) {
         publish_stop();
         RCLCPP_ERROR(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] phase=%s timeout traveled=%.2f "
+          "[mission_manager][single_cabinet][exit_gap] phase=%s timeout traveled=%.2f "
           "target_distance=%.2f elapsed=%.2f",
-          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           traveled,
-          test_real_exit_target_distance_,
+          single_cabinet_exit_target_distance_,
           elapsed);
-        publish_motion_test_log(
-          "[exit_gap] phase=" + test_real_exit_phase_to_string(test_real_exit_phase_) +
+        publish_motion_log(
+          "[exit_gap] phase=" + single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_) +
           " timeout traveled=" + format_seconds(traveled) +
-          " target_distance=" + format_seconds(test_real_exit_target_distance_) +
+          " target_distance=" + format_seconds(single_cabinet_exit_target_distance_) +
           " elapsed=" + format_seconds(elapsed));
-        if (overall_test_active_) {
-          fail_overall_test("倒退出缝直线阶段超时");
+        if (full_inventory_active_) {
+          fail_full_inventory("倒退出缝直线阶段超时");
         } else {
-          fail_test_real_motion("倒退出缝直线阶段超时");
+          fail_single_cabinet_motion("倒退出缝直线阶段超时");
         }
         return;
       }
 
-      if (traveled >= test_real_exit_target_distance_) {
+      if (traveled >= single_cabinet_exit_target_distance_) {
         publish_stop();
-        if (!test_real_exit_turn_enabled_) {
+        if (!single_cabinet_exit_turn_enabled_) {
           RCLCPP_INFO(
             get_logger(),
-            "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse only traveled=%.2f",
+            "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse only traveled=%.2f",
             traveled);
-          publish_motion_test_log(
+          publish_motion_log(
             "[exit_gap] 出缝完成：straight_reverse only traveled=" + format_seconds(traveled));
-          finish_test_real_exit_gap();
+          finish_single_cabinet_exit_gap();
           return;
         }
 
-        const double turn_speed = std::isfinite(test_real_exit_turn_angular_speed_) ?
-          std::abs(test_real_exit_turn_angular_speed_) : 0.0;
+        const double turn_speed = std::isfinite(single_cabinet_exit_turn_angular_speed_) ?
+          std::abs(single_cabinet_exit_turn_angular_speed_) : 0.0;
         if (turn_speed <= 1e-4) {
           RCLCPP_WARN(
             get_logger(),
-            "[mission_manager][test_real][exit_gap] 弧线出缝角速度非法，降级为直线出缝完成: %.3f",
-            test_real_exit_turn_angular_speed_);
-          publish_motion_test_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
-          finish_test_real_exit_gap();
+            "[mission_manager][single_cabinet][exit_gap] 弧线出缝角速度非法，降级为直线出缝完成: %.3f",
+            single_cabinet_exit_turn_angular_speed_);
+          publish_motion_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
+          finish_single_cabinet_exit_gap();
           return;
         }
 
@@ -6022,10 +5683,10 @@ private:
         if (!current_odom_ready_for_entry(yaw_reason)) {
           RCLCPP_WARN(
             get_logger(),
-            "[mission_manager][test_real][exit_gap] 弧线出缝无法获取有效yaw，降级完成: %s",
+            "[mission_manager][single_cabinet][exit_gap] 弧线出缝无法获取有效yaw，降级完成: %s",
             yaw_reason.c_str());
-          publish_motion_test_log("[exit_gap] yaw invalid before arc_reverse, finish straight_reverse only");
-          finish_test_real_exit_gap();
+          publish_motion_log("[exit_gap] yaw invalid before arc_reverse, finish straight_reverse only");
+          finish_single_cabinet_exit_gap();
           return;
         }
 
@@ -6033,43 +5694,43 @@ private:
         if (!current.valid || !std::isfinite(current.yaw) || !std::isfinite(entry_turn_start_yaw_)) {
           RCLCPP_WARN(
             get_logger(),
-            "[mission_manager][test_real][exit_gap] 弧线出缝yaw数据无效，降级完成");
-          publish_motion_test_log("[exit_gap] yaw data invalid before arc_reverse, finish straight_reverse only");
-          finish_test_real_exit_gap();
+            "[mission_manager][single_cabinet][exit_gap] 弧线出缝yaw数据无效，降级完成");
+          publish_motion_log("[exit_gap] yaw data invalid before arc_reverse, finish straight_reverse only");
+          finish_single_cabinet_exit_gap();
           return;
         }
 
         const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
         const double yaw_error = normalize_angle(target_exit_yaw - current.yaw);
         const double yaw_tolerance =
-          std::isfinite(test_real_exit_turn_yaw_tolerance_rad_) ?
-          std::max(0.001, std::abs(test_real_exit_turn_yaw_tolerance_rad_)) : 0.08;
+          std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
+          std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
         if (std::abs(yaw_error) <= yaw_tolerance) {
           RCLCPP_INFO(
             get_logger(),
-            "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse + arc_reverse "
+            "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + arc_reverse "
             "yaw already aligned current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f",
             current.yaw,
             target_exit_yaw,
             yaw_error);
-          publish_motion_test_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse yaw already aligned");
-          finish_test_real_exit_gap();
+          publish_motion_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse yaw already aligned");
+          finish_single_cabinet_exit_gap();
           return;
         }
 
-        test_real_exit_phase_ = TestRealExitPhase::ARC_REVERSE;
-        test_real_exit_phase_start_time_ = this->now();
+        single_cabinet_exit_phase_ = SingleCabinetExitPhase::ARC_REVERSE;
+        single_cabinet_exit_phase_start_time_ = this->now();
         RCLCPP_INFO(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] switch phase=%s entry_side=%s current_yaw=%.3f "
+          "[mission_manager][single_cabinet][exit_gap] switch phase=%s entry_side=%s current_yaw=%.3f "
           "target_exit_yaw=%.3f yaw_error=%.3f",
-          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           current_entry_side_.c_str(),
           current.yaw,
           target_exit_yaw,
           yaw_error);
-        publish_motion_test_log(
-          "[exit_gap] switch phase=" + test_real_exit_phase_to_string(test_real_exit_phase_) +
+        publish_motion_log(
+          "[exit_gap] switch phase=" + single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_) +
           " entry_side=" + current_entry_side_);
         return;
       }
@@ -6082,28 +5743,28 @@ private:
         get_logger(),
         *get_clock(),
         1000,
-        "[mission_manager][test_real][exit_gap] phase=%s traveled=%.2f target_distance=%.2f "
+        "[mission_manager][single_cabinet][exit_gap] phase=%s traveled=%.2f target_distance=%.2f "
         "cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
-        test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
         traveled,
-        test_real_exit_target_distance_,
+        single_cabinet_exit_target_distance_,
         cmd.linear.x,
         cmd.angular.z,
         elapsed);
       return;
     }
 
-    if (test_real_exit_phase_ == TestRealExitPhase::ARC_REVERSE) {
+    if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::ARC_REVERSE) {
       std::string yaw_reason;
       if (!current_odom_ready_for_entry(yaw_reason)) {
         publish_stop();
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] phase=%s yaw无效，结束出缝避免卡死: %s",
-          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          "[mission_manager][single_cabinet][exit_gap] phase=%s yaw无效，结束出缝避免卡死: %s",
+          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           yaw_reason.c_str());
-        publish_motion_test_log("[exit_gap] arc_reverse yaw invalid, finish to avoid blocking");
-        finish_test_real_exit_gap();
+        publish_motion_log("[exit_gap] arc_reverse yaw invalid, finish to avoid blocking");
+        finish_single_cabinet_exit_gap();
         return;
       }
 
@@ -6112,67 +5773,67 @@ private:
         publish_stop();
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] phase=%s yaw数据无效，结束出缝避免卡死",
-          test_real_exit_phase_to_string(test_real_exit_phase_).c_str());
-        publish_motion_test_log("[exit_gap] arc_reverse yaw data invalid, finish to avoid blocking");
-        finish_test_real_exit_gap();
+          "[mission_manager][single_cabinet][exit_gap] phase=%s yaw数据无效，结束出缝避免卡死",
+          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str());
+        publish_motion_log("[exit_gap] arc_reverse yaw data invalid, finish to avoid blocking");
+        finish_single_cabinet_exit_gap();
         return;
       }
 
       const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
       const double yaw_error = normalize_angle(target_exit_yaw - current.yaw);
       const double yaw_tolerance =
-        std::isfinite(test_real_exit_turn_yaw_tolerance_rad_) ?
-        std::max(0.001, std::abs(test_real_exit_turn_yaw_tolerance_rad_)) : 0.08;
+        std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
+        std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
       const double expected_error_sign = current_entry_side_ == "right" ? 1.0 : -1.0;
       const bool crossed_exit_yaw = expected_error_sign * yaw_error <= 0.0;
       if (std::abs(yaw_error) <= yaw_tolerance || crossed_exit_yaw) {
         publish_stop();
         RCLCPP_INFO(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] 出缝完成：straight_reverse + arc_reverse "
+          "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + arc_reverse "
           "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f crossed=%s",
           current_entry_side_.c_str(),
           current.yaw,
           target_exit_yaw,
           yaw_error,
           crossed_exit_yaw ? "true" : "false");
-        publish_motion_test_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse");
-        finish_test_real_exit_gap();
+        publish_motion_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse");
+        finish_single_cabinet_exit_gap();
         return;
       }
 
-      const double elapsed = (this->now() - test_real_exit_phase_start_time_).seconds();
+      const double elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
       const double turn_timeout =
-        std::isfinite(test_real_exit_turn_timeout_sec_) ?
-        std::max(0.1, test_real_exit_turn_timeout_sec_) : 8.0;
+        std::isfinite(single_cabinet_exit_turn_timeout_sec_) ?
+        std::max(0.1, single_cabinet_exit_turn_timeout_sec_) : 8.0;
       if (elapsed > turn_timeout) {
         publish_stop();
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] phase=%s timeout entry_side=%s current_yaw=%.3f "
+          "[mission_manager][single_cabinet][exit_gap] phase=%s timeout entry_side=%s current_yaw=%.3f "
           "target_exit_yaw=%.3f yaw_error=%.3f elapsed=%.2f",
-          test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           current_entry_side_.c_str(),
           current.yaw,
           target_exit_yaw,
           yaw_error,
           elapsed);
-        publish_motion_test_log("[exit_gap] arc_reverse timeout, finish to avoid blocking");
-        finish_test_real_exit_gap();
+        publish_motion_log("[exit_gap] arc_reverse timeout, finish to avoid blocking");
+        finish_single_cabinet_exit_gap();
         return;
       }
 
-      const double turn_speed = std::isfinite(test_real_exit_turn_angular_speed_) ?
-        std::abs(test_real_exit_turn_angular_speed_) : 0.0;
+      const double turn_speed = std::isfinite(single_cabinet_exit_turn_angular_speed_) ?
+        std::abs(single_cabinet_exit_turn_angular_speed_) : 0.0;
       if (turn_speed <= 1e-4) {
         publish_stop();
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][test_real][exit_gap] phase=%s angular speed invalid, finish to avoid blocking",
-          test_real_exit_phase_to_string(test_real_exit_phase_).c_str());
-        publish_motion_test_log("[exit_gap] arc_reverse angular speed invalid, finish to avoid blocking");
-        finish_test_real_exit_gap();
+          "[mission_manager][single_cabinet][exit_gap] phase=%s angular speed invalid, finish to avoid blocking",
+          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str());
+        publish_motion_log("[exit_gap] arc_reverse angular speed invalid, finish to avoid blocking");
+        finish_single_cabinet_exit_gap();
         return;
       }
 
@@ -6184,9 +5845,9 @@ private:
         get_logger(),
         *get_clock(),
         1000,
-        "[mission_manager][test_real][exit_gap] phase=%s entry_side=%s current_yaw=%.3f "
+        "[mission_manager][single_cabinet][exit_gap] phase=%s entry_side=%s current_yaw=%.3f "
         "target_exit_yaw=%.3f yaw_error=%.3f cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
-        test_real_exit_phase_to_string(test_real_exit_phase_).c_str(),
+        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
         current_entry_side_.c_str(),
         current.yaw,
         target_exit_yaw,
@@ -6200,157 +5861,157 @@ private:
     publish_stop();
     RCLCPP_WARN(
       get_logger(),
-      "[mission_manager][test_real][exit_gap] unknown exit phase, reset to STRAIGHT_REVERSE");
-    test_real_exit_phase_ = TestRealExitPhase::STRAIGHT_REVERSE;
-    test_real_exit_phase_start_time_ = this->now();
+      "[mission_manager][single_cabinet][exit_gap] unknown exit phase, reset to STRAIGHT_REVERSE");
+    single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
+    single_cabinet_exit_phase_start_time_ = this->now();
   }
 
-  void handle_test_real_side_row_scan_finished(int cabinet_id)
+  void handle_single_cabinet_side_row_scan_finished(int cabinet_id)
   {
-    if (!test_real_exit_after_each_scan_) {
-      fail_test_real_motion("side-row 流程当前要求 test_real_exit_after_each_scan=true");
+    if (!single_cabinet_exit_after_each_scan_) {
+      fail_single_cabinet_motion("side-row 流程当前要求 single_cabinet_exit_after_each_scan=true");
       return;
     }
 
-    switch (test_real_side_row_phase_) {
-      case TestRealSideRowPhase::FIRST_PRIMARY_SCAN:
-        publish_test_real_side_row_log(
+    switch (single_cabinet_side_row_phase_) {
+      case SingleCabinetSideRowPhase::FIRST_PRIMARY_SCAN:
+        publish_single_cabinet_side_row_log(
           "cabinet=" + std::to_string(cabinet_id) +
           " scan finished, exit and reenter for adjusted cabinet=" +
-          std::to_string(test_real_adjusted_scan_cabinet_));
-        test_real_side_row_phase_ = TestRealSideRowPhase::FIRST_ADJUSTED_SCAN;
-        test_real_current_scan_cabinet_ = test_real_adjusted_scan_cabinet_;
-        test_real_after_exit_action_ = TestRealAfterExitAction::REENTER_ADJUSTED;
-        set_test_real_state(
-          State::TEST_REAL_EXIT_GAP,
+          std::to_string(single_cabinet_adjusted_scan_cabinet_));
+        single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::FIRST_ADJUSTED_SCAN;
+        single_cabinet_current_scan_cabinet_ = single_cabinet_adjusted_scan_cabinet_;
+        single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::REENTER_ADJUSTED;
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_EXIT_GAP,
           "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，倒退出缝");
         return;
 
-      case TestRealSideRowPhase::FIRST_ADJUSTED_SCAN:
-        publish_test_real_side_row_log(
+      case SingleCabinetSideRowPhase::FIRST_ADJUSTED_SCAN:
+        publish_single_cabinet_side_row_log(
           "cabinet=" + std::to_string(cabinet_id) + " scan finished, exit to corridor");
-        if (test_real_side_row_full_sequence_) {
-          test_real_after_exit_action_ = TestRealAfterExitAction::CORRIDOR_TRANSFER;
+        if (single_cabinet_side_row_full_sequence_) {
+          single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::CORRIDOR_TRANSFER;
         } else {
-          test_real_after_exit_action_ = TestRealAfterExitAction::CLOSE_AND_DONE;
+          single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::CLOSE_AND_DONE;
         }
-        set_test_real_state(
-          State::TEST_REAL_EXIT_GAP,
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_EXIT_GAP,
           "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，倒退出缝");
         return;
 
-      case TestRealSideRowPhase::SECOND_PRIMARY_SCAN:
-        publish_test_real_side_row_log(
+      case SingleCabinetSideRowPhase::SECOND_PRIMARY_SCAN:
+        publish_single_cabinet_side_row_log(
           "cabinet=" + std::to_string(cabinet_id) +
           " scan finished, exit and reenter for adjusted cabinet=" +
-          std::to_string(test_real_adjusted_scan_cabinet_));
-        test_real_side_row_phase_ = TestRealSideRowPhase::SECOND_ADJUSTED_SCAN;
-        test_real_current_scan_cabinet_ = test_real_adjusted_scan_cabinet_;
-        test_real_after_exit_action_ = TestRealAfterExitAction::REENTER_ADJUSTED;
-        set_test_real_state(
-          State::TEST_REAL_EXIT_GAP,
+          std::to_string(single_cabinet_adjusted_scan_cabinet_));
+        single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::SECOND_ADJUSTED_SCAN;
+        single_cabinet_current_scan_cabinet_ = single_cabinet_adjusted_scan_cabinet_;
+        single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::REENTER_ADJUSTED;
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_EXIT_GAP,
           "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，倒退出缝");
         return;
 
-      case TestRealSideRowPhase::SECOND_ADJUSTED_SCAN:
-        publish_test_real_side_row_log(
+      case SingleCabinetSideRowPhase::SECOND_ADJUSTED_SCAN:
+        publish_single_cabinet_side_row_log(
           "cabinet=" + std::to_string(cabinet_id) + " scan finished, final exit");
-        test_real_side_row_phase_ = TestRealSideRowPhase::COMPLETE;
-        test_real_after_exit_action_ = TestRealAfterExitAction::FINAL_CLOSE_AND_DONE;
-        set_test_real_state(
-          State::TEST_REAL_FINAL_EXIT_GAP,
+        single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::COMPLETE;
+        single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::FINAL_CLOSE_AND_DONE;
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_FINAL_EXIT_GAP,
           "cabinet=" + std::to_string(cabinet_id) + " 扫描完成，最终倒退出缝");
         return;
 
-      case TestRealSideRowPhase::NONE:
-      case TestRealSideRowPhase::CORRIDOR_TRANSFER:
-      case TestRealSideRowPhase::COMPLETE:
+      case SingleCabinetSideRowPhase::NONE:
+      case SingleCabinetSideRowPhase::CORRIDOR_TRANSFER:
+      case SingleCabinetSideRowPhase::COMPLETE:
       default:
-        fail_test_real_motion(
-          "side-row 扫描完成阶段非法 phase=" + side_row_phase_to_string(test_real_side_row_phase_));
+        fail_single_cabinet_motion(
+          "side-row 扫描完成阶段非法 phase=" + side_row_phase_to_string(single_cabinet_side_row_phase_));
         return;
     }
   }
 
-  void handle_test_real_scan_state()
+  void handle_single_cabinet_scan_state()
   {
-    const int cabinet_id = active_test_real_scan_cabinet();
+    const int cabinet_id = active_single_cabinet_scan_cabinet();
     if (cabinet_id <= 0) {
-      fail_test_real_motion("测试真实运动扫描柜号非法");
+      fail_single_cabinet_motion("单柜盘库扫描柜号非法");
       return;
     }
 
-    if (test_real_side_row_active_ &&
-      (!test_real_grid_motion_enabled_ || !test_real_scan_active_))
+    if (single_cabinet_side_row_active_ &&
+      (!single_cabinet_grid_motion_enabled_ || !single_cabinet_scan_active_))
     {
-      publish_test_real_side_row_log(
-        "gap=" + active_test_real_gap_id() +
+      publish_single_cabinet_side_row_log(
+        "gap=" + active_single_cabinet_gap_id() +
         " scan cabinet=" + std::to_string(cabinet_id) +
-        " phase=" + side_row_phase_to_string(test_real_side_row_phase_));
+        " phase=" + side_row_phase_to_string(single_cabinet_side_row_phase_));
     }
 
-    if (!execute_test_real_scan_runtime_tick(cabinet_id)) {
+    if (!execute_single_cabinet_scan_runtime_tick(cabinet_id)) {
       return;
     }
 
-    if (test_real_side_row_active_) {
-      handle_test_real_side_row_scan_finished(cabinet_id);
+    if (single_cabinet_side_row_active_) {
+      handle_single_cabinet_side_row_scan_finished(cabinet_id);
       return;
     }
 
-    if (!test_real_motion_stop_after_scan_) {
-      publish_test_real_log("scan finished, exit gap");
-      test_real_after_exit_action_ = TestRealAfterExitAction::CLOSE_AND_DONE;
-      set_test_real_state(State::TEST_REAL_FINAL_EXIT_GAP, "单柜扫描完成，倒退出缝");
+    if (!single_cabinet_motion_stop_after_scan_) {
+      publish_single_cabinet_log("scan finished, exit gap");
+      single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::CLOSE_AND_DONE;
+      set_single_cabinet_state(State::SINGLE_CABINET_FINAL_EXIT_GAP, "单柜扫描完成，倒退出缝");
       return;
     }
 
-    publish_test_real_log("scan finished, stop after scan");
-    set_test_real_state(
-      State::TEST_REAL_STOP_AFTER_SCAN,
-      "scan finished, stop after scan, no exit motion in this test step");
+    publish_single_cabinet_log("scan finished, stop after scan");
+    set_single_cabinet_state(
+      State::SINGLE_CABINET_STOP_AFTER_SCAN,
+      "scan finished, stop after scan, no exit motion in current step");
   }
 
-  void handle_test_real_reenter_adjusted_scan_state()
+  void handle_single_cabinet_reenter_adjusted_scan_state()
   {
-    if (!test_real_reentry_for_position_adjustment_) {
-      fail_test_real_motion("side-row 调整扫描需要启用 test_real_reentry_for_position_adjustment");
+    if (!single_cabinet_reentry_for_position_adjustment_) {
+      fail_single_cabinet_motion("side-row 调整扫描需要启用 single_cabinet_reentry_for_position_adjustment");
       return;
     }
 
     // TODO: right-mounted camera orientation adjustment is required before real scanning on the adjusted/opposite scan side.
-    publish_test_real_log(
+    publish_single_cabinet_log(
       "[reenter_adjust] reenter for adjusted cabinet=" +
-      std::to_string(test_real_current_scan_cabinet_));
-    (void)prepare_test_real_target_search(
-      test_real_current_scan_cabinet_,
-      "准备再次入缝调整扫描 cabinet=" + std::to_string(test_real_current_scan_cabinet_));
+      std::to_string(single_cabinet_current_scan_cabinet_));
+    (void)prepare_single_cabinet_target_search(
+      single_cabinet_current_scan_cabinet_,
+      "准备再次入缝调整扫描 cabinet=" + std::to_string(single_cabinet_current_scan_cabinet_));
   }
 
-  void handle_test_real_corridor_transfer_state()
+  void handle_single_cabinet_corridor_transfer_state()
   {
-    if (!test_real_side_row_corridor_transfer_enabled_) {
-      fail_test_real_motion("test_real_side_row_corridor_transfer_enabled=false");
+    if (!single_cabinet_side_row_corridor_transfer_enabled_) {
+      fail_single_cabinet_motion("single_cabinet_side_row_corridor_transfer_enabled=false");
       return;
     }
 
-    const std::string previous_gap = active_test_real_gap_id();
-    publish_test_real_log("[corridor_transfer] request close gap=" + previous_gap);
+    const std::string previous_gap = active_single_cabinet_gap_id();
+    publish_single_cabinet_log("[corridor_transfer] request close gap=" + previous_gap);
     (void)web_api_client_.requestCloseGap(previous_gap);
 
-    test_real_side_row_phase_ = TestRealSideRowPhase::CORRIDOR_TRANSFER;
-    test_real_current_scan_cabinet_ = test_real_side_row_corridor_transfer_target_cabinet_;
-    test_real_target_recognized_logged_ = false;
-    test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::CORRIDOR_TRANSFER;
+    single_cabinet_current_scan_cabinet_ = single_cabinet_side_row_corridor_transfer_target_cabinet_;
+    single_cabinet_target_recognized_logged_ = false;
+    single_cabinet_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
-    publish_test_real_log(
+    publish_single_cabinet_log(
       "[corridor_transfer] move toward cabinet 1, target cabinet=" +
-      std::to_string(test_real_side_row_corridor_transfer_target_cabinet_) +
-      " direction=" + test_real_side_row_corridor_transfer_direction_);
+      std::to_string(single_cabinet_side_row_corridor_transfer_target_cabinet_) +
+      " direction=" + single_cabinet_side_row_corridor_transfer_direction_);
 
     std::string reason;
-    if (!prepare_test_real_target_cabinet(test_real_side_row_corridor_transfer_target_cabinet_, reason)) {
-      fail_test_real_motion("准备走廊转移目标失败: " + reason);
+    if (!prepare_single_cabinet_target_cabinet(single_cabinet_side_row_corridor_transfer_target_cabinet_, reason)) {
+      fail_single_cabinet_motion("准备走廊转移目标失败: " + reason);
       return;
     }
 
@@ -6365,101 +6026,50 @@ private:
 
     std::string nav_reason;
     if (!begin_nav_route_for_current_target(
-        "[mission_manager][test_real][corridor_transfer] enter real nav target cabinet=" +
+        "[mission_manager][single_cabinet][corridor_transfer] enter real nav target cabinet=" +
         std::to_string(current_target_cabinet_),
         nav_reason,
-        State::TEST_REAL_NAV_TO_TARGET))
+        State::SINGLE_CABINET_NAV_TO_TARGET))
     {
-      fail_test_real_motion("走廊转移启动巡航失败: " + nav_reason);
+      fail_single_cabinet_motion("走廊转移启动巡航失败: " + nav_reason);
     }
   }
 
-  void handle_test_real_prepare_next_gap_state()
+  void handle_single_cabinet_prepare_next_gap_state()
   {
-    test_real_active_gap_id_ = test_real_side_row_second_gap_;
-    test_real_side_row_phase_ = TestRealSideRowPhase::SECOND_PRIMARY_SCAN;
-    test_real_current_scan_cabinet_ = test_real_side_row_second_gap_scan_sequence_.front();
-    test_real_adjusted_scan_cabinet_ = test_real_side_row_second_gap_scan_sequence_[1];
-    test_real_after_exit_action_ = TestRealAfterExitAction::NONE;
+    single_cabinet_active_gap_id_ = single_cabinet_side_row_second_gap_;
+    single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::SECOND_PRIMARY_SCAN;
+    single_cabinet_current_scan_cabinet_ = single_cabinet_side_row_second_gap_scan_sequence_.front();
+    single_cabinet_adjusted_scan_cabinet_ = single_cabinet_side_row_second_gap_scan_sequence_[1];
+    single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::NONE;
 
-    publish_test_real_side_row_log(
-      "prepare next gap=" + test_real_active_gap_id_ +
-      " target cabinet=" + std::to_string(test_real_current_scan_cabinet_));
-    publish_test_real_side_row_log(
-      "enter " + test_real_active_gap_id_ +
-      " for cabinet=" + std::to_string(test_real_current_scan_cabinet_));
-    publish_test_real_log("request open gap=" + test_real_active_gap_id_);
-    if (!web_api_client_.requestOpenGap(test_real_active_gap_id_)) {
-      fail_test_real_motion("开柜请求失败: gap=" + test_real_active_gap_id_);
+    publish_single_cabinet_side_row_log(
+      "prepare next gap=" + single_cabinet_active_gap_id_ +
+      " target cabinet=" + std::to_string(single_cabinet_current_scan_cabinet_));
+    publish_single_cabinet_side_row_log(
+      "enter " + single_cabinet_active_gap_id_ +
+      " for cabinet=" + std::to_string(single_cabinet_current_scan_cabinet_));
+    publish_single_cabinet_log("request open gap=" + single_cabinet_active_gap_id_);
+    if (!web_api_client_.requestOpenGap(single_cabinet_active_gap_id_)) {
+      fail_single_cabinet_motion("开柜请求失败: gap=" + single_cabinet_active_gap_id_);
       return;
     }
 
-    set_test_real_state(
-      State::TEST_REAL_REENTER_NEXT_GAP,
+    set_single_cabinet_state(
+      State::SINGLE_CABINET_REENTER_NEXT_GAP,
       "等待第二个缝隙开柜完成 " + format_seconds(open_gap_wait_sec_) + " sec");
   }
 
-  void handle_test_real_reenter_next_gap_state()
+  void handle_single_cabinet_reenter_next_gap_state()
   {
     publish_stop();
-    if (!test_state_elapsed(open_gap_wait_sec_)) {
+    if (!state_elapsed(open_gap_wait_sec_)) {
       return;
     }
 
-    (void)prepare_test_real_target_search(
-      test_real_current_scan_cabinet_,
-      "准备进入第二个缝隙 cabinet=" + std::to_string(test_real_current_scan_cabinet_));
-  }
-
-  bool build_test_gap_scan_plans(
-    const wheeltec_inventory_system::srv::StartTestGapScan::Request & request,
-    std::vector<TestGapScanPlan> & plans,
-    std::string & reason) const
-  {
-    plans.clear();
-    reason.clear();
-
-    if (scan_layers_ <= 0 || scan_depth_count_ <= 0) {
-      reason =
-        "scan_layers/scan_depth_count 必须为正数: layers=" +
-        std::to_string(scan_layers_) +
-        " depth_count=" + std::to_string(scan_depth_count_);
-      return false;
-    }
-
-    if (request.run_all_configured) {
-      plans = configured_test_inventory_plan_;
-      if (plans.empty()) {
-        reason = "test_inventory_plan 为空";
-        return false;
-      }
-    } else {
-      TestGapScanPlan plan;
-      plan.gap_id = wheeltec_inventory_system::trim(request.gap_id);
-      if (plan.gap_id.empty()) {
-        reason = "run_all_configured=false 时 gap_id 不能为空";
-        return false;
-      }
-
-      for (const auto cabinet_id : request.scan_cabinets) {
-        plan.scan_cabinets.push_back(static_cast<int>(cabinet_id));
-      }
-
-      if (plan.scan_cabinets.empty() &&
-        !find_configured_test_cabinets(plan.gap_id, plan.scan_cabinets))
-      {
-        reason = "未找到 gap_id 对应测试柜号: " + plan.gap_id;
-        return false;
-      }
-      plans.push_back(plan);
-    }
-
-    for (const auto & plan : plans) {
-      if (!validate_test_gap_scan_plan(plan, reason)) {
-        return false;
-      }
-    }
-    return true;
+    (void)prepare_single_cabinet_target_search(
+      single_cabinet_current_scan_cabinet_,
+      "准备进入第二个缝隙 cabinet=" + std::to_string(single_cabinet_current_scan_cabinet_));
   }
 
   bool load_configs_and_prepare_current_target(std::string & reason)
@@ -6489,29 +6099,29 @@ private:
     return true;
   }
 
-  const TestGapScanPlan * current_test_gap_scan_plan() const
+  const InventoryGapPlan * current_gap_request_plan() const
   {
-    if (test_current_gap_index_ >= test_gap_scan_queue_.size()) {
+    if (current_gap_request_index_ >= gap_request_queue_.size()) {
       return nullptr;
     }
-    return &test_gap_scan_queue_[test_current_gap_index_];
+    return &gap_request_queue_[current_gap_request_index_];
   }
 
-  bool test_state_elapsed(double seconds) const
+  bool state_elapsed(double seconds) const
   {
-    return (this->now() - test_state_enter_time_).seconds() >= std::max(0.0, seconds);
+    return (this->now() - state_enter_time_).seconds() >= std::max(0.0, seconds);
   }
 
-  void fail_test_gap_scan(const std::string & reason)
+  void fail_inventory_flow(const std::string & reason)
   {
-    test_gap_scan_error_reason_ = reason;
-    set_test_state(State::ERROR, reason);
+    mission_error_reason_ = reason;
+    set_flow_state(State::ERROR, reason);
   }
 
-  void stop_test_real_motion_controls()
+  void stop_single_cabinet_motion_controls()
   {
-    cancel_nav2_route_goal("测试真实运动停止");
-    cancel_nav2_return_goal("测试真实运动停止");
+    cancel_nav2_route_goal("单柜盘库停止");
+    cancel_nav2_return_goal("单柜盘库停止");
     set_corridor_mode(false, false);
     publish_stop();
     request_recognizer_enable(false);
@@ -6520,142 +6130,203 @@ private:
     set_gap_detector_enabled(false);
   }
 
-  void fail_test_real_motion(const std::string & reason)
+  void fail_single_cabinet_motion(const std::string & reason)
   {
-    publish_test_real_log("failed: " + reason);
-    stop_test_real_motion_controls();
-    reset_test_real_scan_runtime();
+    publish_single_cabinet_log("failed: " + reason);
+    stop_single_cabinet_motion_controls();
+    reset_single_cabinet_scan_runtime();
     mission_active_ = false;
-    test_gap_scan_error_reason_ = reason;
-    set_test_real_state(State::ERROR, reason);
+    mission_error_reason_ = reason;
+    set_single_cabinet_state(State::ERROR, reason);
   }
 
-  void start_test_gap_scan_callback(
-    const std::shared_ptr<wheeltec_inventory_system::srv::StartTestGapScan::Request> request,
-    std::shared_ptr<wheeltec_inventory_system::srv::StartTestGapScan::Response> response)
+  std::vector<int> scan_cabinets_from_request(
+    const wheeltec_inventory_system::srv::StartMission::Request & request) const
   {
-    publish_test_scan_log(
-      "received test request run_all_configured=" +
-      std::string(request->run_all_configured ? "true" : "false"));
-
-    if (mission_active_) {
-      response->success = false;
-      response->message = "正式任务正在运行，拒绝测试盘库任务";
-      return;
+    std::vector<int> cabinets;
+    for (const auto cabinet_id : request.scan_cabinets) {
+      cabinets.push_back(static_cast<int>(cabinet_id));
     }
-    if (test_gap_scan_active_) {
-      response->success = false;
-      response->message = "测试盘库任务已在运行";
-      return;
-    }
+    return cabinets;
+  }
 
-    std::string load_reason;
-    test_gap_scan_config_loaded_ = load_test_gap_scan_config(load_reason);
-    if (!test_gap_scan_config_loaded_) {
-      response->success = false;
-      response->message = load_reason;
-      return;
-    }
-
-    if (should_start_overall_test(*request)) {
-      const auto sequence = overall_test_sequence_from_request(*request);
-      std::string overall_reason;
-      if (!start_overall_test_sequence(sequence, overall_reason)) {
-        response->success = false;
-        response->message = overall_reason;
-        publish_overall_test_log(response->message);
-        return;
+  bool find_gap_for_cabinet(int cabinet_id, std::string & gap_id) const
+  {
+    gap_id.clear();
+    for (const auto & item : gap_scan_map_cabinets_by_gap_id_) {
+      if (std::find(item.second.begin(), item.second.end(), cabinet_id) != item.second.end()) {
+        gap_id = item.first;
+        return true;
       }
-      response->success = true;
-      response->message =
-        "整体盘库测试队列已接收 sequence=" + cabinet_unit_to_string(overall_test_sequence_);
-      return;
+    }
+    return false;
+  }
+
+  bool request_contains_formal_inventory_fields(
+    const wheeltec_inventory_system::srv::StartMission::Request & request) const
+  {
+    return request.run_full_inventory ||
+      !wheeltec_inventory_system::trim(request.target_gap).empty() ||
+      !request.scan_cabinets.empty();
+  }
+
+  bool start_single_cabinet_inventory_from_request(
+    const wheeltec_inventory_system::srv::StartMission::Request & request,
+    std::string & message)
+  {
+    message.clear();
+    if (!single_cabinet_motion_enabled_) {
+      message = "单柜盘库未启用";
+      return false;
     }
 
-    if (test_real_motion_enabled_) {
-      publish_test_real_log("real motion enabled");
-      if (test_real_side_row_enabled_ && is_valid_test_real_side_row_request(*request)) {
-        TestGapScanPlan plan;
-        std::string side_row_reason;
-        if (!start_test_real_side_row_context(*request, plan, side_row_reason)) {
-          response->success = false;
-          response->message = side_row_reason;
-          publish_test_real_log(response->message);
-          return;
-        }
+    std::string gap_id = wheeltec_inventory_system::trim(request.target_gap);
+    std::vector<int> scan_cabinets = scan_cabinets_from_request(request);
+    if (scan_cabinets.empty() && request.targets.size() == 1U) {
+      int cabinet_id = -1;
+      if (parse_target_cabinet(request.targets.front(), cabinet_id)) {
+        scan_cabinets.push_back(cabinet_id);
+      }
+    }
+    if (gap_id.empty() && scan_cabinets.size() == 1U && !find_gap_for_cabinet(scan_cabinets.front(), gap_id)) {
+      if (scan_cabinets.front() == single_cabinet_motion_target_cabinet_) {
+        gap_id = single_cabinet_motion_target_gap_;
+      }
+    }
+    if (scan_cabinets.empty() && !gap_id.empty()) {
+      (void)find_configured_gap_cabinets(gap_id, scan_cabinets);
+    }
 
-        test_gap_scan_queue_ = {plan};
-        test_current_gap_index_ = 0;
-        test_gap_scan_error_reason_.clear();
-        test_gap_scan_active_ = true;
-        test_real_motion_active_ = true;
-        test_real_gap_searching_ = false;
-        test_real_target_recognized_logged_ = false;
-        test_real_close_requested_ = false;
-        test_real_final_recognition_wait_start_ =
-          rclcpp::Time(0, 0, get_clock()->get_clock_type());
-
-        publish_test_real_log(
-          "[side_row] accepted " + test_real_side_row_name_ +
-          " gap=" + plan.gap_id +
-          " cabinets=" + cabinet_unit_to_string(plan.scan_cabinets));
-        set_test_state(
-          State::REQUEST_OPEN_GAP,
-          "测试真实运动侧排任务已启动 gap=" + plan.gap_id +
-          " cabinets=" + cabinet_unit_to_string(plan.scan_cabinets));
-
-        response->success = true;
-        response->message = "测试真实运动侧排任务已接收";
-        return;
+    if (single_cabinet_side_row_enabled_ &&
+      is_valid_single_cabinet_side_row_request(gap_id, scan_cabinets, false))
+    {
+      InventoryGapPlan plan;
+      std::string side_row_reason;
+      if (!start_single_cabinet_side_row_context(gap_id, scan_cabinets, plan, side_row_reason)) {
+        message = side_row_reason;
+        publish_single_cabinet_log(message);
+        return false;
       }
 
-      if (!is_valid_test_real_motion_request(*request)) {
-        response->success = false;
-        response->message =
-          test_real_side_row_enabled_ ? side_row_reject_message() : real_motion_reject_message();
-        publish_test_real_log(response->message);
-        return;
-      }
+      gap_request_queue_ = {plan};
+      current_gap_request_index_ = 0;
+      mission_error_reason_.clear();
+      inventory_flow_active_ = true;
+      single_cabinet_motion_active_ = true;
+      single_cabinet_gap_searching_ = false;
+      single_cabinet_target_recognized_logged_ = false;
+      single_cabinet_close_requested_ = false;
+      single_cabinet_final_recognition_wait_start_ =
+        rclcpp::Time(0, 0, get_clock()->get_clock_type());
 
-      reset_test_real_side_row_context();
-      TestGapScanPlan plan;
-      plan.gap_id = test_real_motion_target_gap_;
-      plan.scan_cabinets = {test_real_motion_target_cabinet_};
-      test_gap_scan_queue_ = {plan};
-      test_current_gap_index_ = 0;
-      test_gap_scan_error_reason_.clear();
-      test_gap_scan_active_ = true;
-      test_real_motion_active_ = true;
-      test_real_gap_searching_ = false;
-      test_real_target_recognized_logged_ = false;
-      test_real_close_requested_ = false;
-      test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-
-      publish_test_real_log(
-        "accepted single cabinet test gap=" + plan.gap_id +
-        " cabinet=" + std::to_string(test_real_motion_target_cabinet_));
-      set_test_state(
+      publish_single_cabinet_log(
+        "[side_row] accepted " + single_cabinet_side_row_name_ +
+        " gap=" + plan.gap_id +
+        " cabinets=" + cabinet_unit_to_string(plan.scan_cabinets));
+      set_flow_state(
         State::REQUEST_OPEN_GAP,
-        "测试真实运动任务已启动 gap=" + plan.gap_id +
+        "单柜侧排盘库任务已启动 gap=" + plan.gap_id +
         " cabinets=" + cabinet_unit_to_string(plan.scan_cabinets));
 
-      response->success = true;
-      response->message = "测试真实运动任务已接收";
-      return;
+      message = "单柜侧排盘库任务已接收";
+      return true;
     }
 
-    response->success = false;
-    response->message =
-      "/inventory/start_test_gap_scan 兼容入口只保留真实运动和整体队列，空跑流程已删除";
+    if (!is_valid_single_cabinet_motion_request(gap_id, scan_cabinets, false)) {
+      message =
+        single_cabinet_side_row_enabled_ ? side_row_reject_message() : single_cabinet_reject_message();
+      publish_single_cabinet_log(message);
+      return false;
+    }
+
+    reset_single_cabinet_side_row_context();
+    InventoryGapPlan plan;
+    plan.gap_id = single_cabinet_motion_target_gap_;
+    plan.scan_cabinets = {single_cabinet_motion_target_cabinet_};
+    gap_request_queue_ = {plan};
+    current_gap_request_index_ = 0;
+    mission_error_reason_.clear();
+    inventory_flow_active_ = true;
+    single_cabinet_motion_active_ = true;
+    single_cabinet_gap_searching_ = false;
+    single_cabinet_target_recognized_logged_ = false;
+    single_cabinet_close_requested_ = false;
+    single_cabinet_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+
+    publish_single_cabinet_log(
+      "accepted single cabinet inventory gap=" + plan.gap_id +
+      " cabinet=" + std::to_string(single_cabinet_motion_target_cabinet_));
+    set_flow_state(
+      State::REQUEST_OPEN_GAP,
+      "单柜盘库任务已启动 gap=" + plan.gap_id +
+      " cabinets=" + cabinet_unit_to_string(plan.scan_cabinets));
+
+    message = "单柜盘库任务已接收";
+    return true;
   }
 
   void start_service_callback(
     const std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Request> request,
     std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Response> response)
   {
-    if (mission_active_ || test_gap_scan_active_) {
+    if (mission_active_ || inventory_flow_active_) {
       response->accepted = false;
       response->message = "任务已在运行";
+      return;
+    }
+
+    std::string load_reason;
+    inventory_runtime_config_loaded_ = load_inventory_runtime_config(load_reason);
+    if (!inventory_runtime_config_loaded_) {
+      response->accepted = false;
+      response->message = load_reason;
+      return;
+    }
+
+    if (request->run_full_inventory && !full_inventory_enabled_) {
+      response->accepted = false;
+      response->message = "全部盘库未启用";
+      return;
+    }
+
+    if (should_start_full_inventory(*request)) {
+      if (request->scan_cabinets.empty()) {
+        for (const auto & target : request->targets) {
+          TargetMetadata parsed_target;
+          std::string parse_reason;
+          if (!parse_target_metadata(target, parsed_target, parse_reason)) {
+            response->accepted = false;
+            response->message = parse_reason;
+            return;
+          }
+        }
+      }
+      if (request->return_home) {
+        full_inventory_return_home_after_done_ = true;
+      }
+      const auto sequence = full_inventory_sequence_from_request(*request);
+      std::string full_inventory_reason;
+      if (!start_full_inventory_sequence(sequence, full_inventory_reason)) {
+        response->accepted = false;
+        response->message = full_inventory_reason;
+        publish_full_inventory_log(response->message);
+        return;
+      }
+      response->accepted = true;
+      response->message =
+        "全部盘库队列已接收 sequence=" + cabinet_unit_to_string(full_inventory_sequence_);
+      return;
+    }
+
+    if (request_contains_formal_inventory_fields(*request)) {
+      std::string start_message;
+      if (!start_single_cabinet_inventory_from_request(*request, start_message)) {
+        response->accepted = false;
+        response->message = start_message;
+        return;
+      }
+      response->accepted = true;
+      response->message = start_message;
       return;
     }
 
@@ -6760,16 +6431,16 @@ private:
   {
     (void)request;
 
-    if (test_gap_scan_active_) {
-      if (overall_test_active_) {
-        fail_overall_test("收到取消请求，停止整体盘库测试");
-        response->message = "整体盘库测试已请求停止";
-      } else if (test_real_motion_active_) {
-        fail_test_real_motion("收到取消请求，停止测试真实运动");
-        response->message = "测试真实运动已请求停止";
+    if (inventory_flow_active_) {
+      if (full_inventory_active_) {
+        fail_full_inventory("收到取消请求，停止全部盘库");
+        response->message = "全部盘库已请求停止";
+      } else if (single_cabinet_motion_active_) {
+        fail_single_cabinet_motion("收到取消请求，停止单柜盘库");
+        response->message = "单柜盘库已请求停止";
       } else {
-        fail_test_gap_scan("收到取消请求，停止测试盘库空跑");
-        response->message = "测试盘库空跑已请求停止";
+        fail_inventory_flow("收到取消请求，停止盘库流程");
+        response->message = "盘库流程已请求停止";
       }
       response->success = true;
       return;
@@ -6897,10 +6568,10 @@ private:
     if (!current_gap_plan_.valid) {
       std::string reason;
       if (!resolve_current_gap_plan(reason)) {
-        if (overall_test_active_) {
-          fail_overall_test("无法生成找缝规划: " + reason);
-        } else if (test_real_motion_active_) {
-          fail_test_real_motion("无法生成找缝规划: " + reason);
+        if (full_inventory_active_) {
+          fail_full_inventory("无法生成找缝规划: " + reason);
+        } else if (single_cabinet_motion_active_) {
+          fail_single_cabinet_motion("无法生成找缝规划: " + reason);
         } else {
           mission_active_ = false;
           publish_stop();
@@ -6912,10 +6583,10 @@ private:
     if (!current_entry_profile_valid_) {
       std::string reason;
       if (!configure_current_entry_profile(reason)) {
-        if (overall_test_active_) {
-          fail_overall_test("无法生成入缝深度规划: " + reason);
-        } else if (test_real_motion_active_) {
-          fail_test_real_motion("无法生成入缝深度规划: " + reason);
+        if (full_inventory_active_) {
+          fail_full_inventory("无法生成入缝深度规划: " + reason);
+        } else if (single_cabinet_motion_active_) {
+          fail_single_cabinet_motion("无法生成入缝深度规划: " + reason);
         } else {
           mission_active_ = false;
           publish_stop();
@@ -6927,10 +6598,10 @@ private:
     }
     std::string timeout_reason;
     if (!validate_search_gap_timeout_config(timeout_reason)) {
-      if (overall_test_active_) {
-        fail_overall_test("SEARCH_GAP超时参数非法: " + timeout_reason);
-      } else if (test_real_motion_active_) {
-        fail_test_real_motion("SEARCH_GAP超时参数非法: " + timeout_reason);
+      if (full_inventory_active_) {
+        fail_full_inventory("SEARCH_GAP超时参数非法: " + timeout_reason);
+      } else if (single_cabinet_motion_active_) {
+        fail_single_cabinet_motion("SEARCH_GAP超时参数非法: " + timeout_reason);
       } else {
         mission_active_ = false;
         publish_stop();
@@ -6950,16 +6621,16 @@ private:
       "跟踪稳定，按物理单元找缝 direction=" +
       search_direction_to_string(current_gap_plan_.search_direction) +
       " gap=" + gap_plan_to_string(current_gap_plan_);
-    if (overall_test_active_) {
-      test_real_gap_searching_ = false;
-      publish_overall_test_log(
+    if (full_inventory_active_) {
+      single_cabinet_gap_searching_ = false;
+      publish_full_inventory_log(
         "search gap target=" + std::to_string(current_target_cabinet_) +
         " direction=" + search_direction_to_string(current_gap_plan_.search_direction));
-      set_state(State::OVERALL_TEST_SEARCH_GAP, "[OVERALL_TEST] " + detail);
-    } else if (test_real_motion_active_) {
-      test_real_gap_searching_ = true;
-      publish_test_real_log("waiting/searching gap=" + active_test_real_gap_id());
-      set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
+      set_state(State::FULL_INVENTORY_SEARCH_GAP, "[FULL_INVENTORY] " + detail);
+    } else if (single_cabinet_motion_active_) {
+      single_cabinet_gap_searching_ = true;
+      publish_single_cabinet_log("waiting/searching gap=" + active_single_cabinet_gap_id());
+      set_single_cabinet_state(State::SINGLE_CABINET_WAITING_GAP, detail);
     } else {
       set_state(State::SEARCH_GAP, detail);
     }
@@ -6971,13 +6642,13 @@ private:
     latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
     set_wait_gap_phase(WaitGapPhase::STOP_BEFORE_DETECT);
     publish_entry_side();
-    if (overall_test_active_) {
-      test_real_gap_searching_ = false;
-      begin_overall_post_gap_detect_advance_flow();
+    if (full_inventory_active_) {
+      single_cabinet_gap_searching_ = false;
+      begin_full_inventory_post_gap_detect_advance_flow();
       return;
-    } else if (test_real_motion_active_) {
-      test_real_gap_searching_ = false;
-      set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
+    } else if (single_cabinet_motion_active_) {
+      single_cabinet_gap_searching_ = false;
+      set_single_cabinet_state(State::SINGLE_CABINET_WAITING_GAP, detail);
     } else {
       set_state(State::WAITING_GAP, detail);
     }
@@ -6992,13 +6663,13 @@ private:
     reset_segment_distance();
     set_wait_gap_phase(WaitGapPhase::RETREATING);
     publish_entry_side();
-    if (overall_test_active_) {
-      test_real_gap_searching_ = false;
-      fail_overall_test("SEARCH_GAP legacy fallback bypassed for overall_test: " + detail);
+    if (full_inventory_active_) {
+      single_cabinet_gap_searching_ = false;
+      fail_full_inventory("SEARCH_GAP legacy fallback bypassed for full_inventory: " + detail);
       return;
-    } else if (test_real_motion_active_) {
-      test_real_gap_searching_ = false;
-      set_test_real_state(State::TEST_REAL_WAITING_GAP, detail);
+    } else if (single_cabinet_motion_active_) {
+      single_cabinet_gap_searching_ = false;
+      set_single_cabinet_state(State::SINGLE_CABINET_WAITING_GAP, detail);
     } else {
       set_state(State::WAITING_GAP, detail);
     }
@@ -7087,12 +6758,12 @@ private:
   void fail_entering_gap(const std::string & reason)
   {
     publish_stop();
-    if (overall_test_active_) {
-      fail_overall_test(reason);
+    if (full_inventory_active_) {
+      fail_full_inventory(reason);
       return;
     }
-    if (test_real_motion_active_) {
-      fail_test_real_motion(reason);
+    if (single_cabinet_motion_active_) {
+      fail_single_cabinet_motion(reason);
       return;
     }
     mission_active_ = false;
@@ -7143,13 +6814,13 @@ private:
     const std::string state_detail =
       detail + "，开始转入缝隙 target_straight_distance=" +
       std::to_string(target_straight_distance_) + "m";
-    if (overall_test_active_) {
-      publish_overall_test_log(
+    if (full_inventory_active_) {
+      publish_full_inventory_log(
         "entering gap for cabinet=" + std::to_string(current_target_cabinet_));
-      set_state(State::OVERALL_TEST_ENTERING_GAP, "[OVERALL_TEST] " + state_detail);
-    } else if (test_real_motion_active_) {
-      publish_test_real_log("entering gap for cabinet=" + std::to_string(current_target_cabinet_));
-      set_test_real_state(State::TEST_REAL_ENTERING_GAP, state_detail);
+      set_state(State::FULL_INVENTORY_ENTERING_GAP, "[FULL_INVENTORY] " + state_detail);
+    } else if (single_cabinet_motion_active_) {
+      publish_single_cabinet_log("entering gap for cabinet=" + std::to_string(current_target_cabinet_));
+      set_single_cabinet_state(State::SINGLE_CABINET_ENTERING_GAP, state_detail);
     } else {
       set_state(State::ENTERING_GAP, state_detail);
     }
@@ -7219,7 +6890,7 @@ private:
     return search_gap_forward_timeout_sec_;
   }
 
-  void begin_overall_post_gap_detect_advance_flow()
+  void begin_full_inventory_post_gap_detect_advance_flow()
   {
     publish_stop();
     set_gap_detector_enabled(false);
@@ -7231,45 +6902,45 @@ private:
       !std::isfinite(post_gap_detect_advance_distance_m_) ||
       post_gap_detect_advance_distance_m_ <= 1e-4)
     {
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "gap detected stable, post advance disabled, entering gap target=" +
         std::to_string(current_target_cabinet_));
       begin_entering_gap_flow("gap detected stable, post advance disabled");
       return;
     }
 
-    overall_test_post_gap_advance_start_ = this->now();
+    full_inventory_post_gap_advance_start_ = this->now();
     reset_segment_distance();
-    publish_overall_test_log(
+    publish_full_inventory_log(
       "gap detected stable, post advance direction=" +
       search_direction_to_string(current_gap_plan_.search_direction) +
       " distance=" + format_seconds(post_gap_detect_advance_distance_m_));
     set_state(
-      State::OVERALL_TEST_POST_GAP_DETECT_ADVANCE,
-      "[OVERALL_TEST] gap detected stable, post advance direction=" +
+      State::FULL_INVENTORY_POST_GAP_DETECT_ADVANCE,
+      "[FULL_INVENTORY] gap detected stable, post advance direction=" +
       search_direction_to_string(current_gap_plan_.search_direction) +
       " distance=" + format_seconds(post_gap_detect_advance_distance_m_));
   }
 
-  void handle_overall_post_gap_detect_advance_state()
+  void handle_full_inventory_post_gap_detect_advance_state()
   {
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false);
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
 
-    if (overall_test_post_gap_advance_start_.nanoseconds() == 0) {
-      overall_test_post_gap_advance_start_ = this->now();
+    if (full_inventory_post_gap_advance_start_.nanoseconds() == 0) {
+      full_inventory_post_gap_advance_start_ = this->now();
       reset_segment_distance();
     }
 
     const double timeout =
       std::isfinite(post_gap_detect_advance_timeout_sec_) ?
       std::max(0.1, post_gap_detect_advance_timeout_sec_) : 8.0;
-    const double elapsed = (this->now() - overall_test_post_gap_advance_start_).seconds();
+    const double elapsed = (this->now() - full_inventory_post_gap_advance_start_).seconds();
     if (elapsed >= timeout) {
       publish_stop();
-      fail_overall_test(
+      fail_full_inventory(
         "post gap advance timeout target=" +
         std::to_string(current_target_cabinet_) +
         " elapsed=" + format_seconds(elapsed) +
@@ -7284,9 +6955,9 @@ private:
       post_gap_detect_advance_speed_,
       std::abs(post_gap_detect_advance_distance_m_));
     if (done) {
-      overall_test_post_gap_advance_start_ =
+      full_inventory_post_gap_advance_start_ =
         rclcpp::Time(0, 0, get_clock()->get_clock_type());
-      publish_overall_test_log(
+      publish_full_inventory_log(
         "post gap advance done, entering gap target=" +
         std::to_string(current_target_cabinet_));
       begin_entering_gap_flow("post gap advance done");
@@ -7297,7 +6968,7 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][OVERALL_TEST] post_gap_advance target=%d direction=%s traveled=%.2f/%.2f "
+      "[mission_manager][FULL_INVENTORY] post_gap_advance target=%d direction=%s traveled=%.2f/%.2f "
       "speed=%.3f elapsed=%.2f/%.2f",
       current_target_cabinet_,
       search_direction_to_string(current_gap_plan_.search_direction).c_str(),
@@ -7317,8 +6988,8 @@ private:
       latest_gap_.side : latest_gap_.active_side;
     if (latest_gap_.allow_enter && normalize_entry_side(detected_side) == current_entry_side_) {
       publish_stop();
-      if (overall_test_active_) {
-        begin_overall_post_gap_detect_advance_flow();
+      if (full_inventory_active_) {
+        begin_full_inventory_post_gap_detect_advance_flow();
         return;
       }
       begin_waiting_gap_confirmation_flow("SEARCH_GAP检测到候选间隙，停车确认宽度/稳定性/安全距离");
@@ -7333,8 +7004,8 @@ private:
     const double elapsed_sec = (this->now() - search_gap_start_).seconds();
     if (elapsed_sec >= std::max(0.1, timeout_sec)) {
       publish_stop();
-      if (overall_test_active_) {
-        fail_overall_test(
+      if (full_inventory_active_) {
+        fail_full_inventory(
           "SEARCH_GAP timeout target=" +
           std::to_string(current_target_cabinet_) +
           " direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
@@ -7430,10 +7101,10 @@ private:
             if (!start_next_adjust_motion()) {
               mission_active_ = false;
               publish_stop();
-              if (overall_test_active_) {
-                fail_overall_test("缝隙检测失败且调整序列耗尽");
-              } else if (test_real_motion_active_) {
-                fail_test_real_motion("缝隙检测失败且调整序列耗尽");
+              if (full_inventory_active_) {
+                fail_full_inventory("缝隙检测失败且调整序列耗尽");
+              } else if (single_cabinet_motion_active_) {
+                fail_single_cabinet_motion("缝隙检测失败且调整序列耗尽");
               } else {
                 set_state(State::ERROR, "缝隙检测失败且调整序列耗尽");
               }
@@ -7667,29 +7338,29 @@ private:
           straight_done = true;
           publish_stop();
           log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, true);
-          if (overall_test_active_) {
-            test_real_last_entering_straight_distance_ =
+          if (full_inventory_active_) {
+            single_cabinet_last_entering_straight_distance_ =
               std::max(traveled, target_straight_distance_);
             set_state(
-              State::OVERALL_TEST_IN_GAP_SCAN,
-              "[OVERALL_TEST] reached depth-grid center, start in-gap scan cabinet=" +
+              State::FULL_INVENTORY_IN_GAP_SCAN,
+              "[FULL_INVENTORY] reached depth-grid center, start in-gap scan cabinet=" +
               std::to_string(current_target_cabinet_));
-          } else if (test_real_motion_active_) {
-            test_real_last_entering_straight_distance_ =
+          } else if (single_cabinet_motion_active_) {
+            single_cabinet_last_entering_straight_distance_ =
               std::max(traveled, target_straight_distance_);
-            State scan_state = State::TEST_REAL_IN_GAP_SCAN;
-            if (test_real_side_row_active_) {
-              if (test_real_side_row_phase_ == TestRealSideRowPhase::FIRST_ADJUSTED_SCAN ||
-                test_real_side_row_phase_ == TestRealSideRowPhase::SECOND_ADJUSTED_SCAN)
+            State scan_state = State::SINGLE_CABINET_IN_GAP_SCAN;
+            if (single_cabinet_side_row_active_) {
+              if (single_cabinet_side_row_phase_ == SingleCabinetSideRowPhase::FIRST_ADJUSTED_SCAN ||
+                single_cabinet_side_row_phase_ == SingleCabinetSideRowPhase::SECOND_ADJUSTED_SCAN)
               {
-                scan_state = State::TEST_REAL_ADJUSTED_SIDE_SCAN;
-              } else if (test_real_side_row_phase_ == TestRealSideRowPhase::SECOND_PRIMARY_SCAN) {
-                scan_state = State::TEST_REAL_NEXT_GAP_SCAN;
+                scan_state = State::SINGLE_CABINET_ADJUSTED_SIDE_SCAN;
+              } else if (single_cabinet_side_row_phase_ == SingleCabinetSideRowPhase::SECOND_PRIMARY_SCAN) {
+                scan_state = State::SINGLE_CABINET_NEXT_GAP_SCAN;
               }
             }
-            set_test_real_state(
+            set_single_cabinet_state(
               scan_state,
-              "已直行到目标深度格中心，开始测试占位扫描");
+              "已直行到目标深度格中心，开始缝内扫描");
           } else {
             set_state(State::INVENTORYING, "已直行到目标深度格中心，盘库流程预留");
           }
@@ -7739,10 +7410,10 @@ private:
       set_corridor_mode(false, false);
       publish_stop();
       request_recognizer_enable(false);
-      if (overall_test_active_) {
-        fail_overall_test("跟踪阶段目标丢失，安全停车并终止整体盘库测试");
-      } else if (test_real_motion_active_) {
-        fail_test_real_motion("跟踪阶段目标丢失，安全停车并终止测试真实运动");
+      if (full_inventory_active_) {
+        fail_full_inventory("跟踪阶段目标丢失，安全停车并终止全部盘库");
+      } else if (single_cabinet_motion_active_) {
+        fail_single_cabinet_motion("跟踪阶段目标丢失，安全停车并终止单柜盘库");
       } else {
         mission_active_ = false;
         set_state(State::ERROR, "跟踪阶段目标丢失，安全停车并终止任务");
@@ -7782,44 +7453,44 @@ private:
     }
   }
 
-  void handle_test_gap_scan_state()
+  void handle_inventory_flow_state()
   {
-    const TestGapScanPlan * plan = current_test_gap_scan_plan();
+    const InventoryGapPlan * plan = current_gap_request_plan();
 
     switch (state_) {
       case State::REQUEST_OPEN_GAP: {
         if (plan == nullptr) {
-          set_test_state(State::DONE, "没有待执行测试 gap");
+          set_flow_state(State::DONE, "没有待执行 gap");
           return;
         }
 
-        publish_test_scan_log(
+        publish_inventory_flow_log(
           "start gap=" + plan->gap_id +
           " cabinets=" + cabinet_unit_to_string(plan->scan_cabinets));
-        publish_test_scan_log("requesting open gap=" + plan->gap_id);
-        if (test_real_motion_active_) {
-          publish_test_real_log("request open gap=" + plan->gap_id);
+        publish_inventory_flow_log("requesting open gap=" + plan->gap_id);
+        if (single_cabinet_motion_active_) {
+          publish_single_cabinet_log("request open gap=" + plan->gap_id);
         }
         (void)web_api_client_.reportRobotStatus("REQUEST_OPEN_GAP");
         if (!web_api_client_.requestOpenGap(plan->gap_id)) {
-          fail_test_gap_scan("开柜请求失败: gap=" + plan->gap_id);
+          fail_inventory_flow("开柜请求失败: gap=" + plan->gap_id);
           return;
         }
 
-        publish_test_scan_log(
+        publish_inventory_flow_log(
           "waiting open ready " + format_seconds(open_gap_wait_sec_) + " sec");
-        set_test_state(
+        set_flow_state(
           State::WAIT_OPEN_READY,
           "等待开柜完成 " + format_seconds(open_gap_wait_sec_) + " sec");
         break;
       }
 
       case State::WAIT_OPEN_READY: {
-        if (test_state_elapsed(open_gap_wait_sec_)) {
-          if (test_real_motion_active_) {
-            const int target_cabinet = active_test_real_scan_cabinet();
-            set_test_real_state(
-              State::TEST_REAL_PREPARE_NAV,
+        if (state_elapsed(open_gap_wait_sec_)) {
+          if (single_cabinet_motion_active_) {
+            const int target_cabinet = active_single_cabinet_scan_cabinet();
+            set_single_cabinet_state(
+              State::SINGLE_CABINET_PREPARE_NAV,
               "prepare nav target_cabinet=" + std::to_string(target_cabinet));
           }
         }
@@ -7828,66 +7499,66 @@ private:
 
       case State::REQUEST_CLOSE_GAP: {
         if (plan == nullptr) {
-          fail_test_gap_scan("当前测试 gap 为空，无法请求关柜");
+          fail_inventory_flow("当前 gap 为空，无法请求关柜");
           return;
         }
 
         const std::string close_gap_id =
-          test_real_motion_active_ ? active_test_real_gap_id() : plan->gap_id;
-        publish_test_scan_log("requesting close gap=" + close_gap_id);
-        if (test_real_motion_active_) {
-          publish_test_real_log("request close gap=" + close_gap_id);
+          single_cabinet_motion_active_ ? active_single_cabinet_gap_id() : plan->gap_id;
+        publish_inventory_flow_log("requesting close gap=" + close_gap_id);
+        if (single_cabinet_motion_active_) {
+          publish_single_cabinet_log("request close gap=" + close_gap_id);
         }
         (void)web_api_client_.reportRobotStatus("REQUEST_CLOSE_GAP");
         if (!web_api_client_.requestCloseGap(close_gap_id)) {
-          if (test_real_motion_active_) {
-            fail_test_real_motion("关柜请求失败: gap=" + close_gap_id);
+          if (single_cabinet_motion_active_) {
+            fail_single_cabinet_motion("关柜请求失败: gap=" + close_gap_id);
           } else {
-            fail_test_gap_scan("关柜请求失败: gap=" + close_gap_id);
+            fail_inventory_flow("关柜请求失败: gap=" + close_gap_id);
           }
           return;
         }
 
-        publish_test_scan_log(
+        publish_inventory_flow_log(
           "waiting close done " + format_seconds(close_gap_wait_sec_) + " sec");
-        set_test_state(
+        set_flow_state(
           State::WAIT_CLOSE_DONE,
           "等待关柜完成 " + format_seconds(close_gap_wait_sec_) + " sec");
         break;
       }
 
       case State::WAIT_CLOSE_DONE: {
-        if (!test_state_elapsed(close_gap_wait_sec_)) {
+        if (!state_elapsed(close_gap_wait_sec_)) {
           break;
         }
         if (plan != nullptr) {
           const std::string finished_gap_id =
-            test_real_motion_active_ ? active_test_real_gap_id() : plan->gap_id;
-          publish_test_scan_log("finished gap=" + finished_gap_id);
+            single_cabinet_motion_active_ ? active_single_cabinet_gap_id() : plan->gap_id;
+          publish_inventory_flow_log("finished gap=" + finished_gap_id);
         }
 
-        if (test_current_gap_index_ + 1 < test_gap_scan_queue_.size()) {
-          ++test_current_gap_index_;
-          set_test_state(State::REQUEST_OPEN_GAP, "开始下一个 gap");
+        if (current_gap_request_index_ + 1 < gap_request_queue_.size()) {
+          ++current_gap_request_index_;
+          set_flow_state(State::REQUEST_OPEN_GAP, "开始下一个 gap");
         } else {
-          set_test_state(State::DONE, "全部 gap 已完成");
+          set_flow_state(State::DONE, "全部 gap 已完成");
         }
         break;
       }
 
-      case State::TEST_REAL_PREPARE_NAV: {
-        const int target_cabinet = active_test_real_scan_cabinet();
-        publish_test_real_log(
+      case State::SINGLE_CABINET_PREPARE_NAV: {
+        const int target_cabinet = active_single_cabinet_scan_cabinet();
+        publish_single_cabinet_log(
           "prepare nav target_cabinet=" + std::to_string(target_cabinet));
-        if (test_real_side_row_active_) {
-          publish_test_real_side_row_log(
-            "first gap=" + test_real_active_gap_id_ +
+        if (single_cabinet_side_row_active_) {
+          publish_single_cabinet_side_row_log(
+            "first gap=" + single_cabinet_active_gap_id_ +
             " scan cabinet=" + std::to_string(target_cabinet));
         }
 
         std::string reason;
-        if (!prepare_test_real_target_cabinet(target_cabinet, reason)) {
-          fail_test_real_motion("准备真实运动目标失败: " + reason);
+        if (!prepare_single_cabinet_target_cabinet(target_cabinet, reason)) {
+          fail_single_cabinet_motion("准备单柜盘库目标失败: " + reason);
           return;
         }
 
@@ -7914,129 +7585,129 @@ private:
         mission_start_pose_ = current_pose_2d();
         mission_start_pose_nav2_ = Pose2D{};
 
-        publish_test_real_log(
+        publish_single_cabinet_log(
           "enter real nav to target cabinet=" + std::to_string(current_target_cabinet_));
-        publish_test_real_log(
-          "requested gap=" + active_test_real_gap_id() +
+        publish_single_cabinet_log(
+          "requested gap=" + active_single_cabinet_gap_id() +
           " existing_gap_plan=" + gap_plan_to_string(current_gap_plan_));
 
         std::string nav_route_fail_reason;
         if (!begin_nav_route_for_current_target(
-            "[mission_manager][test_real] enter real nav to target cabinet=" +
+            "[mission_manager][single_cabinet] enter real nav to target cabinet=" +
             std::to_string(current_target_cabinet_),
             nav_route_fail_reason,
-            State::TEST_REAL_NAV_TO_TARGET))
+            State::SINGLE_CABINET_NAV_TO_TARGET))
         {
-          fail_test_real_motion(nav_route_fail_reason);
+          fail_single_cabinet_motion(nav_route_fail_reason);
         }
         break;
       }
 
-      case State::TEST_REAL_IN_GAP_SCAN: {
-        handle_test_real_scan_state();
+      case State::SINGLE_CABINET_IN_GAP_SCAN: {
+        handle_single_cabinet_scan_state();
         break;
       }
 
-      case State::TEST_REAL_ADJUSTED_SIDE_SCAN: {
-        handle_test_real_scan_state();
+      case State::SINGLE_CABINET_ADJUSTED_SIDE_SCAN: {
+        handle_single_cabinet_scan_state();
         break;
       }
 
-      case State::TEST_REAL_NEXT_GAP_SCAN: {
-        handle_test_real_scan_state();
+      case State::SINGLE_CABINET_NEXT_GAP_SCAN: {
+        handle_single_cabinet_scan_state();
         break;
       }
 
-      case State::TEST_REAL_EXIT_GAP:
-      case State::TEST_REAL_FINAL_EXIT_GAP: {
-        handle_test_real_exit_gap_state();
+      case State::SINGLE_CABINET_EXIT_GAP:
+      case State::SINGLE_CABINET_FINAL_EXIT_GAP: {
+        handle_single_cabinet_exit_gap_state();
         break;
       }
 
-      case State::TEST_REAL_REENTER_FOR_ADJUSTED_SCAN: {
-        handle_test_real_reenter_adjusted_scan_state();
+      case State::SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN: {
+        handle_single_cabinet_reenter_adjusted_scan_state();
         break;
       }
 
-      case State::TEST_REAL_CORRIDOR_TRANSFER: {
-        handle_test_real_corridor_transfer_state();
+      case State::SINGLE_CABINET_CORRIDOR_TRANSFER: {
+        handle_single_cabinet_corridor_transfer_state();
         break;
       }
 
-      case State::TEST_REAL_PREPARE_NEXT_GAP: {
-        handle_test_real_prepare_next_gap_state();
+      case State::SINGLE_CABINET_PREPARE_NEXT_GAP: {
+        handle_single_cabinet_prepare_next_gap_state();
         break;
       }
 
-      case State::TEST_REAL_REENTER_NEXT_GAP: {
-        handle_test_real_reenter_next_gap_state();
+      case State::SINGLE_CABINET_REENTER_NEXT_GAP: {
+        handle_single_cabinet_reenter_next_gap_state();
         break;
       }
 
-      case State::TEST_REAL_STOP_AFTER_SCAN: {
-        stop_test_real_motion_controls();
+      case State::SINGLE_CABINET_STOP_AFTER_SCAN: {
+        stop_single_cabinet_motion_controls();
         mission_active_ = false;
-        publish_test_real_log("scan finished, stop after scan, no exit motion in this test step");
-        if (!test_real_close_requested_) {
-          publish_test_real_log("request close gap=" + test_real_motion_target_gap_);
-          (void)web_api_client_.requestCloseGap(test_real_motion_target_gap_);
-          test_real_close_requested_ = true;
+        publish_single_cabinet_log("scan finished, stop after scan, no exit motion in current step");
+        if (!single_cabinet_close_requested_) {
+          publish_single_cabinet_log("request close gap=" + single_cabinet_motion_target_gap_);
+          (void)web_api_client_.requestCloseGap(single_cabinet_motion_target_gap_);
+          single_cabinet_close_requested_ = true;
         }
-        publish_test_real_log("done, back to IDLE");
-        set_test_state(State::DONE, "测试真实运动单柜扫描完成");
+        publish_single_cabinet_log("done, back to IDLE");
+        set_flow_state(State::DONE, "单柜盘库扫描完成");
         break;
       }
 
       case State::DONE: {
         (void)web_api_client_.reportRobotStatus("DONE");
-        if (overall_test_active_) {
-          publish_overall_test_log("done, back to IDLE");
-        } else if (test_real_motion_active_) {
-          publish_test_real_log("done, back to IDLE");
+        if (full_inventory_active_) {
+          publish_full_inventory_log("done, back to IDLE");
+        } else if (single_cabinet_motion_active_) {
+          publish_single_cabinet_log("done, back to IDLE");
         } else {
-          publish_test_scan_log("all test gaps finished");
+          publish_inventory_flow_log("all requested gaps finished");
         }
         mission_active_ = false;
-        test_real_motion_active_ = false;
-        test_real_gap_searching_ = false;
-        test_real_target_recognized_logged_ = false;
-        test_real_close_requested_ = false;
-        test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-        if (test_real_side_row_active_) {
-          publish_test_real_log("[return] side-row real motion completed");
+        single_cabinet_motion_active_ = false;
+        single_cabinet_gap_searching_ = false;
+        single_cabinet_target_recognized_logged_ = false;
+        single_cabinet_close_requested_ = false;
+        single_cabinet_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+        if (single_cabinet_side_row_active_) {
+          publish_single_cabinet_log("[return] side-row inventory completed");
         }
-        reset_test_real_side_row_context();
-        reset_overall_test_context();
-        test_gap_scan_active_ = false;
-        test_gap_scan_queue_.clear();
-        test_current_gap_index_ = 0;
-        set_state(State::IDLE, "测试盘库任务完成，系统待机");
+        reset_single_cabinet_side_row_context();
+        reset_full_inventory_context();
+        inventory_flow_active_ = false;
+        gap_request_queue_.clear();
+        current_gap_request_index_ = 0;
+        set_state(State::IDLE, "盘库任务完成，系统待机");
         break;
       }
 
       case State::ERROR: {
         (void)web_api_client_.reportRobotStatus("ERROR");
-        if (overall_test_active_) {
-          stop_test_real_motion_controls();
-          publish_overall_test_log("overall test failed: " + test_gap_scan_error_reason_);
-        } else if (test_real_motion_active_) {
-          stop_test_real_motion_controls();
-          publish_test_real_log("test real motion failed: " + test_gap_scan_error_reason_);
+        if (full_inventory_active_) {
+          stop_single_cabinet_motion_controls();
+          publish_full_inventory_log("full inventory failed: " + mission_error_reason_);
+        } else if (single_cabinet_motion_active_) {
+          stop_single_cabinet_motion_controls();
+          publish_single_cabinet_log("single cabinet inventory failed: " + mission_error_reason_);
         } else {
-          publish_test_scan_log("test gap scan failed: " + test_gap_scan_error_reason_);
+          publish_inventory_flow_log("inventory flow failed: " + mission_error_reason_);
         }
         mission_active_ = false;
-        test_real_motion_active_ = false;
-        test_real_gap_searching_ = false;
-        test_real_target_recognized_logged_ = false;
-        test_real_close_requested_ = false;
-        test_real_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-        reset_test_real_side_row_context();
-        reset_overall_test_context();
-        test_gap_scan_active_ = false;
-        test_gap_scan_queue_.clear();
-        test_current_gap_index_ = 0;
-        set_state(State::IDLE, "测试盘库空跑已停止，系统待机");
+        single_cabinet_motion_active_ = false;
+        single_cabinet_gap_searching_ = false;
+        single_cabinet_target_recognized_logged_ = false;
+        single_cabinet_close_requested_ = false;
+        single_cabinet_final_recognition_wait_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+        reset_single_cabinet_side_row_context();
+        reset_full_inventory_context();
+        inventory_flow_active_ = false;
+        gap_request_queue_.clear();
+        current_gap_request_index_ = 0;
+        set_state(State::IDLE, "盘库流程已停止，系统待机");
         break;
       }
 
@@ -8047,12 +7718,12 @@ private:
 
   void on_timer()
   {
-    if (!mission_active_ && !test_gap_scan_active_) {
+    if (!mission_active_ && !inventory_flow_active_) {
       return;
     }
 
-    if (test_gap_scan_active_ && (state_ == State::DONE || state_ == State::ERROR)) {
-      handle_test_gap_scan_state();
+    if (inventory_flow_active_ && (state_ == State::DONE || state_ == State::ERROR)) {
+      handle_inventory_flow_state();
       return;
     }
 
@@ -8061,111 +7732,111 @@ private:
       case State::WAIT_OPEN_READY:
       case State::REQUEST_CLOSE_GAP:
       case State::WAIT_CLOSE_DONE:
-      case State::TEST_REAL_PREPARE_NAV:
-      case State::TEST_REAL_IN_GAP_SCAN:
-      case State::TEST_REAL_STOP_AFTER_SCAN:
-      case State::TEST_REAL_EXIT_GAP:
-      case State::TEST_REAL_REENTER_FOR_ADJUSTED_SCAN:
-      case State::TEST_REAL_ADJUSTED_SIDE_SCAN:
-      case State::TEST_REAL_CORRIDOR_TRANSFER:
-      case State::TEST_REAL_PREPARE_NEXT_GAP:
-      case State::TEST_REAL_REENTER_NEXT_GAP:
-      case State::TEST_REAL_NEXT_GAP_SCAN:
-      case State::TEST_REAL_FINAL_EXIT_GAP: {
-        handle_test_gap_scan_state();
+      case State::SINGLE_CABINET_PREPARE_NAV:
+      case State::SINGLE_CABINET_IN_GAP_SCAN:
+      case State::SINGLE_CABINET_STOP_AFTER_SCAN:
+      case State::SINGLE_CABINET_EXIT_GAP:
+      case State::SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN:
+      case State::SINGLE_CABINET_ADJUSTED_SIDE_SCAN:
+      case State::SINGLE_CABINET_CORRIDOR_TRANSFER:
+      case State::SINGLE_CABINET_PREPARE_NEXT_GAP:
+      case State::SINGLE_CABINET_REENTER_NEXT_GAP:
+      case State::SINGLE_CABINET_NEXT_GAP_SCAN:
+      case State::SINGLE_CABINET_FINAL_EXIT_GAP: {
+        handle_inventory_flow_state();
         break;
       }
 
-      case State::OVERALL_TEST_PREPARE_TARGET: {
+      case State::FULL_INVENTORY_PREPARE_TARGET: {
         publish_stop();
         break;
       }
 
-      case State::OVERALL_TEST_NAV_TO_OBSERVE: {
+      case State::FULL_INVENTORY_NAV_TO_OBSERVE: {
         handle_nav_route_state();
         break;
       }
 
-      case State::OVERALL_TEST_POST_ROUTE_RECOGNITION_WAIT: {
-        handle_overall_test_post_route_recognition_wait_state();
+      case State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT: {
+        handle_full_inventory_post_route_recognition_wait_state();
         break;
       }
 
-      case State::OVERALL_TEST_RECOGNITION_FALLBACK: {
-        handle_overall_recognition_fallback_state();
+      case State::FULL_INVENTORY_RECOGNITION_FALLBACK: {
+        handle_full_inventory_recognition_fallback_state();
         break;
       }
 
-      case State::OVERALL_TEST_TARGET_DISTANCE_ALIGN: {
-        handle_overall_target_distance_align_state();
+      case State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN: {
+        handle_full_inventory_target_distance_align_state();
         break;
       }
 
-      case State::OVERALL_TEST_SEARCH_GAP: {
+      case State::FULL_INVENTORY_SEARCH_GAP: {
         handle_search_gap_state();
         break;
       }
 
-      case State::OVERALL_TEST_POST_GAP_DETECT_ADVANCE: {
-        handle_overall_post_gap_detect_advance_state();
+      case State::FULL_INVENTORY_POST_GAP_DETECT_ADVANCE: {
+        handle_full_inventory_post_gap_detect_advance_state();
         break;
       }
 
-      case State::OVERALL_TEST_SAME_SIDE_NEXT_SEARCH: {
-        handle_overall_same_side_next_search_state();
+      case State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH: {
+        handle_full_inventory_same_side_next_search_state();
         break;
       }
 
-      case State::OVERALL_TEST_ENTERING_GAP: {
+      case State::FULL_INVENTORY_ENTERING_GAP: {
         handle_entering_gap_state();
         break;
       }
 
-      case State::OVERALL_TEST_IN_GAP_SCAN: {
-        handle_overall_test_scan_state();
+      case State::FULL_INVENTORY_IN_GAP_SCAN: {
+        handle_full_inventory_scan_state();
         break;
       }
 
-      case State::OVERALL_TEST_EXIT_GAP: {
-        handle_test_real_exit_gap_state();
+      case State::FULL_INVENTORY_EXIT_GAP: {
+        handle_single_cabinet_exit_gap_state();
         break;
       }
 
-      case State::OVERALL_TEST_ADVANCE_NEXT_TARGET:
-      case State::OVERALL_TEST_RETURN_HOME_BETWEEN_SIDES:
-      case State::OVERALL_TEST_COMPLETE: {
+      case State::FULL_INVENTORY_ADVANCE_NEXT_TARGET:
+      case State::FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES:
+      case State::FULL_INVENTORY_COMPLETE: {
         publish_stop();
         break;
       }
 
-      case State::TEST_REAL_NAV_TO_TARGET: {
+      case State::SINGLE_CABINET_NAV_TO_TARGET: {
         handle_nav_route_state();
         break;
       }
 
-      case State::TEST_REAL_TARGET_TRACKING: {
+      case State::SINGLE_CABINET_TARGET_TRACKING: {
         handle_target_tracking_state();
         break;
       }
 
-      case State::TEST_REAL_FINAL_RECOGNITION_WAIT: {
+      case State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT: {
         publish_stop();
         request_recognizer_enable(true);
-        if (test_real_final_recognition_wait_start_.nanoseconds() == 0) {
-          test_real_final_recognition_wait_start_ = this->now();
+        if (single_cabinet_final_recognition_wait_start_.nanoseconds() == 0) {
+          single_cabinet_final_recognition_wait_start_ = this->now();
         }
-        if ((this->now() - test_real_final_recognition_wait_start_).seconds() >=
-          std::max(0.0, test_real_final_recognition_wait_sec_))
+        if ((this->now() - single_cabinet_final_recognition_wait_start_).seconds() >=
+          std::max(0.0, single_cabinet_final_recognition_wait_sec_))
         {
-          fail_test_real_motion(
+          fail_single_cabinet_motion(
             "final recognition timeout, target cabinet=" +
             std::to_string(current_target_cabinet_) + " not recognized");
         }
         break;
       }
 
-      case State::TEST_REAL_WAITING_GAP: {
-        if (test_real_gap_searching_) {
+      case State::SINGLE_CABINET_WAITING_GAP: {
+        if (single_cabinet_gap_searching_) {
           handle_search_gap_state();
         } else {
           handle_waiting_gap_state();
@@ -8173,7 +7844,7 @@ private:
         break;
       }
 
-      case State::TEST_REAL_ENTERING_GAP: {
+      case State::SINGLE_CABINET_ENTERING_GAP: {
         handle_entering_gap_state();
         break;
       }
@@ -8222,10 +7893,10 @@ private:
       case State::IDLE:
       case State::DONE:
       case State::ERROR:
-        if (overall_test_active_) {
-          fail_overall_test("正式流程进入 ERROR，停止整体盘库测试");
-        } else if (test_real_motion_active_) {
-          fail_test_real_motion("正式流程进入 ERROR，停止测试真实运动");
+        if (full_inventory_active_) {
+          fail_full_inventory("正式流程进入 ERROR，停止全部盘库");
+        } else if (single_cabinet_motion_active_) {
+          fail_single_cabinet_motion("正式流程进入 ERROR，停止单柜盘库");
         }
         break;
       default:
@@ -8255,12 +7926,10 @@ private:
   std::string start_service_name_;
   std::string cancel_service_name_;
   std::string recognizer_trigger_service_;
-  std::string start_test_gap_scan_service_name_;
 
   std::vector<std::string> target_list_param_;
   std::string route_waypoints_file_{"config/route_waypoints.yaml"};
   std::string warehouse_layout_file_{"config/warehouse_layout.yaml"};
-  std::string test_gap_scan_params_file_{"config/test_gap_scan_params.yaml"};
   std::string gap_scan_map_file_{"config/gap_scan_map.yaml"};
   std::string route_search_failure_policy_{"error"};
   std::map<std::string, RouteConfig> route_configs_;
@@ -8269,13 +7938,13 @@ private:
   std::map<int, std::string> cabinet_entry_side_map_;
   std::map<int, SearchDirection> cabinet_gap_search_direction_map_;
   std::map<std::string, WarehouseRowLayout> warehouse_rows_by_side_;
-  std::vector<TestGapScanPlan> configured_test_inventory_plan_{
-    TestGapScanPlan{"gap_03_02", std::vector<int>{3, 2, 1}},
-    TestGapScanPlan{"gap_04_05", std::vector<int>{4, 5, 6}}};
-  std::map<std::string, std::vector<int>> test_inventory_plan_by_gap_id_{
+  std::vector<InventoryGapPlan> configured_gap_inventory_plan_{
+    InventoryGapPlan{"gap_03_02", std::vector<int>{3, 2, 1}},
+    InventoryGapPlan{"gap_04_05", std::vector<int>{4, 5, 6}}};
+  std::map<std::string, std::vector<int>> inventory_plan_by_gap_id_{
     {"gap_03_02", std::vector<int>{3, 2, 1}},
     {"gap_04_05", std::vector<int>{4, 5, 6}}};
-  std::map<std::string, std::vector<int>> test_gap_scan_map_cabinets_by_gap_id_{
+  std::map<std::string, std::vector<int>> gap_scan_map_cabinets_by_gap_id_{
     {"gap_03_02", std::vector<int>{3, 2, 1}},
     {"gap_04_05", std::vector<int>{4, 5, 6}}};
   RouteConfig current_route_;
@@ -8285,7 +7954,7 @@ private:
   std::string current_entry_side_{"left"};
   bool routes_loaded_{false};
   bool warehouse_layout_loaded_{false};
-  bool test_gap_scan_config_loaded_{false};
+  bool inventory_runtime_config_loaded_{false};
   std::vector<std::string> targets_;
   std::size_t current_target_index_{0};
   int current_target_cabinet_{-1};
@@ -8411,67 +8080,67 @@ private:
   int lift_home_level_{1};
   double grid_motion_duration_sec_{1.0};
   double grid_motion_timeout_sec_{10.0};
-  bool test_real_motion_enabled_{false};
-  int test_real_motion_target_cabinet_{3};
-  std::string test_real_motion_target_gap_{"gap_03_02"};
-  bool test_real_motion_stop_after_scan_{true};
-  double test_real_final_recognition_wait_sec_{8.0};
-  bool test_real_side_row_enabled_{false};
-  std::string test_real_side_row_name_{"row_01_02_03_04"};
-  std::string test_real_side_row_first_gap_{"gap_02_03_04"};
-  std::vector<int> test_real_side_row_first_gap_scan_sequence_{4, 3};
-  std::string test_real_side_row_second_gap_{"gap_01_02_03"};
-  std::vector<int> test_real_side_row_second_gap_scan_sequence_{2, 1};
-  bool test_real_side_row_corridor_transfer_enabled_{true};
-  int test_real_side_row_corridor_transfer_target_cabinet_{2};
-  std::string test_real_side_row_corridor_transfer_direction_{"toward_cabinet_1"};
-  bool test_real_exit_after_each_scan_{true};
-  std::string test_real_exit_mode_{"reverse"};
-  double test_real_exit_speed_{0.05};
-  double test_real_exit_extra_distance_m_{0.10};
-  double test_real_exit_timeout_sec_{40.0};
-  double test_real_exit_distance_m_{1.20};
-  bool test_real_exit_turn_enabled_{true};
-  double test_real_exit_turn_angular_speed_{0.25};
-  double test_real_exit_turn_yaw_tolerance_rad_{0.08};
-  double test_real_exit_turn_timeout_sec_{8.0};
-  bool test_real_reentry_for_position_adjustment_{true};
-  bool test_real_grid_motion_enabled_{false};
-  double test_real_grid_spacing_m_{0.30};
-  double test_real_grid_move_speed_{0.04};
-  double test_real_grid_move_timeout_sec_{10.0};
-  bool test_real_grid_move_return_between_layers_{false};
-  bool test_real_close_gap_after_final_exit_{true};
-  bool overall_test_enabled_{true};
-  std::vector<int> overall_test_sequence_{4, 3, 8, 7};
-  std::string overall_test_left_route_{"left_route"};
-  std::string overall_test_right_route_{"right_route"};
-  bool overall_test_return_home_between_sides_{true};
-  bool overall_test_return_home_after_done_{true};
-  bool overall_test_recognize_during_nav_{false};
-  bool overall_test_same_side_next_search_enabled_{true};
-  double overall_test_same_side_search_speed_{0.04};
-  double overall_test_same_side_search_timeout_sec_{20.0};
-  bool overall_test_same_side_pose_hold_enabled_{true};
-  double overall_test_same_side_left_fixed_y_m_{0.575};
-  double overall_test_same_side_left_fixed_yaw_rad_{-3.1400};
-  double overall_test_same_side_right_fixed_y_m_{-0.625};
-  double overall_test_same_side_right_fixed_yaw_rad_{-3.1400};
-  double overall_test_same_side_yaw_kp_{0.40};
-  double overall_test_same_side_yaw_deadband_rad_{0.03};
-  double overall_test_same_side_y_kp_{0.30};
-  double overall_test_same_side_y_deadband_m_{0.03};
-  double overall_test_same_side_y_correction_sign_{1.0};
-  double overall_test_same_side_max_angular_{0.15};
-  double overall_test_same_side_active_fixed_y_m_{0.575};
-  double overall_test_same_side_active_fixed_yaw_rad_{-3.1400};
-  std::string overall_test_same_side_active_map_side_{"left"};
-  double overall_test_final_recognition_wait_sec_{5.0};
-  bool overall_test_recognition_fallback_enabled_{true};
-  double overall_test_recognition_fallback_speed_{0.04};
-  double overall_test_recognition_fallback_wait_sec_{2.0};
-  double overall_test_recognition_fallback_timeout_sec_{20.0};
-  std::vector<double> overall_test_recognition_fallback_sequence_{-0.30, 0.60, -0.30};
+  bool single_cabinet_motion_enabled_{false};
+  int single_cabinet_motion_target_cabinet_{3};
+  std::string single_cabinet_motion_target_gap_{"gap_03_02"};
+  bool single_cabinet_motion_stop_after_scan_{true};
+  double single_cabinet_final_recognition_wait_sec_{8.0};
+  bool single_cabinet_side_row_enabled_{false};
+  std::string single_cabinet_side_row_name_{"row_01_02_03_04"};
+  std::string single_cabinet_side_row_first_gap_{"gap_02_03_04"};
+  std::vector<int> single_cabinet_side_row_first_gap_scan_sequence_{4, 3};
+  std::string single_cabinet_side_row_second_gap_{"gap_01_02_03"};
+  std::vector<int> single_cabinet_side_row_second_gap_scan_sequence_{2, 1};
+  bool single_cabinet_side_row_corridor_transfer_enabled_{true};
+  int single_cabinet_side_row_corridor_transfer_target_cabinet_{2};
+  std::string single_cabinet_side_row_corridor_transfer_direction_{"toward_cabinet_1"};
+  bool single_cabinet_exit_after_each_scan_{true};
+  std::string single_cabinet_exit_mode_{"reverse"};
+  double single_cabinet_exit_speed_{0.05};
+  double single_cabinet_exit_extra_distance_m_{0.10};
+  double single_cabinet_exit_timeout_sec_{40.0};
+  double single_cabinet_exit_distance_m_{1.20};
+  bool single_cabinet_exit_turn_enabled_{true};
+  double single_cabinet_exit_turn_angular_speed_{0.25};
+  double single_cabinet_exit_turn_yaw_tolerance_rad_{0.08};
+  double single_cabinet_exit_turn_timeout_sec_{8.0};
+  bool single_cabinet_reentry_for_position_adjustment_{true};
+  bool single_cabinet_grid_motion_enabled_{false};
+  double single_cabinet_grid_spacing_m_{0.30};
+  double single_cabinet_grid_move_speed_{0.04};
+  double single_cabinet_grid_move_timeout_sec_{10.0};
+  bool single_cabinet_grid_move_return_between_layers_{false};
+  bool single_cabinet_close_gap_after_final_exit_{true};
+  bool full_inventory_enabled_{true};
+  std::vector<int> full_inventory_sequence_{4, 3, 8, 7};
+  std::string full_inventory_left_route_{"left_route"};
+  std::string full_inventory_right_route_{"right_route"};
+  bool full_inventory_return_home_between_sides_{true};
+  bool full_inventory_return_home_after_done_{true};
+  bool full_inventory_recognize_during_nav_{false};
+  bool full_inventory_same_side_next_search_enabled_{true};
+  double full_inventory_same_side_search_speed_{0.04};
+  double full_inventory_same_side_search_timeout_sec_{20.0};
+  bool full_inventory_same_side_pose_hold_enabled_{true};
+  double full_inventory_same_side_left_fixed_y_m_{0.575};
+  double full_inventory_same_side_left_fixed_yaw_rad_{-3.1400};
+  double full_inventory_same_side_right_fixed_y_m_{-0.625};
+  double full_inventory_same_side_right_fixed_yaw_rad_{-3.1400};
+  double full_inventory_same_side_yaw_kp_{0.40};
+  double full_inventory_same_side_yaw_deadband_rad_{0.03};
+  double full_inventory_same_side_y_kp_{0.30};
+  double full_inventory_same_side_y_deadband_m_{0.03};
+  double full_inventory_same_side_y_correction_sign_{1.0};
+  double full_inventory_same_side_max_angular_{0.15};
+  double full_inventory_same_side_active_fixed_y_m_{0.575};
+  double full_inventory_same_side_active_fixed_yaw_rad_{-3.1400};
+  std::string full_inventory_same_side_active_map_side_{"left"};
+  double full_inventory_final_recognition_wait_sec_{5.0};
+  bool full_inventory_recognition_fallback_enabled_{true};
+  double full_inventory_recognition_fallback_speed_{0.04};
+  double full_inventory_recognition_fallback_wait_sec_{2.0};
+  double full_inventory_recognition_fallback_timeout_sec_{20.0};
+  std::vector<double> full_inventory_recognition_fallback_sequence_{-0.30, 0.60, -0.30};
   bool post_gap_detect_advance_enabled_{true};
   double post_gap_detect_advance_distance_m_{0.25};
   double post_gap_detect_advance_speed_{0.04};
@@ -8483,63 +8152,63 @@ private:
   std::string web_close_gap_endpoint_{"/api/gap/close"};
   std::string web_status_endpoint_{"/api/robot/status"};
   std::string web_result_endpoint_{"/api/inventory/result"};
-  bool test_gap_scan_active_{false};
-  std::vector<TestGapScanPlan> test_gap_scan_queue_;
-  std::size_t test_current_gap_index_{0};
-  std::string test_gap_scan_error_reason_;
-  rclcpp::Time test_state_enter_time_{0, 0, RCL_ROS_TIME};
-  bool test_real_motion_active_{false};
-  bool test_real_gap_searching_{false};
-  bool test_real_target_recognized_logged_{false};
-  bool test_real_close_requested_{false};
-  rclcpp::Time test_real_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
-  bool test_real_side_row_active_{false};
-  bool test_real_side_row_full_sequence_{false};
-  std::vector<int> test_real_side_row_requested_sequence_;
-  TestRealSideRowPhase test_real_side_row_phase_{TestRealSideRowPhase::NONE};
-  TestRealAfterExitAction test_real_after_exit_action_{TestRealAfterExitAction::NONE};
-  std::string test_real_active_gap_id_;
-  int test_real_current_scan_cabinet_{-1};
-  int test_real_adjusted_scan_cabinet_{-1};
-  int test_real_next_gap_target_cabinet_{-1};
-  double test_real_last_entering_straight_distance_{0.0};
-  double test_real_exit_target_distance_{1.20};
-  double test_real_exit_effective_timeout_sec_{40.0};
-  rclcpp::Time test_real_exit_start_time_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time test_real_exit_phase_start_time_{0, 0, RCL_ROS_TIME};
-  TestRealExitPhase test_real_exit_phase_{TestRealExitPhase::STRAIGHT_REVERSE};
-  std::vector<wheeltec_inventory_system::ScanStep> test_real_scan_steps_;
-  std::size_t test_real_scan_step_index_{0};
-  int test_real_scan_cabinet_{-1};
-  bool test_real_scan_active_{false};
-  rclcpp::Time test_real_scan_step_start_time_{0, 0, RCL_ROS_TIME};
-  bool test_real_grid_have_previous_depth_{false};
-  int test_real_grid_previous_cabinet_{-1};
-  int test_real_grid_previous_layer_{-1};
-  int test_real_grid_previous_depth_{-1};
-  bool test_real_grid_move_active_{false};
-  wheeltec_inventory_system::ScanStep test_real_grid_move_step_;
-  Pose2D test_real_grid_move_start_pose_;
-  rclcpp::Time test_real_grid_move_start_time_{0, 0, RCL_ROS_TIME};
-  double test_real_grid_move_target_distance_{0.0};
-  double test_real_grid_move_cmd_speed_{0.0};
-  bool overall_test_active_{false};
-  std::size_t overall_test_index_{0};
-  int overall_test_current_target_{-1};
-  int overall_test_next_target_{-1};
-  std::string overall_test_current_side_;
-  std::string overall_test_current_route_;
-  OverallTestReturnReason overall_test_return_reason_{OverallTestReturnReason::NONE};
-  bool overall_test_waiting_return_home_for_side_switch_{false};
-  bool overall_test_waiting_return_home_for_done_{false};
-  rclcpp::Time overall_test_same_side_search_start_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time overall_test_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time overall_test_recognition_fallback_start_{0, 0, RCL_ROS_TIME};
-  rclcpp::Time overall_test_recognition_fallback_phase_start_{0, 0, RCL_ROS_TIME};
-  OverallRecognitionFallbackPhase overall_test_recognition_fallback_phase_{
-    OverallRecognitionFallbackPhase::IDLE};
-  std::size_t overall_test_recognition_fallback_index_{0};
-  rclcpp::Time overall_test_post_gap_advance_start_{0, 0, RCL_ROS_TIME};
+  bool inventory_flow_active_{false};
+  std::vector<InventoryGapPlan> gap_request_queue_;
+  std::size_t current_gap_request_index_{0};
+  std::string mission_error_reason_;
+  rclcpp::Time state_enter_time_{0, 0, RCL_ROS_TIME};
+  bool single_cabinet_motion_active_{false};
+  bool single_cabinet_gap_searching_{false};
+  bool single_cabinet_target_recognized_logged_{false};
+  bool single_cabinet_close_requested_{false};
+  rclcpp::Time single_cabinet_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
+  bool single_cabinet_side_row_active_{false};
+  bool single_cabinet_side_row_full_sequence_{false};
+  std::vector<int> single_cabinet_side_row_requested_sequence_;
+  SingleCabinetSideRowPhase single_cabinet_side_row_phase_{SingleCabinetSideRowPhase::NONE};
+  SingleCabinetAfterExitAction single_cabinet_after_exit_action_{SingleCabinetAfterExitAction::NONE};
+  std::string single_cabinet_active_gap_id_;
+  int single_cabinet_current_scan_cabinet_{-1};
+  int single_cabinet_adjusted_scan_cabinet_{-1};
+  int single_cabinet_next_gap_target_cabinet_{-1};
+  double single_cabinet_last_entering_straight_distance_{0.0};
+  double single_cabinet_exit_target_distance_{1.20};
+  double single_cabinet_exit_effective_timeout_sec_{40.0};
+  rclcpp::Time single_cabinet_exit_start_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time single_cabinet_exit_phase_start_time_{0, 0, RCL_ROS_TIME};
+  SingleCabinetExitPhase single_cabinet_exit_phase_{SingleCabinetExitPhase::STRAIGHT_REVERSE};
+  std::vector<wheeltec_inventory_system::ScanStep> single_cabinet_scan_steps_;
+  std::size_t single_cabinet_scan_step_index_{0};
+  int single_cabinet_scan_cabinet_{-1};
+  bool single_cabinet_scan_active_{false};
+  rclcpp::Time single_cabinet_scan_step_start_time_{0, 0, RCL_ROS_TIME};
+  bool single_cabinet_grid_have_previous_depth_{false};
+  int single_cabinet_grid_previous_cabinet_{-1};
+  int single_cabinet_grid_previous_layer_{-1};
+  int single_cabinet_grid_previous_depth_{-1};
+  bool single_cabinet_grid_move_active_{false};
+  wheeltec_inventory_system::ScanStep single_cabinet_grid_move_step_;
+  Pose2D single_cabinet_grid_move_start_pose_;
+  rclcpp::Time single_cabinet_grid_move_start_time_{0, 0, RCL_ROS_TIME};
+  double single_cabinet_grid_move_target_distance_{0.0};
+  double single_cabinet_grid_move_cmd_speed_{0.0};
+  bool full_inventory_active_{false};
+  std::size_t full_inventory_index_{0};
+  int full_inventory_current_target_{-1};
+  int full_inventory_next_target_{-1};
+  std::string full_inventory_current_side_;
+  std::string full_inventory_current_route_;
+  FullInventoryReturnReason full_inventory_return_reason_{FullInventoryReturnReason::NONE};
+  bool full_inventory_waiting_return_home_for_side_switch_{false};
+  bool full_inventory_waiting_return_home_for_done_{false};
+  rclcpp::Time full_inventory_same_side_search_start_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time full_inventory_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time full_inventory_recognition_fallback_start_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time full_inventory_recognition_fallback_phase_start_{0, 0, RCL_ROS_TIME};
+  FullInventoryRecognitionFallbackPhase full_inventory_recognition_fallback_phase_{
+    FullInventoryRecognitionFallbackPhase::IDLE};
+  std::size_t full_inventory_recognition_fallback_index_{0};
+  rclcpp::Time full_inventory_post_gap_advance_start_{0, 0, RCL_ROS_TIME};
   wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   wheeltec_inventory_system::InventoryScanner inventory_scanner_;
   wheeltec_inventory_system::LiftController lift_controller_;
@@ -8661,8 +8330,6 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr distance_estimator_enable_pub_;
 
   rclcpp::Service<wheeltec_inventory_system::srv::StartMission>::SharedPtr start_srv_;
-  rclcpp::Service<wheeltec_inventory_system::srv::StartTestGapScan>::SharedPtr
-    start_test_gap_scan_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_srv_;
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr recognizer_trigger_client_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;

@@ -1,5 +1,8 @@
 string[] targets
 bool return_home
+bool run_full_inventory
+string target_gap
+int32[] scan_cabinets
 ---
 bool accepted
 string message
