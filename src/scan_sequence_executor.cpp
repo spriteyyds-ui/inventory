@@ -31,32 +31,32 @@ bool ScanSequenceExecutor::execute(
   const std::vector<ScanStep> & steps,
   const std::function<void(const ScanStep &)> & step_callback) const
 {
-  std::cout << "[scan_executor] execute placeholder step_count=" << steps.size() << std::endl;
+  std::cout << "[scan_executor] execute step_count=" << steps.size() << std::endl;
 
   for (const auto & step : steps) {
     switch (step.step_type) {
       case ScanStepType::MOVE_TO_GRID:
-        std::cout << "[scan_executor] move placeholder cabinet=" << step.cabinet_id
+        std::cout << "[scan_executor] move grid cabinet=" << step.cabinet_id
                   << " layer=" << step.layer_index
                   << " depth=" << step.depth_index << std::endl;
-        sleepSeconds(params_.move_grid_placeholder_wait_sec);
+        sleepSeconds(params_.grid_motion_duration_sec);
         break;
 
-      case ScanStepType::SCAN_PLACEHOLDER:
-        std::cout << "[scan_executor] scan placeholder cabinet=" << step.cabinet_id
+      case ScanStepType::SCAN_GRID:
+        std::cout << "[scan_executor] scan grid cabinet=" << step.cabinet_id
                   << " layer=" << step.layer_index
                   << " depth=" << step.depth_index << std::endl;
-        sleepSeconds(params_.scan_placeholder_wait_sec);
+        sleepSeconds(params_.scan_duration_sec);
         break;
 
-      case ScanStepType::LIFT_PLACEHOLDER:
-        std::cout << "[scan_executor] lift placeholder" << std::endl;
-        sleepSeconds(params_.lift_placeholder_wait_sec);
+      case ScanStepType::MOVE_LIFT_TO_LEVEL:
+        std::cout << "[scan_executor] lift move level=" << step.layer_index << std::endl;
+        sleepSeconds(params_.lift_motion_duration_sec);
         break;
 
-      case ScanStepType::LOWER_PLACEHOLDER:
-        std::cout << "[scan_executor] lower placeholder" << std::endl;
-        sleepSeconds(params_.lift_placeholder_wait_sec);
+      case ScanStepType::MOVE_LIFT_HOME:
+        std::cout << "[scan_executor] lift home" << std::endl;
+        sleepSeconds(params_.lift_motion_duration_sec);
         break;
     }
 
@@ -65,7 +65,7 @@ bool ScanSequenceExecutor::execute(
     }
   }
 
-  std::cout << "[scan_executor] execute placeholder done" << std::endl;
+  std::cout << "[scan_executor] execute done" << std::endl;
   return true;
 }
 

@@ -8,7 +8,7 @@ namespace wheeltec_inventory_system
 
 struct WebApiClientParams
 {
-  std::string web_client_mode{"mock"};
+  std::string web_client_mode{"local"};
   std::string web_base_url;
   std::string web_open_gap_endpoint{"/api/gap/open"};
   std::string web_close_gap_endpoint{"/api/gap/close"};
@@ -34,7 +34,7 @@ public:
     const std::string & result) const;
 
 private:
-  bool isMockMode() const;
+  bool isLocalMode() const;
   bool warnRealHttpNotImplemented(const std::string & action) const;
 
   WebApiClientParams params_;

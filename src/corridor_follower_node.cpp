@@ -46,7 +46,9 @@ public:
     scan_sub_ = create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic_,
       rclcpp::SensorDataQoS(),
-      std::bind(&CorridorFollowerNode::scan_callback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::LaserScan::SharedPtr msg) {
+        scan_callback(msg);
+      });
 
     enable_sub_ = create_subscription<std_msgs::msg::Bool>(
       enable_control_topic_,

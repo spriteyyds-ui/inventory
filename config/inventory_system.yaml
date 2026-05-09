@@ -605,3 +605,27 @@ mission_manager_node:
     entry_ultrasonic_stop_distance: 0.25
     # Max accepted ultrasonic message age for safety checks (seconds).
     max_ultrasonic_age_sec: 0.8
+
+    # Local web/API bridge mode. "local" acknowledges requests inside the client until HTTP is connected.
+    web_client_mode: local
+    # Wait for cabinet opening and closing completion (seconds).
+    open_gap_wait_sec: 5.0
+    close_gap_wait_sec: 3.0
+
+    # Scanner action parameters used by in-gap inventory steps.
+    scanner_enabled: true
+    scan_duration_sec: 2.0
+    scan_timeout_sec: 5.0
+    scan_retry_count: 0
+    scan_result_timeout_sec: 2.0
+
+    # Lift action parameters used by in-gap inventory steps.
+    lift_enabled: true
+    lift_motion_duration_sec: 3.0
+    lift_motion_timeout_sec: 6.0
+    lift_level_count: 2
+    lift_home_level: 1
+
+    # Nominal in-gap grid movement timing. Real distance control still uses odom feedback.
+    grid_motion_duration_sec: 1.0
+    grid_motion_timeout_sec: 10.0
