@@ -51,6 +51,22 @@ When modifying code:
 - Preserve existing topic names, service names, and parameter names unless the user explicitly asks to rename them.
 - Do not introduce large new dependencies unless the user explicitly approves.
 
+## Old Code Cleanup Rule
+
+When implementing a new behavior that replaces an old behavior, the old behavior must be removed in the same modification.
+
+Do not keep both the old and new logic active unless the user explicitly asks to preserve both paths.
+
+Before editing, identify which old code will become obsolete. After editing, use grep to confirm that obsolete parameters, states, functions, service names, and comments have been removed.
+
+Examples of obsolete code that should be removed:
+
+- old parameters no longer used by the real workflow
+- old test-only branches that conflict with the final logic
+- duplicated state-machine branches
+- placeholder, mock, simulated, or temporary logic that has been replaced
+- comments describing behavior that is no longer true
+
 ## Naming Rules
 
 Use final production-style names even if the current implementation is temporarily simplified internally.
