@@ -184,6 +184,11 @@ public:
     nav2_action_name_ = declare_parameter<std::string>("nav2_action_name", "navigate_to_pose");
     nav2_goal_frame_ = declare_parameter<std::string>("nav2_goal_frame", "map");
     nav2_server_wait_timeout_sec_ = declare_parameter<double>("nav2_server_wait_timeout_sec", 1.0);
+    nav2_startup_wait_enabled_ = declare_parameter<bool>("nav2_startup_wait_enabled", true);
+    nav2_startup_wait_timeout_sec_ =
+      declare_parameter<double>("nav2_startup_wait_timeout_sec", 60.0);
+    nav2_startup_wait_poll_sec_ =
+      declare_parameter<double>("nav2_startup_wait_poll_sec", 0.2);
     nav2_goal_timeout_sec_ = declare_parameter<double>("nav2_goal_timeout_sec", 40.0);
     nav2_route_waypoint_timeout_sec_ =
       declare_parameter<double>("nav2_route_waypoint_timeout_sec", 60.0);
@@ -2887,6 +2892,89 @@ private:
     nav2_route_goal_in_progress_ = false;
   }
 
+  bool wait_for_nav2_startup_ready(const std::string & context)
+  {
+    if (!nav2_startup_wait_enabled_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][nav2_startup] startup wait disabled context=%s",
+        context.c_str());
+      return true;
+    }
+    if (!nav2_client_) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "[mission_manager][nav2_startup] Nav2 action client unavailable context=%s",
+        context.c_str());
+      return false;
+    }
+
+    const double timeout_sec = std::max(0.0, nav2_startup_wait_timeout_sec_);
+    const double poll_sec = std::max(0.05, nav2_startup_wait_poll_sec_);
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto poll_duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(poll_sec));
+    const auto timeout_duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+      std::chrono::duration<double>(timeout_sec));
+    const auto deadline = start_time + timeout_duration;
+    auto next_log_time = start_time;
+
+    if (nav2_client_->wait_for_action_server(std::chrono::nanoseconds(0))) {
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][nav2_startup] Nav2 action server ready context=%s waited=%.2f timeout=%.2f",
+        context.c_str(),
+        0.0,
+        timeout_sec);
+      return true;
+    }
+
+    while (rclcpp::ok()) {
+      const auto now_time = std::chrono::steady_clock::now();
+      if (now_time >= deadline) {
+        break;
+      }
+
+      const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        deadline - now_time);
+      const auto wait_duration = std::min(poll_duration, remaining);
+      if (nav2_client_->wait_for_action_server(wait_duration)) {
+        const double waited_sec =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
+        RCLCPP_INFO(
+          get_logger(),
+          "[mission_manager][nav2_startup] Nav2 action server ready context=%s waited=%.2f timeout=%.2f",
+          context.c_str(),
+          waited_sec,
+          timeout_sec);
+        return true;
+      }
+
+      const auto log_time = std::chrono::steady_clock::now();
+      if (log_time >= next_log_time) {
+        const double waited_sec =
+          std::chrono::duration<double>(log_time - start_time).count();
+        RCLCPP_INFO(
+          get_logger(),
+          "[mission_manager][nav2_startup] waiting for Nav2 action server context=%s waited=%.2f timeout=%.2f",
+          context.c_str(),
+          waited_sec,
+          timeout_sec);
+        next_log_time = log_time + std::chrono::seconds(2);
+      }
+    }
+
+    const double waited_sec =
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - start_time).count();
+    RCLCPP_ERROR(
+      get_logger(),
+      "[mission_manager][nav2_startup] timeout waiting for Nav2 action server context=%s waited=%.2f timeout=%.2f",
+      context.c_str(),
+      waited_sec,
+      timeout_sec);
+    return false;
+  }
+
   bool send_current_route_waypoint(std::string & fail_reason)
   {
     fail_reason.clear();
@@ -4089,6 +4177,11 @@ private:
     if (!prepare_full_inventory_target(full_inventory_sequence_[full_inventory_index_], reason)) {
       reset_full_inventory_context();
       inventory_flow_active_ = false;
+      return false;
+    }
+    if (!wait_for_nav2_startup_ready("FULL_INVENTORY")) {
+      reason = "等待 Nav2 启动完成超时: Nav2 action server 不可用";
+      fail_full_inventory(reason);
       return false;
     }
     return start_full_inventory_target_route("start target route");
@@ -8038,6 +8131,9 @@ private:
   std::string nav2_action_name_{"navigate_to_pose"};
   std::string nav2_goal_frame_{"map"};
   double nav2_server_wait_timeout_sec_{1.0};
+  bool nav2_startup_wait_enabled_{true};
+  double nav2_startup_wait_timeout_sec_{60.0};
+  double nav2_startup_wait_poll_sec_{0.2};
   double nav2_goal_timeout_sec_{40.0};
   double nav2_route_waypoint_timeout_sec_{60.0};
   double nav2_cancel_stop_duration_sec_{0.50};

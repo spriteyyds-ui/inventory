@@ -559,6 +559,12 @@ mission_manager_node:
     nav2_goal_frame: map
     # Timeout waiting for Nav2 action server (seconds).
     nav2_server_wait_timeout_sec: 1.0
+    # Wait for Nav2 action server before starting full inventory (boolean).
+    nav2_startup_wait_enabled: true
+    # Timeout for full-inventory startup Nav2 readiness wait (seconds).
+    nav2_startup_wait_timeout_sec: 60.0
+    # Poll interval for full-inventory startup Nav2 readiness wait (seconds).
+    nav2_startup_wait_poll_sec: 0.2
     # Timeout waiting for Nav2 goal result (seconds).
     nav2_goal_timeout_sec: 40.0
     # Timeout for each route waypoint NavigateToPose goal (seconds).
