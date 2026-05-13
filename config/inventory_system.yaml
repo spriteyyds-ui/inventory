@@ -383,6 +383,8 @@ mission_manager_node:
     mission_log_topic: /inventory/mission_log
     # Velocity command output topic (topic name).
     cmd_vel_topic: /cmd_vel
+    # Chassis motion model used by mission-local maneuvers: diff_drive uses in-place turns and straight moves.
+    motion_model: diff_drive
 
     # Corridor follower enable topic (topic name, boolean command).
     corridor_enable_topic: /inventory/corridor_enable
@@ -454,9 +456,7 @@ mission_manager_node:
     entry_turn_yaw_delta_rad: 1.5708
     # Yaw tolerance to finish ENTERING_TURN and stop large steering (radians).
     entry_align_yaw_tolerance_rad: 0.08
-    # Linear speed during ENTERING_TURN (meters/second).
-    entry_turn_linear_speed: 0.12
-    # Angular speed during ENTERING_TURN. Sign is selected by target side (radians/second).
+    # Angular speed limit during ENTERING_TURN in-place rotation (radians/second).
     entry_turn_angular_speed: 0.30
     # Straight speed after alignment, used while moving to depth-grid center (meters/second).
     entry_straight_speed: 0.06
@@ -663,6 +663,7 @@ mission_manager_node:
     exit_gap_extra_distance_m: 0.10
     exit_gap_timeout_sec: 40.0
     exit_gap_distance_m: 1.40
+    # After straight reverse, rotate in place back to the corridor yaw.
     exit_gap_turn_enabled: true
     exit_gap_turn_angular_speed: 0.25
     exit_gap_turn_yaw_tolerance_rad: 0.08
@@ -691,9 +692,9 @@ mission_manager_node:
     same_side_search_speed: 0.04
     same_side_search_timeout_sec: 40.0
     same_side_pose_hold_enabled: true
-    same_side_left_fixed_y_m: 0.575
+    same_side_left_fixed_y_m: 0.733
     same_side_left_fixed_yaw_rad: -3.1400
-    same_side_right_fixed_y_m: -0.625
+    same_side_right_fixed_y_m: -0.6174
     same_side_right_fixed_yaw_rad: -3.1400
     same_side_yaw_kp: 0.40
     same_side_yaw_deadband_rad: 0.03

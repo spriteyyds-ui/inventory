@@ -58,6 +58,7 @@ public:
     mission_state_topic_ = declare_parameter<std::string>("mission_state_topic", "/inventory/mission_state");
     mission_log_topic_ = declare_parameter<std::string>("mission_log_topic", "/inventory/mission_log");
     cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "/cmd_vel");
+    motion_model_ = declare_parameter<std::string>("motion_model", "diff_drive");
 
     corridor_enable_topic_ =
       declare_parameter<std::string>("corridor_enable_topic", "/inventory/corridor_enable");
@@ -111,7 +112,6 @@ public:
     entry_turn_yaw_delta_rad_ = declare_parameter<double>("entry_turn_yaw_delta_rad", 1.57079632679);
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
-    entry_turn_linear_speed_ = declare_parameter<double>("entry_turn_linear_speed", enter_linear_speed_);
     entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", enter_angular_speed_);
     entry_straight_speed_ = declare_parameter<double>("entry_straight_speed", enter_linear_speed_);
     entry_straight_yaw_kp_ = declare_parameter<double>("entry_straight_yaw_kp", 0.8);
@@ -652,7 +652,7 @@ private:
   enum class SingleCabinetExitPhase
   {
     STRAIGHT_REVERSE,
-    ARC_REVERSE,
+    TURN_TO_CORRIDOR,
   };
 
   enum class InGapScanRuntimeMode
@@ -987,8 +987,8 @@ private:
     switch (phase) {
       case SingleCabinetExitPhase::STRAIGHT_REVERSE:
         return "STRAIGHT_REVERSE";
-      case SingleCabinetExitPhase::ARC_REVERSE:
-        return "ARC_REVERSE";
+      case SingleCabinetExitPhase::TURN_TO_CORRIDOR:
+        return "TURN_TO_CORRIDOR";
       default:
         return "STRAIGHT_REVERSE";
     }
@@ -1220,6 +1220,7 @@ private:
   {
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = 0.0;
+    cmd.linear.y = 0.0;
     cmd.angular.z = 0.0;
     cmd_pub_->publish(cmd);
   }
@@ -1401,7 +1402,8 @@ private:
     RCLCPP_INFO(
       get_logger(),
       "侧排盘库配置: enabled=%s name=%s first_gap=%s first_seq=%s "
-      "second_gap=%s second_seq=%s transfer_target=%d exit_distance=%.2f exit_speed=%.3f "
+      "second_gap=%s second_seq=%s transfer_target=%d motion_model=%s "
+      "exit_distance=%.2f exit_speed=%.3f "
       "exit_timeout=%.2f exit_turn=%s exit_turn_angular=%.3f exit_turn_tolerance=%.3f "
       "exit_turn_timeout=%.2f grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
       single_cabinet_side_row_enabled_ ? "true" : "false",
@@ -1411,6 +1413,7 @@ private:
       single_cabinet_side_row_second_gap_.c_str(),
       cabinet_unit_to_string(single_cabinet_side_row_second_gap_scan_sequence_).c_str(),
       single_cabinet_side_row_corridor_transfer_target_cabinet_,
+      motion_model_.c_str(),
       single_cabinet_exit_distance_m_,
       single_cabinet_exit_speed_,
       single_cabinet_exit_timeout_sec_,
@@ -5765,7 +5768,7 @@ private:
         if (turn_speed <= 1e-4) {
           RCLCPP_WARN(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 弧线出缝角速度非法，降级为直线出缝完成: %.3f",
+            "[mission_manager][single_cabinet][exit_gap] 原地转回走廊角速度非法，降级为直线出缝完成: %.3f",
             single_cabinet_exit_turn_angular_speed_);
           publish_motion_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
           finish_single_cabinet_exit_gap();
@@ -5776,9 +5779,9 @@ private:
         if (!current_odom_ready_for_entry(yaw_reason)) {
           RCLCPP_WARN(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 弧线出缝无法获取有效yaw，降级完成: %s",
+            "[mission_manager][single_cabinet][exit_gap] 原地转回走廊无法获取有效yaw，降级完成: %s",
             yaw_reason.c_str());
-          publish_motion_log("[exit_gap] yaw invalid before arc_reverse, finish straight_reverse only");
+          publish_motion_log("[exit_gap] yaw invalid before turn_to_corridor, finish straight_reverse only");
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -5787,8 +5790,8 @@ private:
         if (!current.valid || !std::isfinite(current.yaw) || !std::isfinite(entry_turn_start_yaw_)) {
           RCLCPP_WARN(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 弧线出缝yaw数据无效，降级完成");
-          publish_motion_log("[exit_gap] yaw data invalid before arc_reverse, finish straight_reverse only");
+            "[mission_manager][single_cabinet][exit_gap] 原地转回走廊yaw数据无效，降级完成");
+          publish_motion_log("[exit_gap] yaw data invalid before turn_to_corridor, finish straight_reverse only");
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -5801,17 +5804,17 @@ private:
         if (std::abs(yaw_error) <= yaw_tolerance) {
           RCLCPP_INFO(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + arc_reverse "
+            "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + turn_to_corridor "
             "yaw already aligned current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f",
             current.yaw,
             target_exit_yaw,
             yaw_error);
-          publish_motion_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse yaw already aligned");
+          publish_motion_log("[exit_gap] 出缝完成：straight_reverse + turn_to_corridor yaw already aligned");
           finish_single_cabinet_exit_gap();
           return;
         }
 
-        single_cabinet_exit_phase_ = SingleCabinetExitPhase::ARC_REVERSE;
+        single_cabinet_exit_phase_ = SingleCabinetExitPhase::TURN_TO_CORRIDOR;
         single_cabinet_exit_phase_start_time_ = this->now();
         RCLCPP_INFO(
           get_logger(),
@@ -5847,7 +5850,7 @@ private:
       return;
     }
 
-    if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::ARC_REVERSE) {
+    if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::TURN_TO_CORRIDOR) {
       std::string yaw_reason;
       if (!current_odom_ready_for_entry(yaw_reason)) {
         publish_stop();
@@ -5856,7 +5859,7 @@ private:
           "[mission_manager][single_cabinet][exit_gap] phase=%s yaw无效，结束出缝避免卡死: %s",
           single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           yaw_reason.c_str());
-        publish_motion_log("[exit_gap] arc_reverse yaw invalid, finish to avoid blocking");
+        publish_motion_log("[exit_gap] turn_to_corridor yaw invalid, finish to avoid blocking");
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -5868,7 +5871,7 @@ private:
           get_logger(),
           "[mission_manager][single_cabinet][exit_gap] phase=%s yaw数据无效，结束出缝避免卡死",
           single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str());
-        publish_motion_log("[exit_gap] arc_reverse yaw data invalid, finish to avoid blocking");
+        publish_motion_log("[exit_gap] turn_to_corridor yaw data invalid, finish to avoid blocking");
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -5878,20 +5881,17 @@ private:
       const double yaw_tolerance =
         std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
         std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
-      const double expected_error_sign = current_entry_side_ == "right" ? 1.0 : -1.0;
-      const bool crossed_exit_yaw = expected_error_sign * yaw_error <= 0.0;
-      if (std::abs(yaw_error) <= yaw_tolerance || crossed_exit_yaw) {
+      if (std::abs(yaw_error) <= yaw_tolerance) {
         publish_stop();
         RCLCPP_INFO(
           get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + arc_reverse "
-          "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f crossed=%s",
+          "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + turn_to_corridor "
+          "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f",
           current_entry_side_.c_str(),
           current.yaw,
           target_exit_yaw,
-          yaw_error,
-          crossed_exit_yaw ? "true" : "false");
-        publish_motion_log("[exit_gap] 出缝完成：straight_reverse + arc_reverse");
+          yaw_error);
+        publish_motion_log("[exit_gap] 出缝完成：straight_reverse + turn_to_corridor");
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -5912,7 +5912,7 @@ private:
           target_exit_yaw,
           yaw_error,
           elapsed);
-        publish_motion_log("[exit_gap] arc_reverse timeout, finish to avoid blocking");
+        publish_motion_log("[exit_gap] turn_to_corridor timeout, finish to avoid blocking");
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -5925,14 +5925,15 @@ private:
           get_logger(),
           "[mission_manager][single_cabinet][exit_gap] phase=%s angular speed invalid, finish to avoid blocking",
           single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str());
-        publish_motion_log("[exit_gap] arc_reverse angular speed invalid, finish to avoid blocking");
+        publish_motion_log("[exit_gap] turn_to_corridor angular speed invalid, finish to avoid blocking");
         finish_single_cabinet_exit_gap();
         return;
       }
 
       geometry_msgs::msg::Twist cmd;
-      cmd.linear.x = -speed;
-      cmd.angular.z = current_entry_side_ == "right" ? turn_speed : -turn_speed;
+      cmd.linear.x = 0.0;
+      cmd.linear.y = 0.0;
+      cmd.angular.z = std::clamp(yaw_error, -turn_speed, turn_speed);
       cmd_pub_->publish(cmd);
       RCLCPP_INFO_THROTTLE(
         get_logger(),
@@ -6784,10 +6785,6 @@ private:
       reason = "entry_align_yaw_tolerance_rad 必须为正数";
       return false;
     }
-    if (!std::isfinite(entry_turn_linear_speed_) || entry_turn_linear_speed_ < 0.0) {
-      reason = "entry_turn_linear_speed 不能为负数";
-      return false;
-    }
     if (!std::isfinite(entry_turn_angular_speed_) || entry_turn_angular_speed_ <= 0.0) {
       reason = "entry_turn_angular_speed 必须为正数";
       return false;
@@ -7384,10 +7381,13 @@ private:
           return;
         }
 
-        const double turn_direction = current_entry_side_ == "right" ? -1.0 : 1.0;
         geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = std::abs(entry_turn_linear_speed_) * safety.speed_scale;
-        angular_z = turn_direction * std::abs(entry_turn_angular_speed_) * safety.speed_scale;
+        cmd.linear.x = 0.0;
+        cmd.linear.y = 0.0;
+        angular_z = std::clamp(
+          yaw_error,
+          -std::abs(entry_turn_angular_speed_),
+          std::abs(entry_turn_angular_speed_)) * safety.speed_scale;
         cmd.angular.z = angular_z;
         cmd_pub_->publish(cmd);
         log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, false, false);
@@ -8007,6 +8007,7 @@ private:
   std::string mission_state_topic_;
   std::string mission_log_topic_;
   std::string cmd_vel_topic_;
+  std::string motion_model_{"diff_drive"};
   std::string corridor_enable_topic_;
   std::string corridor_reverse_topic_;
   std::string gap_context_topic_;
@@ -8076,7 +8077,6 @@ private:
   bool current_entry_profile_valid_{false};
   double entry_turn_yaw_delta_rad_{1.57079632679};
   double entry_align_yaw_tolerance_rad_{0.08};
-  double entry_turn_linear_speed_{0.08};
   double entry_turn_angular_speed_{0.30};
   double entry_straight_speed_{0.08};
   double entry_straight_yaw_kp_{0.8};

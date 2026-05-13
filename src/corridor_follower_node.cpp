@@ -108,6 +108,7 @@ private:
   {
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = 0.0;
+    cmd.linear.y = 0.0;
     cmd.angular.z = 0.0;
     cmd_pub_->publish(cmd);
   }

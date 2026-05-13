@@ -76,7 +76,14 @@ def generate_launch_description():
         executable='number_recognizer_node',
         name='number_recognizer_node',
         output='screen',
-        parameters=[params_file]
+        parameters=[params_file, {
+            'camera_topic': '/c100_right/image_raw',
+            'recognized_topic': '/inventory/recognized_number',
+            'enable_control_topic': '/inventory/recognizer_enable',
+            'visualization_topic': '/inventory/visualization',
+            'debug_a4_topic': '/inventory/debug_a4_region',
+            'debug_digits_topic': '/inventory/debug_digits',
+        }]
     )
 
     distance_estimator_node = Node(
