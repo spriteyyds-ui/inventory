@@ -325,6 +325,7 @@ public:
       declare_parameter<bool>("return_home_between_sides", true);
     full_inventory_return_home_after_done_ =
       declare_parameter<bool>("return_home_after_full_inventory", true);
+    recognize_in_idle_ = declare_parameter<bool>("recognize_in_idle", true);
     full_inventory_recognize_during_nav_ =
       declare_parameter<bool>("recognize_during_nav", false);
     full_inventory_same_side_next_search_enabled_ =
@@ -2040,6 +2041,17 @@ private:
       force_publish ? " [force]" : "");
   }
 
+  bool should_enable_recognizer_for_state(State s) const
+  {
+    return
+      (s == State::IDLE && recognize_in_idle_) ||
+      s == State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT ||
+      (s == State::FULL_INVENTORY_NAV_TO_OBSERVE && full_inventory_recognize_during_nav_) ||
+      s == State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT ||
+      s == State::FULL_INVENTORY_RECOGNITION_FALLBACK ||
+      s == State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH;
+  }
+
   void set_state(State s, const std::string & detail)
   {
     const bool gap_enabled =
@@ -2047,17 +2059,7 @@ private:
       s == State::WAITING_GAP ||
       s == State::SINGLE_CABINET_WAITING_GAP ||
       s == State::FULL_INVENTORY_SEARCH_GAP;
-    const bool recognizer_enabled =
-      s == State::IDLE ||
-      s == State::NAV_ROUTE ||
-      s == State::TARGET_TRACKING ||
-      s == State::SINGLE_CABINET_NAV_TO_TARGET ||
-      s == State::SINGLE_CABINET_TARGET_TRACKING ||
-      s == State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT ||
-      (s == State::FULL_INVENTORY_NAV_TO_OBSERVE && full_inventory_recognize_during_nav_) ||
-      s == State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT ||
-      s == State::FULL_INVENTORY_RECOGNITION_FALLBACK ||
-      s == State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH;
+    const bool recognizer_enabled = should_enable_recognizer_for_state(s);
     const bool distance_enabled =
       s == State::TARGET_TRACKING ||
       s == State::SINGLE_CABINET_TARGET_TRACKING ||
@@ -2066,6 +2068,13 @@ private:
     set_gap_detector_enabled(gap_enabled);
     set_distance_estimator_enabled(distance_enabled);
     set_recognizer_topic_enabled(recognizer_enabled);
+    if (s == State::IDLE) {
+      RCLCPP_INFO(
+        get_logger(),
+        "recognize_in_idle=%s, recognizer %s while IDLE",
+        recognize_in_idle_ ? "true" : "false",
+        recognizer_enabled ? "enabled" : "disabled");
+    }
     state_ = s;
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] " + detail);
@@ -2404,6 +2413,8 @@ private:
     target_found_pending_ = false;
     set_corridor_mode(false, false);
     publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
     has_distance_ = false;
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     if (in_side_row_transfer) {
@@ -3096,9 +3107,7 @@ private:
     reset_nav_route_runtime();
     publish_entry_side();
     set_corridor_mode(false, false);
-    const bool recognizer_during_nav =
-      !(full_inventory_active_ && nav_state == State::FULL_INVENTORY_NAV_TO_OBSERVE &&
-      !full_inventory_recognize_during_nav_);
+    const bool recognizer_during_nav = should_enable_recognizer_for_state(nav_state);
     request_recognizer_enable(recognizer_during_nav);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
@@ -3742,6 +3751,7 @@ private:
   void set_flow_state(State s, const std::string & detail)
   {
     state_enter_time_ = this->now();
+    set_recognizer_topic_enabled(should_enable_recognizer_for_state(s));
     state_ = s;
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] [mission_manager][inventory_flow] " + detail);
@@ -8213,6 +8223,7 @@ private:
   std::string full_inventory_right_route_{"right_route"};
   bool full_inventory_return_home_between_sides_{true};
   bool full_inventory_return_home_after_done_{true};
+  bool recognize_in_idle_{true};
   bool full_inventory_recognize_during_nav_{false};
   bool full_inventory_same_side_next_search_enabled_{true};
   double full_inventory_same_side_search_speed_{0.04};

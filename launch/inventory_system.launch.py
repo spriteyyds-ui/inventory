@@ -83,6 +83,7 @@ def generate_launch_description():
             'visualization_topic': '/inventory/visualization',
             'debug_a4_topic': '/inventory/debug_a4_region',
             'debug_digits_topic': '/inventory/debug_digits',
+            'enable_on_start': True,
         }]
     )
 

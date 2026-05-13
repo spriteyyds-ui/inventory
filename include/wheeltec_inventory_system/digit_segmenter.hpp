@@ -17,9 +17,14 @@ struct DigitSegmenterParams
   double clahe_clip_limit{2.0};
   int clahe_grid_size{8};
   int pre_blur_kernel{3};
+  int median_blur_kernel{3};
   int adaptive_thresh_block_size{11};
   int adaptive_thresh_c{2};
   bool enable_otsu_fusion{true};
+  bool binary_cleanup_enabled{true};
+  int binary_cleanup_min_component_area{20};
+  int binary_cleanup_min_component_width{3};
+  int binary_cleanup_min_component_height{3};
   int morph_kernel_size{3};
   int morph_open_kernel_size{1};
   int morph_close_kernel_size{3};
