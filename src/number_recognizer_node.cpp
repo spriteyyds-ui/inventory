@@ -134,9 +134,17 @@ private:
     seg_params_.clahe_clip_limit = declare_parameter<double>("clahe_clip_limit", 2.0);
     seg_params_.clahe_grid_size = declare_parameter<int>("clahe_grid_size", 8);
     seg_params_.pre_blur_kernel = declare_parameter<int>("pre_blur_kernel", 3);
+    seg_params_.median_blur_kernel = declare_parameter<int>("median_blur_kernel", 3);
     seg_params_.adaptive_thresh_block_size = declare_parameter<int>("adaptive_thresh_block_size", 11);
     seg_params_.adaptive_thresh_c = declare_parameter<int>("adaptive_thresh_c", 2);
     seg_params_.enable_otsu_fusion = declare_parameter<bool>("enable_otsu_fusion", true);
+    seg_params_.binary_cleanup_enabled = declare_parameter<bool>("binary_cleanup_enabled", true);
+    seg_params_.binary_cleanup_min_component_area =
+      declare_parameter<int>("binary_cleanup_min_component_area", 20);
+    seg_params_.binary_cleanup_min_component_width =
+      declare_parameter<int>("binary_cleanup_min_component_width", 3);
+    seg_params_.binary_cleanup_min_component_height =
+      declare_parameter<int>("binary_cleanup_min_component_height", 3);
     seg_params_.morph_kernel_size = declare_parameter<int>("morph_kernel_size", 3);
     seg_params_.morph_open_kernel_size = declare_parameter<int>("morph_open_kernel_size", 1);
     seg_params_.morph_close_kernel_size = declare_parameter<int>("morph_close_kernel_size", 3);
@@ -266,12 +274,13 @@ private:
 
     RCLCPP_INFO(
       get_logger(),
-      "A4: blur=%d min_area=%.3f eps=%.3f | SEG: blur=%d block=%d C=%d open=%d close=%d "
+      "A4: blur=%d min_area=%.3f eps=%.3f | SEG: blur=%d median=%d block=%d C=%d open=%d close=%d "
       "area=%d..%d ratio=%.5f..%.2f rel=%.2f/%.2f merge_gap=%d/%.3f merge_y=%.2f",
       a4_params_.gaussian_kernel,
       a4_params_.min_area_ratio,
       a4_params_.approx_epsilon_ratio,
       seg_params_.pre_blur_kernel,
+      seg_params_.median_blur_kernel,
       seg_params_.adaptive_thresh_block_size,
       seg_params_.adaptive_thresh_c,
       seg_params_.morph_open_kernel_size,
@@ -285,6 +294,16 @@ private:
       seg_params_.merge_gap_px,
       seg_params_.merge_gap_ratio,
       seg_params_.merge_min_y_overlap_ratio);
+
+    RCLCPP_INFO(
+      get_logger(),
+      "SEG_DENOISE: median_blur_kernel=%d binary_cleanup_enabled=%d "
+      "min_component_area=%d min_component_size=%dx%d",
+      seg_params_.median_blur_kernel,
+      seg_params_.binary_cleanup_enabled ? 1 : 0,
+      seg_params_.binary_cleanup_min_component_area,
+      seg_params_.binary_cleanup_min_component_width,
+      seg_params_.binary_cleanup_min_component_height);
 
     RCLCPP_INFO(
       get_logger(),
@@ -414,12 +433,22 @@ private:
         seg_new.clahe_grid_size = p.as_int();
       } else if (name == "pre_blur_kernel") {
         seg_new.pre_blur_kernel = p.as_int();
+      } else if (name == "median_blur_kernel") {
+        seg_new.median_blur_kernel = p.as_int();
       } else if (name == "adaptive_thresh_block_size") {
         seg_new.adaptive_thresh_block_size = p.as_int();
       } else if (name == "adaptive_thresh_c") {
         seg_new.adaptive_thresh_c = p.as_int();
       } else if (name == "enable_otsu_fusion") {
         seg_new.enable_otsu_fusion = p.as_bool();
+      } else if (name == "binary_cleanup_enabled") {
+        seg_new.binary_cleanup_enabled = p.as_bool();
+      } else if (name == "binary_cleanup_min_component_area") {
+        seg_new.binary_cleanup_min_component_area = p.as_int();
+      } else if (name == "binary_cleanup_min_component_width") {
+        seg_new.binary_cleanup_min_component_width = p.as_int();
+      } else if (name == "binary_cleanup_min_component_height") {
+        seg_new.binary_cleanup_min_component_height = p.as_int();
       } else if (name == "morph_kernel_size") {
         seg_new.morph_kernel_size = p.as_int();
       } else if (name == "morph_open_kernel_size") {

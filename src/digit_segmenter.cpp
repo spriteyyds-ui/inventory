@@ -85,6 +85,15 @@ bool DigitSegmenter::segment(const cv::Mat & a4_bgr, DigitSegmentationResult & r
     cv::GaussianBlur(gray_eq, gray_eq, cv::Size(blur_k, blur_k), 0.0);
   }
 
+  int median_k = params_.median_blur_kernel;
+  if (median_k % 2 == 0) {
+    median_k += 1;
+  }
+  median_k = std::clamp(median_k, 1, 7);
+  if (median_k >= 3) {
+    cv::medianBlur(gray_eq, gray_eq, median_k);
+  }
+
   int block = params_.adaptive_thresh_block_size;
   if (block % 2 == 0) {
     block += 1;
@@ -106,6 +115,33 @@ bool DigitSegmenter::segment(const cv::Mat & a4_bgr, DigitSegmentationResult & r
     cv::Mat binary_otsu;
     cv::threshold(gray_eq, binary_otsu, 0, 255, cv::THRESH_BINARY_INV | cv::THRESH_OTSU);
     cv::bitwise_or(binary_adapt, binary_otsu, binary);
+  }
+
+  if (params_.binary_cleanup_enabled && !binary.empty()) {
+    cv::Mat labels;
+    cv::Mat stats;
+    cv::Mat centroids;
+    const int component_count = cv::connectedComponentsWithStats(
+      binary, labels, stats, centroids, 8, CV_32S);
+    if (component_count > 1) {
+      cv::Mat keep_mask = cv::Mat::zeros(binary.size(), CV_8UC1);
+      const int min_component_area = std::max(0, params_.binary_cleanup_min_component_area);
+      const int min_component_width = std::max(0, params_.binary_cleanup_min_component_width);
+      const int min_component_height = std::max(0, params_.binary_cleanup_min_component_height);
+      for (int label = 1; label < component_count; ++label) {
+        const int area = stats.at<int>(label, cv::CC_STAT_AREA);
+        const int width = stats.at<int>(label, cv::CC_STAT_WIDTH);
+        const int height = stats.at<int>(label, cv::CC_STAT_HEIGHT);
+        if (area < min_component_area || width < min_component_width ||
+          height < min_component_height)
+        {
+          continue;
+        }
+        keep_mask.setTo(255, labels == label);
+      }
+      binary.setTo(0);
+      binary.setTo(255, keep_mask);
+    }
   }
 
   int open_k = params_.morph_open_kernel_size > 0 ? params_.morph_open_kernel_size : params_.morph_kernel_size;
