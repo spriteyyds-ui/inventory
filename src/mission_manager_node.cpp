@@ -113,7 +113,13 @@ public:
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
     entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", enter_angular_speed_);
+    entry_turn_timeout_sec_ = declare_parameter<double>("entry_turn_timeout_sec", 12.0);
+    entry_turn_timeout_sec_ = std::isfinite(entry_turn_timeout_sec_) ?
+      std::max(0.1, entry_turn_timeout_sec_) : 12.0;
     entry_straight_speed_ = declare_parameter<double>("entry_straight_speed", enter_linear_speed_);
+    entry_straight_timeout_sec_ = declare_parameter<double>("entry_straight_timeout_sec", 60.0);
+    entry_straight_timeout_sec_ = std::isfinite(entry_straight_timeout_sec_) ?
+      std::max(0.1, entry_straight_timeout_sec_) : 60.0;
     entry_straight_yaw_kp_ = declare_parameter<double>("entry_straight_yaw_kp", 0.8);
     entry_straight_yaw_deadband_rad_ =
       declare_parameter<double>("entry_straight_yaw_deadband_rad", 0.03);
@@ -152,6 +158,16 @@ public:
     tracking_max_angular_ = declare_parameter<double>("tracking_max_angular", 0.80);
 
     distance_tolerance_ = declare_parameter<double>("distance_tolerance", 0.08);
+    target_distance_aligned_min_m_ =
+      declare_parameter<double>("target_distance_aligned_min_m", 0.25);
+    target_distance_aligned_max_m_ =
+      declare_parameter<double>("target_distance_aligned_max_m", 0.75);
+    target_distance_gap_threshold_m_ =
+      declare_parameter<double>("target_distance_gap_threshold_m", 1.50);
+    const auto target_distance_gap_confirm_count_param =
+      declare_parameter<int>("target_distance_gap_confirm_count", 1);
+    target_distance_gap_confirm_count_ =
+      std::max(1, static_cast<int>(target_distance_gap_confirm_count_param));
     distance_stable_time_sec_ = declare_parameter<double>("distance_stable_time_sec", 1.20);
     recognition_timeout_sec_ = declare_parameter<double>("recognition_timeout_sec", 1.00);
     target_recognition_stable_frames_ =
@@ -2054,6 +2070,12 @@ private:
 
   void set_state(State s, const std::string & detail)
   {
+    if (state_ == State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN &&
+      s != State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN)
+    {
+      target_distance_gap_open_count_ = 0;
+    }
+
     const bool gap_enabled =
       s == State::SEARCH_GAP ||
       s == State::WAITING_GAP ||
@@ -4274,6 +4296,7 @@ private:
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
     full_inventory_recognition_fallback_phase_ = FullInventoryRecognitionFallbackPhase::IDLE;
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    target_distance_gap_open_count_ = 0;
     if (from_post_route_wait) {
       publish_full_inventory_log(
         "post-route recognition wait success target=" + std::to_string(rec_id));
@@ -4713,6 +4736,76 @@ private:
       return;
     }
 
+    const double aligned_min = target_distance_aligned_min_m_;
+    const double aligned_max = std::max(target_distance_aligned_max_m_, aligned_min);
+    const double gap_threshold = std::max(target_distance_gap_threshold_m_, aligned_max);
+
+    if (latest_distance_ >= gap_threshold) {
+      ++target_distance_gap_open_count_;
+      tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+      publish_stop();
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][FULL_INVENTORY] target distance align class=gap_open target=%d "
+        "distance=%.2f aligned_min=%.2f aligned_max=%.2f gap_threshold=%.2f "
+        "confirm=%d/%d cmd.linear.x=0.000",
+        current_target_cabinet_,
+        latest_distance_,
+        aligned_min,
+        aligned_max,
+        gap_threshold,
+        target_distance_gap_open_count_,
+        target_distance_gap_confirm_count_);
+      if (target_distance_gap_open_count_ >= target_distance_gap_confirm_count_) {
+        publish_full_inventory_log(
+          "target distance align gap_open: target_distance=" +
+          format_fixed(latest_distance_, 2) +
+          " >= threshold=" + format_fixed(gap_threshold, 2) +
+          "，认为已扫到缝隙/开放空间，提前进入 SEARCH_GAP");
+        set_distance_estimator_enabled(false, true);
+        begin_search_gap_flow();
+      }
+      return;
+    }
+
+    target_distance_gap_open_count_ = 0;
+
+    if (latest_distance_ >= aligned_min && latest_distance_ <= aligned_max) {
+      publish_stop();
+      if (tracking_stable_start_.nanoseconds() == 0) {
+        tracking_stable_start_ = this->now();
+      }
+      const double stable_elapsed = (this->now() - tracking_stable_start_).seconds();
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][FULL_INVENTORY] target distance align class=aligned target=%d "
+        "distance=%.2f aligned_min=%.2f aligned_max=%.2f gap_threshold=%.2f "
+        "stable_elapsed=%.2f/%.2f cmd.linear.x=0.000",
+        current_target_cabinet_,
+        latest_distance_,
+        aligned_min,
+        aligned_max,
+        gap_threshold,
+        stable_elapsed,
+        distance_stable_time_sec_);
+      if (stable_elapsed >= distance_stable_time_sec_) {
+        publish_stop();
+        set_distance_estimator_enabled(false, true);
+        publish_full_inventory_log(
+          "target distance align aligned: distance=" + format_fixed(latest_distance_, 2) +
+          " in [" + format_fixed(aligned_min, 2) + ", " + format_fixed(aligned_max, 2) +
+          "] stable_elapsed=" + format_fixed(stable_elapsed, 2) +
+          "，进入 SEARCH_GAP");
+        begin_search_gap_flow();
+      }
+      return;
+    }
+
+    tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     const double distance_error = latest_distance_ - follow_distance_;
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = std::clamp(
@@ -4722,31 +4815,25 @@ private:
     cmd.angular.z = 0.0;
     cmd_pub_->publish(cmd);
 
+    const char * range_class =
+      latest_distance_ < aligned_min ? "too_close" : "middle_adjust";
     RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][FULL_INVENTORY] target distance align target=%d distance=%.2f "
-      "follow=%.2f tolerance=%.2f cmd.linear.x=%.3f",
+      "[mission_manager][FULL_INVENTORY] target distance align class=%s target=%d "
+      "distance=%.2f aligned_min=%.2f aligned_max=%.2f gap_threshold=%.2f "
+      "follow=%.2f tolerance=%.2f distance_error=%.2f cmd.linear.x=%.3f",
+      range_class,
       current_target_cabinet_,
       latest_distance_,
+      aligned_min,
+      aligned_max,
+      gap_threshold,
       follow_distance_,
       distance_tolerance_,
+      distance_error,
       cmd.linear.x);
-
-    if (std::abs(distance_error) <= distance_tolerance_) {
-      if (tracking_stable_start_.nanoseconds() == 0) {
-        tracking_stable_start_ = this->now();
-      }
-      if ((this->now() - tracking_stable_start_).seconds() >= distance_stable_time_sec_) {
-        publish_stop();
-        set_distance_estimator_enabled(false, true);
-        publish_full_inventory_log("target distance stable, distance=off, gap_detector=on");
-        begin_search_gap_flow();
-      }
-    } else {
-      tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    }
   }
 
   void handle_full_inventory_scan_state()
@@ -7250,14 +7337,12 @@ private:
 
   double entry_turn_timeout_sec() const
   {
-    const double min_angular = std::max(0.05, std::abs(entry_turn_angular_speed_));
-    return std::max(5.0, 2.5 * std::abs(entry_turn_yaw_delta_rad_) / min_angular + 2.0);
+    return entry_turn_timeout_sec_;
   }
 
   double entry_straight_timeout_sec() const
   {
-    const double min_speed = std::max(0.03, std::abs(entry_straight_speed_));
-    return std::max(8.0, 2.5 * target_straight_distance_ / min_speed + 3.0);
+    return entry_straight_timeout_sec_;
   }
 
   void log_entering_gap_status(
@@ -7385,8 +7470,22 @@ private:
           return;
         }
 
-        if ((this->now() - entry_gap_phase_start_).seconds() > entry_turn_timeout_sec()) {
+        const double turn_elapsed = (this->now() - entry_gap_phase_start_).seconds();
+        const double turn_timeout = entry_turn_timeout_sec();
+        if (turn_elapsed > turn_timeout) {
           log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, false, false);
+          RCLCPP_ERROR(
+            get_logger(),
+            "[mission_manager][ENTERING_TURN] 入缝转向超时 elapsed=%.2f timeout=%.2f "
+            "current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
+            "entry_turn_angular_speed=%.3f entry_align_yaw_tolerance_rad=%.3f",
+            turn_elapsed,
+            turn_timeout,
+            current.yaw,
+            target_gap_yaw_,
+            yaw_error,
+            entry_turn_angular_speed_,
+            entry_align_yaw_tolerance_rad_);
           fail_entering_gap("入缝转向超时，未达到目标缝隙航向");
           return;
         }
@@ -7430,8 +7529,53 @@ private:
           return;
         }
 
-        if ((this->now() - entry_gap_phase_start_).seconds() > entry_straight_timeout_sec()) {
-          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+        const double straight_elapsed = (this->now() - entry_gap_phase_start_).seconds();
+        const double straight_timeout = entry_straight_timeout_sec();
+        const double estimated_speed = straight_elapsed > 1e-3 ? traveled / straight_elapsed : 0.0;
+        double yaw_hold_cmd = 0.0;
+        if (std::abs(yaw_error) >= entry_straight_yaw_deadband_rad_) {
+          yaw_hold_cmd = std::clamp(
+            entry_straight_yaw_kp_ * yaw_error,
+            -std::abs(entry_straight_max_angular_speed_),
+            std::abs(entry_straight_max_angular_speed_));
+        }
+        EntrySideHoldEval side_hold;
+        (void)evaluate_entry_side_distance_hold(side_hold);
+        side_hold.yaw_hold_cmd = yaw_hold_cmd;
+
+        const double angular_limit = std::abs(entry_straight_max_angular_speed_);
+        const double limited_angular = std::clamp(
+          yaw_hold_cmd + side_hold.side_distance_cmd,
+          -angular_limit,
+          angular_limit);
+        const double straight_linear_cmd = std::abs(entry_straight_speed_) * safety.speed_scale;
+
+        if (straight_elapsed > straight_timeout) {
+          side_hold.final_angular_cmd = limited_angular * safety.speed_scale;
+          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false, side_hold);
+          publish_stop();
+          RCLCPP_ERROR(
+            get_logger(),
+            "[mission_manager][MOVING_TO_GRID_CENTER] 入缝直行超时 elapsed=%.2f timeout=%.2f "
+            "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
+            "cmd.linear.x=0.000 planned_linear=%.3f speed_scale=%.2f estimated_speed=%.3f "
+            "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
+            "side_distance_cmd=%.3f side_hold_status=%s",
+            straight_elapsed,
+            straight_timeout,
+            target_straight_distance_,
+            traveled,
+            entry_straight_speed_,
+            straight_linear_cmd,
+            safety.speed_scale,
+            estimated_speed,
+            current.x,
+            current.y,
+            current.yaw,
+            target_gap_yaw_,
+            yaw_error,
+            side_hold.side_distance_cmd,
+            side_hold.status.c_str());
           fail_entering_gap("入缝直行超时，未到达深度格中心");
           return;
         }
@@ -7471,30 +7615,38 @@ private:
         }
 
         entry_last_traveled_ = traveled;
-        EntrySideHoldEval side_hold;
-        double yaw_hold_cmd = 0.0;
-        if (std::abs(yaw_error) >= entry_straight_yaw_deadband_rad_) {
-          yaw_hold_cmd = std::clamp(
-            entry_straight_yaw_kp_ * yaw_error,
-            -std::abs(entry_straight_max_angular_speed_),
-            std::abs(entry_straight_max_angular_speed_));
-        }
-        (void)evaluate_entry_side_distance_hold(side_hold);
-        side_hold.yaw_hold_cmd = yaw_hold_cmd;
-
-        const double angular_limit = std::abs(entry_straight_max_angular_speed_);
-        const double limited_angular = std::clamp(
-          yaw_hold_cmd + side_hold.side_distance_cmd,
-          -angular_limit,
-          angular_limit);
 
         geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = std::abs(entry_straight_speed_) * safety.speed_scale;
+        cmd.linear.x = straight_linear_cmd;
         cmd.angular.z = limited_angular * safety.speed_scale;
         angular_z = cmd.angular.z;
         side_hold.final_angular_cmd = angular_z;
         cmd_pub_->publish(cmd);
         log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false, side_hold);
+        RCLCPP_INFO_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          1000,
+          "[mission_manager][MOVING_TO_GRID_CENTER] elapsed=%.2f timeout=%.2f "
+          "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
+          "cmd.linear.x=%.3f speed_scale=%.2f estimated_speed=%.3f "
+          "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
+          "side_distance_cmd=%.3f side_hold_status=%s",
+          straight_elapsed,
+          straight_timeout,
+          target_straight_distance_,
+          traveled,
+          entry_straight_speed_,
+          cmd.linear.x,
+          safety.speed_scale,
+          estimated_speed,
+          current.x,
+          current.y,
+          current.yaw,
+          target_gap_yaw_,
+          yaw_error,
+          side_hold.side_distance_cmd,
+          side_hold.status.c_str());
         break;
       }
 
@@ -8088,7 +8240,9 @@ private:
   double entry_turn_yaw_delta_rad_{1.57079632679};
   double entry_align_yaw_tolerance_rad_{0.08};
   double entry_turn_angular_speed_{0.30};
+  double entry_turn_timeout_sec_{12.0};
   double entry_straight_speed_{0.08};
+  double entry_straight_timeout_sec_{60.0};
   double entry_straight_yaw_kp_{0.8};
   double entry_straight_yaw_deadband_rad_{0.03};
   double entry_straight_max_angular_speed_{0.10};
@@ -8115,6 +8269,11 @@ private:
   double tracking_max_angular_{0.8};
 
   double distance_tolerance_{0.08};
+  double target_distance_aligned_min_m_{0.25};
+  double target_distance_aligned_max_m_{0.75};
+  double target_distance_gap_threshold_m_{1.50};
+  int target_distance_gap_confirm_count_{1};
+  int target_distance_gap_open_count_{0};
   double distance_stable_time_sec_{1.2};
   double recognition_timeout_sec_{1.0};
   int target_recognition_stable_frames_{3};
