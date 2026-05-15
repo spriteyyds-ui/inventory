@@ -285,7 +285,7 @@ mission_manager_node:
     post_track_retreat_distance: 0.10                                   # SEARCH_GAP 超时后静态确认前的固定后退距离，单位 m；调大会后退更多
     retreat_speed: 0.10                                                 # 跟踪后后退线速度，单位 m/s；调大会后退更快但定位误差可能变大
     wait_gap_stop_settle_sec: 0.25                                      # 后退或调整动作后等待车体稳定时间，单位 s；调大会检测更稳但耗时更长
-    search_gap_speed: 0.20                                              # SEARCH_GAP 朝预期间隙移动的低速速度，单位 m/s；调大会找缝更快但可能越过目标
+    search_gap_speed: 0.08                                              # SEARCH_GAP 朝预期间隙移动的低速速度，单位 m/s；调大会找缝更快但可能越过目标
     search_gap_forward_timeout_sec: 10.0                                # SEARCH_GAP 前向搜索超时，单位 s；调大会搜索更远，调小更快进入微调
     search_gap_backward_timeout_sec: 10.0                               # SEARCH_GAP 后向搜索超时，单位 s；调大会后向搜索更远
     gap_detect_cycle_timeout_sec: 2.5                                   # WAITING_GAP 单轮间隙检测超时，单位 s；调大会每轮等待更久
@@ -345,8 +345,8 @@ mission_manager_node:
     lift_level_count: 2                                                 # 升降扫描层数，单位 层；调大会扫描更多高度层
     lift_home_level: 1                                                  # 升降杆回零或默认层号；修改会改变扫描结束后的停靠层
 
-    grid_motion_duration_sec: 1.0                                       # 间隙内单次网格移动预计时长，单位 s；调大会给运动更多时间
-    grid_motion_timeout_sec: 10.0                                       # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
+    grid_motion_duration_sec: 100.0                                     # 间隙内单次网格移动预计时长，单位 s；调大会给运动更多时间
+    grid_motion_timeout_sec: 60.0                                       # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
 
     real_motion_enabled: true                                           # 是否启用单柜真实运动盘库流程；关闭可跳过该运行路径
     real_motion_target_cabinet: 4                                       # 单柜真实运动目标货柜编号；改动会改变单柜测试目标
@@ -367,9 +367,9 @@ mission_manager_node:
     exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
     exit_gap_speed: 0.15                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
-    exit_gap_extra_distance_m: 0.10                                     # 退出间隙额外距离，单位 m；调大会多退一些
-    exit_gap_timeout_sec: 40.0                                          # 退出间隙超时，单位 s；调大会允许更慢退出
-    exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
+    exit_gap_extra_distance_m: 0.20                                     # 退出间隙额外距离，单位 m；调大会多退一些
+    exit_gap_timeout_sec: 60.0                                          # 退出间隙超时，单位 s；调大会允许更慢退出
+    exit_gap_distance_m: 1.70                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
     exit_gap_turn_angular_speed: 0.25                                   # 退出后转向角速度，单位 rad/s；调大会转向更快
     exit_gap_turn_yaw_tolerance_rad: 0.08                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
@@ -378,8 +378,8 @@ mission_manager_node:
     close_gap_after_final_exit: true                                    # 最终退出后是否请求关闭间隙；关闭会跳过关闭请求
 
     grid_motion_enabled: true                                           # 是否启用间隙内深度网格移动；关闭会跳过网格位移
-    grid_spacing_m: 0.30                                                # 间隙内相邻扫描网格间距，单位 m；调大会每层移动更远
-    grid_move_speed: 0.10                                               # 间隙内网格移动速度，单位 m/s；调大会移动更快但定位误差可能增大
+    grid_spacing_m: 0.50                                                # 间隙内相邻扫描网格间距，单位 m；调大会每层移动更远
+    grid_move_speed: 0.20                                               # 间隙内网格移动速度，单位 m/s；调大会移动更快但定位误差可能增大
     grid_move_timeout_sec: 50.0                                         # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
     grid_move_return_between_layers: false                              # 不同升降层之间是否回到网格起点；开启会增加回退动作但层间位置一致
 
