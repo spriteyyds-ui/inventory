@@ -1,737 +1,434 @@
 corridor_follower_node:
   ros__parameters:
-    # LaserScan input for corridor centering control (topic name).
-    scan_topic: /scan
-    # Chassis velocity command output (topic name).
-    cmd_vel_topic: /cmd_vel
-    # Nominal forward speed in corridor mode (meters/second).
-    forward_speed: 0.20
-    # Absolute angular speed limit for correction (radians/second).
-    max_angular_speed: 0.60
-    # PID proportional gain for lateral error correction (gain).
-    pid_kp: 1.20
-    # PID integral gain for lateral error correction (gain).
-    pid_ki: 0.00
-    # PID derivative gain for lateral error correction (gain).
-    pid_kd: 0.15
-    # Integral term clamp limit (absolute value, gain output unit).
-    integral_limit: 1.5
-    # Deadband for centering error before correction (meters).
-    error_deadband: 0.02
-    # Left-side sampling sector start angle in base frame (degrees).
-    left_start_deg: 60.0
-    # Left-side sampling sector end angle in base frame (degrees).
-    left_end_deg: 120.0
-    # Right-side sampling sector start angle in base frame (degrees).
-    right_start_deg: -120.0
-    # Right-side sampling sector end angle in base frame (degrees).
-    right_end_deg: -60.0
-    # Minimum valid lidar range used by corridor control (meters).
-    min_valid_range: 0.05
-    # Maximum valid lidar range used by corridor control (meters).
-    max_valid_range: 8.0
-    # External enable command topic for corridor follower (topic name).
-    enable_control_topic: /inventory/corridor_enable
-    # External reverse-mode command topic for corridor follower (topic name).
-    reverse_control_topic: /inventory/corridor_reverse
-    # Service name to enable/disable corridor following (service name).
-    set_enable_service_name: /inventory/set_corridor_following
+    scan_topic: /scan                                                   # 走廊居中控制使用的激光雷达输入话题；更换传感器话题时需同步修改
+    cmd_vel_topic: /cmd_vel                                             # 底盘速度指令输出话题；改错会导致底盘收不到控制速度
+    forward_speed: 0.20                                                 # 走廊模式默认前进速度，单位 m/s；调大会更快但居中修正余量变小
+    max_angular_speed: 0.60                                             # 居中修正角速度上限，单位 rad/s；调大会转向更激进，调小更平稳
+    pid_kp: 1.20                                                        # 横向误差 PID 比例增益；调大会响应更快但可能振荡
+    pid_ki: 0.00                                                        # 横向误差 PID 积分增益；调大会消除长期偏差但易累积过冲
+    pid_kd: 0.15                                                        # 横向误差 PID 微分增益；调大会抑制快速变化但会放大噪声
+    integral_limit: 1.5                                                 # 积分项绝对值限幅；调大会允许更强积分修正，调小可减少积分饱和
+    error_deadband: 0.02                                                # 居中误差死区，单位 m；调大会减少小幅抖动，调小提高对齐精度
+    left_start_deg: 60.0                                                # 左侧采样扇区起始角，单位 deg；调大会缩小靠前侧采样范围
+    left_end_deg: 120.0                                                 # 左侧采样扇区结束角，单位 deg；调大会扩大靠后侧采样范围
+    right_start_deg: -120.0                                             # 右侧采样扇区起始角，单位 deg；调小会扩大靠后侧采样范围
+    right_end_deg: -60.0                                                # 右侧采样扇区结束角，单位 deg；调小会缩小靠前侧采样范围
+    min_valid_range: 0.05                                               # 走廊控制接受的最小雷达距离，单位 m；调大会过滤近距离噪声
+    max_valid_range: 8.0                                                # 走廊控制接受的最大雷达距离，单位 m；调小会忽略远处墙面或货柜
+    enable_control_topic: /inventory/corridor_enable                    # 走廊跟随使能控制话题；状态机通过它启停居中控制
+    reverse_control_topic: /inventory/corridor_reverse                  # 走廊跟随后退模式控制话题；置真后速度方向按后退处理
+    set_enable_service_name: /inventory/set_corridor_following          # 走廊跟随启停服务名；改名需同步调用端
 
 number_recognizer_node:
   ros__parameters:
-    # Camera image topic name (topic name).
-    camera_topic: /c100_right/image_raw
-    # Recognition output topic for cabinet number (topic name).
-    recognized_topic: /inventory/recognized_number
-    # Debug topic: A4 detection / warped view image (topic name).
-    debug_a4_topic: /inventory/debug_a4_region
-    # Debug topic: segmented digit crops image (topic name).
-    debug_digits_topic: /inventory/debug_digits
-    # Debug topic: final visualization overlay image (topic name).
-    visualization_topic: /inventory/visualization
-    # Service name to manually enable/disable recognizer (service name).
-    trigger_service_name: /inventory/trigger_recognition
-    # External enable control from mission state machine (topic name, boolean command).
-    enable_control_topic: /inventory/recognizer_enable
-    # Distance overlay input for visualization text (topic name).
-    distance_overlay_topic: /inventory/target_distance
+    camera_topic: /c100_right/image_raw                                 # 数字识别输入图像话题；改动会切换识别所用摄像头
+    recognized_topic: /inventory/recognized_number                      # 货柜编号识别结果输出话题；任务管理器订阅该话题
+    debug_a4_topic: /inventory/debug_a4_region                          # A4 区域调试图输出话题；用于观察透视矫正效果
+    debug_digits_topic: /inventory/debug_digits                         # 数字分割调试图输出话题；用于检查候选数字裁剪
+    visualization_topic: /inventory/visualization                       # 最终识别可视化图输出话题；用于人工查看叠加结果
+    trigger_service_name: /inventory/trigger_recognition                # 手动触发或启停识别的服务名；改名需同步测试或调用脚本
+    enable_control_topic: /inventory/recognizer_enable                  # 识别器使能控制话题；任务阶段切换时控制是否运行识别
+    distance_overlay_topic: /inventory/target_distance                  # 可视化叠加距离输入话题；缺失时只影响显示距离文本
 
-    # Enable recognizer at startup before mission_manager publishes state control (boolean).
-    enable_on_start: true
-    # Minimum confidence to mark recognition as valid (ratio, 0~1).
-    min_confidence: 0.80
-    # Max failed attempts before local counter reset (count).
-    max_attempts: 20
-    # Minimum interval between inference attempts (seconds).
-    attempt_interval: 0.1
-    # Max age of distance overlay message considered fresh (seconds).
-    distance_overlay_timeout_sec: 0.8
-    # Whether to allow union-patch classification as last fallback (boolean).
-    enable_union_fallback_classification: true
-    # Minimum accepted cabinet ID value (count / integer id).
-    cabinet_id_min: 1
-    # Maximum accepted cabinet ID value (count / integer id). Raise when warehouse has more cabinet IDs.
-    cabinet_id_max: 36
+    enable_on_start: true                                               # 启动后是否默认开启识别；设为 false 可等任务管理器明确使能
+    min_confidence: 0.80                                                # 整体识别有效的最低置信度比例；调大会更严格，调小更容易接受低置信结果
+    max_attempts: 20                                                    # 本地连续失败计数上限，单位 次；调大会延长重试，调小更快复位
+    attempt_interval: 0.1                                               # 两次推理尝试的最小间隔，单位 s；调大会降低算力占用但响应更慢
+    distance_overlay_timeout_sec: 0.8                                   # 距离叠加消息最大有效时间，单位 s；调大会更容忍旧距离，调小显示更实时
+    enable_union_fallback_classification: true                          # 是否启用联合区域兜底分类；关闭可减少误合并，开启可提高断裂数字召回
+    cabinet_id_min: 1                                                   # 接受的最小货柜编号；调大会过滤更小编号
+    cabinet_id_max: 36                                                  # 接受的最大货柜编号；仓库编号增加时需调大
 
-    # Reference digit height in pixels for visual distance estimation (pixels).
-    known_digit_height_px: 40.0
-    # Reference distance corresponding to known_digit_height_px (meters).
-    known_distance_m: 1.0
-    # Equivalent focal-length factor used by pinhole estimate (pixels).
-    distance_focal_length: 600.0
+    known_digit_height_px: 40.0                                         # 视觉测距参考数字高度，单位 px；调大会使估计距离相对变大
+    known_distance_m: 1.0                                               # 参考数字高度对应的实际距离，单位 m；调大会按比例放大视觉距离估计
+    distance_focal_length: 600.0                                        # 针孔测距等效焦距因子，单位 px；调大会使同样像素高度估计为更远
 
-    # A4 detector Gaussian blur kernel size (pixels, odd preferred).
-    a4_gaussian_kernel: 5
-    # A4 detector morphology kernel size (pixels).
-    a4_morph_kernel_size: 5
-    # Minimum A4 contour area ratio to image area (ratio).
-    a4_min_area_ratio: 0.01
-    # Polygon approximation epsilon ratio for A4 contour fitting (ratio).
-    a4_approx_epsilon: 0.02
-    # Minimum A4 aspect ratio accepted during detection (ratio).
-    a4_min_aspect_ratio: 0.55
-    # Maximum A4 aspect ratio accepted during detection (ratio).
-    a4_max_aspect_ratio: 2.2
+    a4_gaussian_kernel: 5                                               # A4 检测高斯模糊核尺寸，单位 px；调大会更抗噪但边缘变钝，通常取奇数
+    a4_morph_kernel_size: 5                                             # A4 检测形态学核尺寸，单位 px；调大会连接断边但可能吞掉细节
+    a4_min_area_ratio: 0.01                                             # A4 轮廓面积占图像面积的最小比例；调大会过滤小目标，调小可识别更远纸张
+    a4_approx_epsilon: 0.02                                             # A4 轮廓多边形拟合精度比例；调大会轮廓更粗略，调小更贴合边缘
+    a4_min_aspect_ratio: 0.55                                           # A4 候选最小宽高比；调大会过滤更窄目标
+    a4_max_aspect_ratio: 2.2                                            # A4 候选最大宽高比；调小会过滤更扁或视角更斜的目标
 
-    # CLAHE clip limit for segmentation preprocessing (ratio-like gain).
-    clahe_clip_limit: 2.0
-    # CLAHE tile grid size (count / pixels per tile group).
-    clahe_grid_size: 8
-    # Pre-threshold Gaussian blur kernel size (pixels, odd preferred).
-    pre_blur_kernel: 5
-    # Median blur kernel before thresholding to suppress salt-and-pepper noise. 0/1 disables; even values are rounded up to odd.
-    median_blur_kernel: 3
-    # Adaptive threshold block size (pixels, odd required).
-    adaptive_thresh_block_size: 11
-    # Adaptive threshold C offset (count / intensity offset).
-    adaptive_thresh_c: 4
-    # Fuse adaptive threshold with Otsu threshold for robustness (boolean).
-    enable_otsu_fusion: true
-    # Remove small foreground connected components after thresholding. Lower min_component_area or disable cleanup if digit strokes are removed.
-    binary_cleanup_enabled: true
-    # Minimum connected-component foreground area kept in the binary image (pixels^2).
-    binary_cleanup_min_component_area: 20
-    # Minimum connected-component width kept in the binary image (pixels).
-    binary_cleanup_min_component_width: 3
-    # Minimum connected-component height kept in the binary image (pixels).
-    binary_cleanup_min_component_height: 3
-    # Legacy morphology kernel size (pixels).
-    morph_kernel_size: 1
-    # Morphology open kernel size for denoising (pixels). Keep small; raising may erase thin digit strokes.
-    morph_open_kernel_size: 1
-    # Morphology close kernel size for reconnecting strokes (pixels). Raise if distant digits split; lower if nearby noise merges.
-    morph_close_kernel_size: 5
-    # Minimum candidate contour area (pixels^2). Raise to remove specks; lower if distant/small digits disappear.
-    min_digit_area: 50
-    # Maximum candidate contour area (pixels^2). Lower to reject A4 border chunks; raise if large close digits are rejected.
-    max_digit_area: 5000
-    # Minimum candidate area relative to warped A4 area. Raise to remove small specks; lower if distant digits disappear.
-    min_digit_area_ratio: 0.0001
-    # Maximum candidate area relative to warped A4 area. Raise if close digits are rejected as too large; lower to reject paper border blobs.
-    max_digit_area_ratio: 0.35
-    # Minimum candidate width (pixels). Raise to reject thin vertical noise; lower if digit "1" is missed.
-    min_digit_width: 6
-    # Minimum candidate height (pixels). Raise to reject horizontal fragments; lower if distant digits are missed.
-    min_digit_height: 10
-    # Maximum candidate width (pixels). 0 disables; set lower if full paper border enters candidate list.
-    max_digit_width: 0
-    # Maximum candidate height (pixels). 0 disables; set lower if full paper border enters candidate list.
-    max_digit_height: 0
-    # Minimum candidate width relative to warped A4 width. Raise to remove tiny fragments; lower if far digits are narrow.
-    min_digit_width_ratio: 0.01
-    # Maximum candidate width relative to warped A4 width. Raise if close/side-view digits are rejected; lower to reject border-wide blobs.
-    max_digit_width_ratio: 0.80
-    # Minimum candidate height relative to warped A4 height. Raise to remove short fragments; lower if far digits are short.
-    min_digit_height_ratio: 0.025
-    # Maximum candidate height relative to warped A4 height. Raise if close digits are rejected; lower to reject tall border lines.
-    max_digit_height_ratio: 0.90
-    # Minimum candidate aspect ratio h/w (ratio). Raise to remove flat horizontal lines.
-    min_digit_aspect_ratio: 0.20
-    # Maximum candidate aspect ratio h/w (ratio). Lower to remove very tall border/vertical line candidates.
-    max_digit_aspect_ratio: 12.0
-    # Minimum contour fill ratio area/(bbox area). Raise to reject sparse edge fragments; lower if hollow digits break.
-    min_candidate_extent: 0.06
-    # Maximum contour fill ratio area/(bbox area). Lower to reject solid border blobs; raise if thick printed digits reject.
-    max_candidate_extent: 0.99
-    # Reject candidates touching A4 border margin or outside allowed center window.
-    reject_border_candidates: true
-    # Fixed A4 inner border margin ignored during digit candidate filtering (pixels).
-    a4_border_margin_px: 2
-    # Relative A4 inner border margin ignored during digit candidate filtering (ratio of min warped size).
-    # Keep small; edge filtering now also checks candidate quality before rejecting near-border digits.
-    a4_border_margin_ratio: 0.005
-    # Minimum candidate center x ratio in warped A4. 0.0 disables center-window left rejection.
-    min_candidate_center_x_ratio: 0.01
-    # Maximum candidate center x ratio in warped A4. 1.0 disables center-window right rejection.
-    max_candidate_center_x_ratio: 0.99
-    # Minimum candidate center y ratio in warped A4. 0.0 disables center-window top rejection.
-    min_candidate_center_y_ratio: 0.01
-    # Maximum candidate center y ratio in warped A4. 1.0 disables center-window bottom rejection.
-    max_candidate_center_y_ratio: 0.99
-    # Reject vertical-line noise when bbox width is below this pixel threshold.
-    max_vertical_line_width_px: 7
-    # Reject vertical-line noise when bbox width is below this ratio of warped A4 width.
-    max_vertical_line_width_ratio: 0.035
-    # h/w threshold for very thin vertical-line rejection. Raise if digit "1" is incorrectly rejected.
-    min_vertical_line_aspect_ratio: 8.0
-    # Reject horizontal-line noise when bbox height is below this pixel threshold.
-    max_horizontal_line_height_px: 7
-    # Reject horizontal-line noise when bbox height is below this ratio of warped A4 height.
-    max_horizontal_line_height_ratio: 0.035
-    # h/w threshold for very flat horizontal-line rejection. Lower to reject more horizontal strokes.
-    max_horizontal_line_aspect_ratio: 0.14
-    # Padding added around final digit crop (pixels), clipped inside A4 inner margin.
-    crop_padding_px: 4
-    # Relative padding added around final digit crop (ratio of bbox max side).
-    crop_padding_ratio: 0.025
-    # Padding around union fallback crop (pixels), clipped inside A4 inner margin.
-    union_fallback_padding_px: 10
-    # Relative padding around union fallback crop (ratio of union bbox max side).
-    union_fallback_padding_ratio: 0.05
-    # Enable splitting wide union fallback into two digit crops before classification.
-    enable_union_split: true
-    # Width/height ratio above which union fallback tries a two-digit split. Raise to avoid splitting single wide digits.
-    union_split_min_width_height_ratio: 1.20
-    # Required valley/side-peak ink ratio for union split. Lower requires a clearer gap between two digits.
-    union_split_min_valley_ratio: 0.28
-    # Enable rescuing the best shape-like candidate when strict filters leave final empty.
-    enable_relaxed_digit_fallback: true
-    # Minimum score for relaxed fallback rescue. Raise to be stricter; lower to rescue more near-border/large digits.
-    relaxed_fallback_min_score: 0.20
-    # Normalized digit canvas size fed to classifier (pixels).
-    digit_input_size: 64
-    # Maximum number of digit boxes kept after segmentation (count). Lower to suppress fragments; keep >=2 for two-digit IDs.
-    max_digit_count: 3
+    clahe_clip_limit: 2.0                                               # 分割预处理 CLAHE 对比度限制；调大会增强暗部但可能放大噪声
+    clahe_grid_size: 8                                                  # CLAHE 网格尺寸，单位 个；调大会局部增强更粗，调小更细
+    pre_blur_kernel: 5                                                  # 阈值化前高斯模糊核尺寸，单位 px；调大会去噪更强但细笔画变弱
+    median_blur_kernel: 3                                               # 中值滤波核尺寸，单位 px；0 或 1 关闭，调大会减少椒盐噪声但可能磨损数字
+    adaptive_thresh_block_size: 11                                      # 自适应阈值窗口尺寸，单位 px；调大会看更大局部区域，必须为奇数
+    adaptive_thresh_c: 4                                                # 自适应阈值偏移量，单位 灰度级；调大会让前景更少，调小保留更多笔画
+    enable_otsu_fusion: true                                            # 是否融合 Otsu 阈值结果；开启提高光照变化鲁棒性，关闭可减少过度二值化
+    binary_cleanup_enabled: true                                        # 是否清理小连通域；开启减少噪点，关闭可避免细小数字笔画被删
+    binary_cleanup_min_component_area: 20                               # 保留连通域的最小面积，单位 px^2；调大会去噪更强但可能删小笔画
+    binary_cleanup_min_component_width: 3                               # 保留连通域的最小宽度，单位 px；调大会过滤窄噪声但可能影响数字 1
+    binary_cleanup_min_component_height: 3                              # 保留连通域的最小高度，单位 px；调大会过滤低矮噪声但可能影响远距离数字
+    morph_kernel_size: 1                                                # 兼容用形态学核尺寸，单位 px；调大会增强形态操作影响
+    morph_open_kernel_size: 1                                           # 开运算去噪核尺寸，单位 px；调大会去小噪更强但可能擦掉细笔画
+    morph_close_kernel_size: 5                                          # 闭运算连接笔画核尺寸，单位 px；调大会更易连通断裂笔画但可能粘连邻近噪声
+    min_digit_area: 50                                                  # 数字候选最小轮廓面积，单位 px^2；调大会去除小噪点，调小保留远处小数字
+    max_digit_area: 5000                                                # 数字候选最大轮廓面积，单位 px^2；调小过滤大块边框，调大允许近距离大数字
+    min_digit_area_ratio: 0.0001                                        # 数字候选面积相对 A4 区域的最小比例；调大会过滤碎片，调小保留远处数字
+    max_digit_area_ratio: 0.35                                          # 数字候选面积相对 A4 区域的最大比例；调小过滤边框块，调大允许近距离数字
+    min_digit_width: 6                                                  # 数字候选最小宽度，单位 px；调大会过滤细噪声，调小更容易保留数字 1
+    min_digit_height: 10                                                # 数字候选最小高度，单位 px；调大会过滤横向碎片，调小保留远处小数字
+    max_digit_width: 0                                                  # 数字候选最大宽度，单位 px；0 表示不限制，设小可过滤整页边框
+    max_digit_height: 0                                                 # 数字候选最大高度，单位 px；0 表示不限制，设小可过滤过高边线
+    min_digit_width_ratio: 0.01                                         # 数字宽度相对 A4 宽度的最小比例；调大会去碎片，调小保留远处窄数字
+    max_digit_width_ratio: 0.80                                         # 数字宽度相对 A4 宽度的最大比例；调小过滤宽边框块，调大允许大数字
+    min_digit_height_ratio: 0.025                                       # 数字高度相对 A4 高度的最小比例；调大会去短碎片，调小保留远处数字
+    max_digit_height_ratio: 0.90                                        # 数字高度相对 A4 高度的最大比例；调小过滤高边线，调大允许近距离数字
+    min_digit_aspect_ratio: 0.20                                        # 数字候选高宽比下限；调大会过滤扁平横线
+    max_digit_aspect_ratio: 12.0                                        # 数字候选高宽比上限；调小过滤过高竖线或边框
+    min_candidate_extent: 0.06                                          # 轮廓面积占外接框面积的最小比例；调大会过滤稀疏边缘，调小保留空心数字
+    max_candidate_extent: 0.99                                          # 轮廓面积占外接框面积的最大比例；调小过滤实心块，调大允许粗体数字
+    reject_border_candidates: true                                      # 是否拒绝贴近 A4 边缘或超出中心窗口的候选；关闭可保留边缘数字但误检会增加
+    a4_border_margin_px: 2                                              # A4 内边界固定忽略宽度，单位 px；调大会更强过滤边框，调小保留靠边数字
+    a4_border_margin_ratio: 0.005                                       # A4 内边界相对忽略宽度比例；调大会更强过滤边缘，调小更容忍靠边数字
+    min_candidate_center_x_ratio: 0.01                                  # 候选中心 x 最小比例；调大会过滤左侧候选，0.0 表示不限制左边界
+    max_candidate_center_x_ratio: 0.99                                  # 候选中心 x 最大比例；调小过滤右侧候选，1.0 表示不限制右边界
+    min_candidate_center_y_ratio: 0.01                                  # 候选中心 y 最小比例；调大会过滤上方候选，0.0 表示不限制上边界
+    max_candidate_center_y_ratio: 0.99                                  # 候选中心 y 最大比例；调小过滤下方候选，1.0 表示不限制下边界
+    max_vertical_line_width_px: 7                                       # 竖线噪声判定的最大宽度，单位 px；调大将更多窄竖线当噪声
+    max_vertical_line_width_ratio: 0.035                                # 竖线噪声宽度相对 A4 宽度上限；调大过滤更多窄竖线
+    min_vertical_line_aspect_ratio: 8.0                                 # 细竖线高宽比阈值；调大会减少误删数字 1，调小过滤更多竖线
+    max_horizontal_line_height_px: 7                                    # 横线噪声判定的最大高度，单位 px；调大将更多低矮横线当噪声
+    max_horizontal_line_height_ratio: 0.035                             # 横线噪声高度相对 A4 高度上限；调大过滤更多横线
+    max_horizontal_line_aspect_ratio: 0.14                              # 扁平横线高宽比阈值；调小过滤更多横向笔画或线条
+    crop_padding_px: 4                                                  # 最终数字裁剪固定扩边，单位 px；调大保留更多边缘，调小裁剪更紧
+    crop_padding_ratio: 0.025                                           # 最终数字裁剪相对扩边比例；调大保留更多上下文但可能带入噪声
+    union_fallback_padding_px: 10                                       # 联合兜底裁剪固定扩边，单位 px；调大保留更多候选周边
+    union_fallback_padding_ratio: 0.05                                  # 联合兜底裁剪相对扩边比例；调大更宽松但噪声更多
+    enable_union_split: true                                            # 是否把过宽联合候选尝试拆成两个数字；关闭可避免误拆单个宽数字
+    union_split_min_width_height_ratio: 1.20                            # 联合候选触发拆分的宽高比下限；调大会减少拆分，调小更容易拆两位数
+    union_split_min_valley_ratio: 0.28                                  # 拆分所需谷底与侧峰墨迹比例；调低要求更明显间隙，调高更容易拆分
+    enable_relaxed_digit_fallback: true                                 # 严格过滤为空时是否救回形状最像的候选；开启提高召回但可能增加误识别
+    relaxed_fallback_min_score: 0.20                                    # 宽松兜底候选最低评分；调大会更严格，调小救回更多边缘或大候选
+    digit_input_size: 64                                                # 送入分类器的归一化数字图尺寸，单位 px；需与模型输入匹配
+    max_digit_count: 3                                                  # 分割后最多保留的数字框数量，单位 个；调小抑制碎片，至少保留两位编号所需数量
 
-    # Enable relative-size filtering against largest candidate (boolean).
-    enable_relative_size_filter: true
-    # Relative-size rule mode: OR when true, AND when false (boolean / mode).
-    relative_filter_use_or: true
-    # Minimum area ratio to largest candidate for keeping (ratio). Raise to drop fragments; lower for distant digits.
-    min_area_ratio_to_largest: 0.10
-    # Minimum height ratio to largest candidate for keeping (ratio). Raise to drop short line fragments.
-    min_height_ratio_to_largest: 0.30
+    enable_relative_size_filter: true                                   # 是否按最大候选做相对尺寸过滤；开启可去碎片，关闭保留更多异常大小候选
+    relative_filter_use_or: true                                        # 相对尺寸过滤条件是否使用 OR；true 更宽松，false 更严格
+    min_area_ratio_to_largest: 0.10                                     # 相对最大候选的最小面积比例；调大会丢弃小碎片，调小保留远处数字
+    min_height_ratio_to_largest: 0.30                                   # 相对最大候选的最小高度比例；调大会丢弃矮碎片
 
-    # --- Slender-digit protection (kept for compatibility/future tuning) ---
-    # Slender-digit protection related parameter.
-    # Current recommended setting for this project is DISABLED unless digit "1" is frequently missed.
-    # Kept only for future tuning / compatibility (boolean).
-    enable_slender_digit_protection: false
-    # Slender-digit protection related parameter.
-    # Used only when enable_slender_digit_protection=true (ratio).
-    slender_min_height_ratio_to_largest: 0.40
-    # Slender-digit protection related parameter.
-    # Used only when enable_slender_digit_protection=true (ratio).
-    slender_max_width_ratio_to_largest: 0.50
+    enable_slender_digit_protection: false                              # 是否启用细长数字保护；开启可保护数字 1，但可能保留竖线噪声
+    slender_min_height_ratio_to_largest: 0.40                           # 细长数字保护的最小相对高度；调大会更严格，仅在保护开启时生效
+    slender_max_width_ratio_to_largest: 0.50                            # 细长数字保护的最大相对宽度；调小更偏向细数字，仅在保护开启时生效
 
-    # Maximum horizontal gap allowed for merging fragments from the same digit (pixels).
-    merge_gap_px: 24
-    # Maximum merge gap relative to warped A4 width/height. Raise if distant digit fragments fail to merge.
-    merge_gap_ratio: 0.05
-    # Enable horizontal merge of adjacent fragments (boolean).
-    enable_horizontal_merge: true
-    # Enable vertical split merge for broken-up same digit parts (boolean).
-    enable_vertical_split_merge: true
-    # Minimum vertical overlap ratio required for horizontal merge (ratio).
-    merge_vertical_overlap_min_ratio: 0.30
-    # Minimum y-overlap ratio for multi-pass same-digit fragment merge. Lower merges more fragments; raise to avoid merging adjacent digits.
-    merge_min_y_overlap_ratio: 0.25
-    # Maximum small/large area ratio considered mergeable (ratio).
-    merge_small_part_area_ratio_max: 0.30
-    # Maximum small/large height ratio considered mergeable (ratio).
-    merge_small_part_height_ratio_max: 0.72
-    # Maximum height difference allowed for merge (pixels).
-    merge_max_height_diff_px: 18
-    # Maximum height difference ratio allowed for merge. Raise if one digit breaks into unequal pieces; lower to avoid merging different digits.
-    merge_max_height_diff_ratio: 0.55
-    # Maximum vertical gap allowed for vertical split merge (pixels).
-    vertical_merge_gap_px: 10
-    # Minimum horizontal overlap ratio for vertical split merge (ratio).
-    min_horizontal_overlap_ratio_for_vertical_merge: 0.55
+    merge_gap_px: 24                                                    # 同一数字碎片可合并的最大水平间隙，单位 px；调大会更易合并断裂笔画
+    merge_gap_ratio: 0.05                                               # 合并间隙相对 A4 尺寸比例；调大会更易合并远距离断裂数字
+    enable_horizontal_merge: true                                       # 是否启用横向相邻碎片合并；关闭可减少相邻数字误合并
+    enable_vertical_split_merge: true                                   # 是否启用上下断裂碎片合并；关闭可减少竖向误合并
+    merge_vertical_overlap_min_ratio: 0.30                              # 横向合并所需最小垂直重叠比例；调大会更严格
+    merge_min_y_overlap_ratio: 0.25                                     # 多轮同数字碎片合并的最小 y 重叠比例；调小合并更多，调大减少误合并
+    merge_small_part_area_ratio_max: 0.30                               # 小碎片相对大碎片可合并的最大面积比例；调大更容易合并较大碎片
+    merge_small_part_height_ratio_max: 0.72                             # 小碎片相对大碎片可合并的最大高度比例；调大更宽松
+    merge_max_height_diff_px: 18                                        # 碎片合并允许的最大高度差，单位 px；调大允许高差更大的断裂笔画
+    merge_max_height_diff_ratio: 0.55                                   # 碎片合并允许的最大高度差比例；调大更易合并不等高部分
+    vertical_merge_gap_px: 10                                           # 竖向断裂合并允许的最大垂直间隙，单位 px；调大更易上下合并
+    min_horizontal_overlap_ratio_for_vertical_merge: 0.55               # 竖向合并所需最小水平重叠比例；调大会更严格
 
-    # ONNX model relative path under package share or absolute path (path string).
-    onnx_model_path: models/digit_cnn.onnx
-    # Minimum per-digit classifier confidence accepted as success (ratio, 0~1).
-    classifier_min_confidence: 0.70
-    # Classifier network input size (pixels).
-    classifier_input_size: 64
-    # Prefer CUDA backend if available (boolean).
-    prefer_cuda: false
+    onnx_model_path: models/digit_cnn.onnx                              # 数字分类 ONNX 模型路径；可用包内相对路径或绝对路径
+    classifier_min_confidence: 0.70                                     # 单个数字分类最低置信度比例；调大会更严格，调小更容易通过
+    classifier_input_size: 64                                           # 分类器网络输入尺寸，单位 px；需与模型训练尺寸一致
+    prefer_cuda: false                                                  # 是否优先使用 CUDA 推理后端；开启可提速但依赖硬件和运行库
 
 distance_estimator_node:
   ros__parameters:
-    # LaserScan input topic for ranging (topic name).
-    scan_topic: /scan
-    # Output distance topic for mission tracking control (topic name).
-    output_topic: /inventory/target_distance
-    # Current target side command from mission_manager (left/right string).
-    target_lidar_side_topic: /inventory/target_lidar_side
-    # Mission-controlled enable topic; disabled phases do not publish target_distance.
-    enable_topic: /inventory/distance_estimator_enable
-    # Start disabled until mission_manager enters TARGET_DISTANCE_ALIGN.
-    enable_on_start: true
-    # Default active LiDAR side before mission_manager publishes the target side.
-    default_lidar_side: right
-    # Left-side target ranging sector center in base frame (degrees).
-    left_lidar_center_deg: 90.0
-    # Right-side target ranging sector center in base frame (degrees).
-    right_lidar_center_deg: -90.0
-    # Side LiDAR sector width around the configured center angle (degrees).
-    side_lidar_window_deg: 6.0
-    # Minimum accepted target LiDAR range after LaserScan range_min filtering (meters).
-    min_valid_distance: 0.05
-    # Maximum accepted target LiDAR range after LaserScan range_max filtering (meters).
-    max_valid_distance: 6.0
-    # Publish loop frequency for target distance output (hertz).
-    publish_rate_hz: 10.0
+    scan_topic: /scan                                                   # 测距使用的激光雷达输入话题；改动会切换测距数据来源
+    output_topic: /inventory/target_distance                            # 目标侧向距离输出话题；任务跟踪控制订阅该话题
+    target_lidar_side_topic: /inventory/target_lidar_side               # 目标所在雷达侧向控制话题；任务管理器发布 left/right
+    enable_topic: /inventory/distance_estimator_enable                  # 测距节点使能话题；关闭时不发布目标距离
+    enable_on_start: true                                               # 启动后是否默认使能测距；设为 false 可等状态机进入对齐阶段再启用
+    default_lidar_side: right                                           # 未收到侧向指令前默认测距侧；改动影响初始左/右侧采样
+    left_lidar_center_deg: 90.0                                         # 左侧测距扇区中心角，单位 deg；调大会采样更偏后方
+    right_lidar_center_deg: -90.0                                       # 右侧测距扇区中心角，单位 deg；调小会采样更偏后方
+    side_lidar_window_deg: 6.0                                          # 侧向测距扇区角宽，单位 deg；调大会采样更多点但更易混入邻近障碍
+    min_valid_distance: 0.05                                            # 测距接受的最小距离，单位 m；调大会过滤近距离噪声
+    max_valid_distance: 6.0                                             # 测距接受的最大距离，单位 m；调小会忽略远处目标
+    publish_rate_hz: 10.0                                               # 目标距离发布频率，单位 Hz；调大会更新更快但占用更多计算
 
 gap_detector_node:
   ros__parameters:
-    # LaserScan input for gap detection (topic name).
-    scan_topic: /scan
-    # Output topic carrying gap status and debug values (topic name).
-    output_topic: /inventory/gap_status
-    # Context topic from mission_manager (target side / adjust info) (topic name).
-    context_topic: /inventory/gap_context
-    # Gap detector enable control topic (topic name, boolean command).
-    enable_topic: /inventory/gap_detector_enable
-    # Entry side command topic from mission_manager (left/right string).
-    entry_side_topic: /inventory/entry_side
-    # Default active entry side before mission_manager publishes route side.
-    entry_side: left
-    # Enable state at startup before state-machine control arrives (boolean).
-    enable_on_start: true
-    # Working coordinate frame for interpretation / logging (frame id string).
-    base_link_frame: base_link
-    # Legacy alias for left-side main detection sector start angle (degrees).
-    gap_sector_start_deg: 60.0
-    # Legacy alias for left-side main detection sector end angle (degrees).
-    gap_sector_end_deg: 120.0
-    # Left-side main gap-detection sector start angle in base_link (degrees).
-    left_gap_sector_start_deg: 60.0
-    # Left-side main gap-detection sector end angle in base_link (degrees).
-    left_gap_sector_end_deg: 120.0
-    # Right-side main gap-detection sector start angle in base_link (degrees).
-    right_gap_sector_start_deg: -120.0
-    # Right-side main gap-detection sector end angle in base_link (degrees).
-    right_gap_sector_end_deg: -60.0
-    # Front-left veto sector start angle for near-obstacle hard block (degrees).
-    front_left_veto_sector_start_deg: 10.0
-    # Front-left veto sector end angle for near-obstacle hard block (degrees).
-    front_left_veto_sector_end_deg: 70.0
-    # Left route front-side veto sector start angle (degrees).
-    left_front_veto_sector_start_deg: 10.0
-    # Left route front-side veto sector end angle (degrees).
-    left_front_veto_sector_end_deg: 70.0
-    # Left-side veto sector start angle for near-obstacle hard block (degrees).
-    left_side_veto_sector_start_deg: 70.0
-    # Left-side veto sector end angle for near-obstacle hard block (degrees).
-    left_side_veto_sector_end_deg: 120.0
-    # Right route front-side veto sector start angle (degrees).
-    right_front_veto_sector_start_deg: -70.0
-    # Right route front-side veto sector end angle (degrees).
-    right_front_veto_sector_end_deg: -10.0
-    # Right-side veto sector start angle for near-obstacle hard block (degrees).
-    right_side_veto_sector_start_deg: -120.0
-    # Right-side veto sector end angle for near-obstacle hard block (degrees).
-    right_side_veto_sector_end_deg: -70.0
+    scan_topic: /scan                                                   # 间隙检测使用的激光雷达输入话题；改动会切换检测数据来源
+    output_topic: /inventory/gap_status                                 # 间隙检测状态和调试值输出话题；任务管理器订阅该话题
+    context_topic: /inventory/gap_context                               # 任务管理器发布的检测上下文话题；包含目标侧和调整信息
+    enable_topic: /inventory/gap_detector_enable                        # 间隙检测使能话题；关闭时不进行有效检测输出
+    entry_side_topic: /inventory/entry_side                             # 进入侧控制话题；任务管理器发布 left/right 给检测器
+    entry_side: left                                                    # 未收到进入侧指令前默认侧；改动影响初始检测方向
+    enable_on_start: true                                               # 启动后是否默认使能间隙检测；设为 false 可完全交由状态机控制
+    base_link_frame: base_link                                          # 检测解释和日志使用的机器人坐标系名；改错会影响调试含义
+    gap_sector_start_deg: 60.0                                          # 兼容用左侧主检测扇区起始角，单位 deg；调大会缩小靠前侧范围
+    gap_sector_end_deg: 120.0                                           # 兼容用左侧主检测扇区结束角，单位 deg；调大会扩大靠后侧范围
+    left_gap_sector_start_deg: 60.0                                     # 左侧主间隙检测扇区起始角，单位 deg；调大会缩小前向采样
+    left_gap_sector_end_deg: 120.0                                      # 左侧主间隙检测扇区结束角，单位 deg；调大会扩大后向采样
+    right_gap_sector_start_deg: -120.0                                  # 右侧主间隙检测扇区起始角，单位 deg；调小会扩大后向采样
+    right_gap_sector_end_deg: -60.0                                     # 右侧主间隙检测扇区结束角，单位 deg；调小会缩小前向采样
+    front_left_veto_sector_start_deg: 10.0                              # 左前近障硬否决扇区起始角，单位 deg；调大会缩小正前覆盖
+    front_left_veto_sector_end_deg: 70.0                                # 左前近障硬否决扇区结束角，单位 deg；调大会扩大左侧覆盖
+    left_front_veto_sector_start_deg: 10.0                              # 左侧路线前方否决扇区起始角，单位 deg；调大会减少正前检测
+    left_front_veto_sector_end_deg: 70.0                                # 左侧路线前方否决扇区结束角，单位 deg；调大会扩大左前检测
+    left_side_veto_sector_start_deg: 70.0                               # 左侧近障否决扇区起始角，单位 deg；调大会让检测更偏侧后
+    left_side_veto_sector_end_deg: 120.0                                # 左侧近障否决扇区结束角，单位 deg；调大会扩大后侧覆盖
+    right_front_veto_sector_start_deg: -70.0                            # 右侧路线前方否决扇区起始角，单位 deg；调小会扩大右前检测
+    right_front_veto_sector_end_deg: -10.0                              # 右侧路线前方否决扇区结束角，单位 deg；调小会减少正前检测
+    right_side_veto_sector_start_deg: -120.0                            # 右侧近障否决扇区起始角，单位 deg；调小会扩大后侧覆盖
+    right_side_veto_sector_end_deg: -70.0                               # 右侧近障否决扇区结束角，单位 deg；调小让检测更偏侧前
 
-    # Minimum distance treated as open-point candidate (meters).
-    open_point_min_distance: 0.5
-    # Near-obstacle veto threshold for safety hard block (meters).
-    near_obstacle_veto_distance: 0.5
-    # Required estimated opening width to allow entering (meters).
-    required_entry_width: 0.4
+    open_point_min_distance: 0.5                                        # 判定开放点的最小距离，单位 m；调大会要求间隙更空，调小更敏感
+    near_obstacle_veto_distance: 0.5                                    # 近障硬否决距离阈值，单位 m；调大会更保守，调小更容易放行
+    required_entry_width: 0.4                                           # 允许进入所需估计开口宽度，单位 m；调大会要求更宽间隙
 
-    # Minimum accepted lidar range for gap detector (meters).
-    min_valid_range: 0.05
-    # Maximum accepted lidar range for gap detector (meters).
-    max_valid_range: 8.0
+    min_valid_range: 0.05                                               # 间隙检测接受的最小雷达距离，单位 m；调大会过滤近距离噪声
+    max_valid_range: 8.0                                                # 间隙检测接受的最大雷达距离，单位 m；调小会忽略远距离开放点
 
-    # Minimum consecutive open points to form one open run/window (count).
-    open_run_min_points: 3
-    # Minimum valid points required in sector for one frame evaluation (count).
-    min_valid_points: 8
-    # Minimum open-point ratio in sector to qualify as candidate frame (ratio, 0~1).
-    open_ratio_threshold: 0.10
-    # Max angular gap between adjacent points considered contiguous (degrees).
-    max_adjacent_angle_gap_deg: 2.0
-    # Optional smoothing window length over frame metrics (frames/count).
-    smoothing_window: 1
-    # Consecutive candidate frames required for stable gap_detected=true (frames/count).
-    stable_frames_required: 100
-    # Timeout defining one complete detect cycle in WAITING_GAP (seconds).
-    detect_cycle_timeout_sec: 2.5
+    open_run_min_points: 3                                              # 构成连续开放段所需最小点数，单位 个；调大会更稳定但可能漏检窄间隙
+    min_valid_points: 8                                                 # 单帧扇区评估所需最小有效点数，单位 个；调大会提高可靠性但更易无效
+    open_ratio_threshold: 0.10                                          # 扇区开放点比例阈值；调大会更严格，调小更容易判定候选帧
+    max_adjacent_angle_gap_deg: 2.0                                     # 相邻点仍视为连续的最大角度间隔，单位 deg；调大会允许稀疏点连接
+    smoothing_window: 1                                                 # 帧指标平滑窗口长度，单位 帧；调大会更稳但响应更慢
+    stable_frames_required: 100                                         # 判定稳定检测到间隙所需连续候选帧数，单位 帧；调大会更保守
+    detect_cycle_timeout_sec: 2.5                                       # WAITING_GAP 单轮检测周期超时，单位 s；调大会等待更久，调小更快进入调整
 
-    # Enable CSV debug logging output (boolean).
-    enable_csv_log: true
-    # CSV log directory path (filesystem path).
-    csv_log_dir: /tmp/wheeltec_inventory_gap_logs
-    # CSV log file prefix (string).
-    csv_file_prefix: gap_debug
+    enable_csv_log: true                                                # 是否输出 CSV 调试日志；开启便于分析但会写入磁盘
+    csv_log_dir: /tmp/wheeltec_inventory_gap_logs                       # CSV 调试日志目录；改动会改变日志保存位置
+    csv_file_prefix: gap_debug                                          # CSV 调试日志文件名前缀；改动便于区分不同实验
 
 mission_manager_node:
   ros__parameters:
-    # Recognizer input topic (topic name).
-    recognized_topic: /inventory/recognized_number
-    # Distance input topic used for TARGET_TRACKING (topic name).
-    distance_topic: /inventory/target_distance
-    # Gap detector status input topic (topic name).
-    gap_topic: /inventory/gap_status
-    # Primary odometry source topic (topic name).
-    odom_topic: /odom_combined
-    # Fallback odometry source topic (topic name).
-    odom_fallback_topic: /odom
-    # Timeout before switching from primary odom to fallback (seconds).
-    odom_primary_timeout_sec: 0.8
-    # LaserScan input topic for entering-stage safety checks (topic name).
-    scan_topic: /scan
+    recognized_topic: /inventory/recognized_number                      # 货柜编号识别输入话题；改错会导致目标识别结果不可用
+    distance_topic: /inventory/target_distance                          # TARGET_TRACKING 使用的目标距离输入话题；影响侧向距离闭环
+    gap_topic: /inventory/gap_status                                    # 间隙检测状态输入话题；用于 WAITING_GAP 判断是否可进入
+    odom_topic: /odom_combined                                          # 主里程计输入话题；用于局部移动和姿态判断
+    odom_fallback_topic: /odom                                          # 备用里程计输入话题；主话题超时后切换使用
+    odom_primary_timeout_sec: 0.8                                       # 主里程计超时阈值，单位 s；调大会更久等待主源，调小更快切备用源
+    scan_topic: /scan                                                   # 进入阶段安全检查使用的雷达话题；改动会切换避障数据来源
 
-    # Mission state publication topic (topic name).
-    mission_state_topic: /inventory/mission_state
-    # Mission log publication topic (topic name).
-    mission_log_topic: /inventory/mission_log
-    # Velocity command output topic (topic name).
-    cmd_vel_topic: /cmd_vel
-    # Chassis motion model used by mission-local maneuvers: diff_drive uses in-place turns and straight moves.
-    motion_model: diff_drive
+    mission_state_topic: /inventory/mission_state                       # 任务状态发布话题；外部监控通过该话题查看状态机
+    mission_log_topic: /inventory/mission_log                           # 任务日志发布话题；外部界面或调试工具订阅
+    cmd_vel_topic: /cmd_vel                                             # 任务管理器直接控制底盘时的速度输出话题；改错会失去运动控制
+    motion_model: diff_drive                                            # 任务局部动作使用的底盘模型；diff_drive 表示原地转向加直行
 
-    # Corridor follower enable topic (topic name, boolean command).
-    corridor_enable_topic: /inventory/corridor_enable
-    # Corridor follower reverse topic (topic name, boolean command).
-    corridor_reverse_topic: /inventory/corridor_reverse
-    # Gap-context publication topic to detector (topic name).
-    gap_context_topic: /inventory/gap_context
-    # Recognizer enable topic, true only in search/tracking phases (topic name).
-    recognizer_enable_topic: /inventory/recognizer_enable
-    # Gap detector enable topic, true only in WAITING_GAP (topic name).
-    gap_detector_enable_topic: /inventory/gap_detector_enable
-    # Target distance estimator enable topic, true only during target distance alignment.
-    distance_estimator_enable_topic: /inventory/distance_estimator_enable
-    # Entry side topic published to gap_detector (left/right string).
-    entry_side_topic: /inventory/entry_side
-    # Target LiDAR side topic published to distance_estimator (left/right string).
-    target_lidar_side_topic: /inventory/target_lidar_side
+    corridor_enable_topic: /inventory/corridor_enable                   # 走廊跟随使能发布话题；任务阶段切换时启停走廊控制
+    corridor_reverse_topic: /inventory/corridor_reverse                 # 走廊跟随后退模式发布话题；退出或返程时控制方向
+    gap_context_topic: /inventory/gap_context                           # 间隙检测上下文发布话题；向检测器传递目标侧和调整状态
+    recognizer_enable_topic: /inventory/recognizer_enable               # 识别器使能发布话题；仅在搜索或跟踪阶段通常为 true
+    gap_detector_enable_topic: /inventory/gap_detector_enable           # 间隙检测器使能发布话题；通常只在 WAITING_GAP 阶段打开
+    distance_estimator_enable_topic: /inventory/distance_estimator_enable # 距离估计器使能发布话题；目标距离对齐阶段打开
+    entry_side_topic: /inventory/entry_side                             # 发布给间隙检测器的进入侧话题；取值通常为 left/right
+    target_lidar_side_topic: /inventory/target_lidar_side               # 发布给距离估计器的目标雷达侧话题；取值通常为 left/right
 
-    # Start mission service name (service name).
-    start_service_name: /inventory/start_mission
-    # Cancel mission service name (service name).
-    cancel_service_name: /inventory/cancel_mission
-    # Optional recognizer trigger service name (service name).
-    recognizer_trigger_service: /inventory/trigger_recognition
+    start_service_name: /inventory/start_mission                        # 启动盘库任务服务名；改名需同步 Web 或测试调用端
+    cancel_service_name: /inventory/cancel_mission                      # 取消盘库任务服务名；改名需同步外部调用端
+    recognizer_trigger_service: /inventory/trigger_recognition          # 可选识别器触发服务名；用于手动控制识别流程
 
-    # Default mission targets list when no external target list is passed (string list).
-    target_list: ["2-3-1-2"]
-    # Route waypoint YAML under package share, or absolute path.
-    route_waypoints_file: config/route_waypoints.yaml
-    # Warehouse physical-unit layout YAML under package share, or absolute path.
-    warehouse_layout_file: config/warehouse_layout.yaml
-    # Gap-to-cabinet scan mapping YAML under package share, or absolute path.
-    gap_scan_map_file: config/gap_scan_map.yaml
-    # Route search failure policy: error | return.
-    route_search_failure_policy: error
-    # Desired following distance in TARGET_TRACKING (meters).
-    follow_distance: 0.50
-    # Warehouse longitudinal reference length for return decisions (meters).
-    warehouse_length: 12.0
-    # Corridor search speed (meters/second).
-    corridor_speed: 0.20
-    # Tracking speed cap while following target cabinet (meters/second).
-    tracking_speed: 0.15
-    # Legacy entry speed parameter (meters/second).
-    entry_speed: 0.15
-    # Legacy fixed entering distance fallback when enable_grid_center_entry=false (meters).
-    entry_distance: 1.2
-    # Generic turning speed parameter (radians/second).
-    turn_speed: 0.40
-    # Legacy reactive entering nominal linear speed (kept for compatibility; meters/second).
-    enter_linear_speed: 0.15
-    # Legacy reactive entering nominal angular speed (kept for compatibility; radians/second).
-    enter_angular_speed: 0.30
-    # Angular multiplier when entering a left-side gap. ROS /cmd_vel: positive angular.z turns left.
-    enter_left_angular_multiplier: 1.0
-    # Angular multiplier when entering a right-side gap. ROS /cmd_vel: negative angular.z turns right.
-    enter_right_angular_multiplier: -1.0
-    # Prefer dynamic straight distance to the target depth-grid center instead of legacy entry_distance.
-    enable_grid_center_entry: true
-    # Length of one cabinet depth grid (meters). Centers are (depth_index - 0.5) * grid_depth_m.
-    grid_depth_m: 1.0
-    # Maximum allowed depth_index for left / upper-side cabinets (1-18).
-    left_max_depth_index: 4
-    # Maximum allowed depth_index for right / lower-side cabinets (19-36).
-    right_max_depth_index: 3
-    # Calibration offset added to the depth-grid center distance (meters).
-    entry_center_offset_m: 0.0
-    # Yaw delta from corridor heading to gap heading during ENTERING_TURN (radians).
-    entry_turn_yaw_delta_rad: 1.5708
-    # Yaw tolerance to finish ENTERING_TURN and stop large steering (radians).
-    entry_align_yaw_tolerance_rad: 0.08
-    # Angular speed limit during ENTERING_TURN in-place rotation (radians/second).
-    entry_turn_angular_speed: 0.30
-    # Straight speed after alignment, used while moving to depth-grid center (meters/second).
-    entry_straight_speed: 0.06
-    # Proportional yaw-hold gain in straight entry stage (gain).
-    entry_straight_yaw_kp: 1.00
-    # Deadband where straight-stage yaw hold outputs zero angular.z (radians).
-    entry_straight_yaw_deadband_rad: 0.03
-    # Small angular clamp for straight-stage yaw hold (radians/second).
-    entry_straight_max_angular_speed: 0.15
-    # Target-side LiDAR distance to hold during MOVING_TO_GRID_CENTER (meters).
-    entry_side_hold_target_distance_m: 0.30
-    # Proportional gain for target-side distance hold in MOVING_TO_GRID_CENTER (rad/s per meter).
-    entry_side_hold_kp: 0.00
-    # Minimum valid LiDAR points required in the target-side sector before side hold is enabled.
-    entry_side_hold_min_valid_points: 5
-    # Safety cap for computed dynamic entry distance (meters).
-    max_dynamic_entry_distance_m: 10.0
-    # Reactive entering hard-stop distance threshold (meters).
-    enter_stop_distance: 0.30
-    # Reactive entering slow-down distance threshold (meters).
-    enter_slow_distance: 0.55
-    # Front safety sector start angle during entering (degrees).
-    enter_front_sector_start_deg: -20.0
-    # Front safety sector end angle during entering (degrees).
-    enter_front_sector_end_deg: 20.0
-    # Front-left safety sector start angle during entering (degrees).
-    enter_front_left_sector_start_deg: 20.0
-    # Front-left safety sector end angle during entering (degrees).
-    enter_front_left_sector_end_deg: 75.0
-    # Left-side safety sector start angle during entering (degrees).
-    enter_left_side_sector_start_deg: 75.0
-    # Left-side safety sector end angle during entering (degrees).
-    enter_left_side_sector_end_deg: 120.0
-    # Front-right safety sector start angle during entering (degrees).
-    enter_front_right_sector_start_deg: -75.0
-    # Front-right safety sector end angle during entering (degrees).
-    enter_front_right_sector_end_deg: -20.0
-    # Right-side safety sector start angle during entering (degrees).
-    enter_right_side_sector_start_deg: -120.0
-    # Right-side safety sector end angle during entering (degrees).
-    enter_right_side_sector_end_deg: -75.0
+    target_list: ["2-3-1-2"]                                            # 默认任务目标列表；元素描述目标组合，外部未传入时使用
+    route_waypoints_file: config/route_waypoints.yaml                   # 路线航点配置文件路径；可用包内相对路径或绝对路径
+    warehouse_layout_file: config/warehouse_layout.yaml                 # 货柜物理单元布局配置路径；调错会影响间隙和深度索引计算
+    gap_scan_map_file: config/gap_scan_map.yaml                         # 间隙到货柜扫描映射配置路径；调错会影响进缝后扫描对象
+    route_search_failure_policy: error                                  # 路线搜索失败策略；error 进入错误，return 尝试返航
+    follow_distance: 0.50                                               # TARGET_TRACKING 期望跟随距离，单位 m；调大离目标更远，调小贴近目标
+    warehouse_length: 12.0                                              # 仓库纵向参考长度，单位 m；影响返程方向和距离判断
+    corridor_speed: 0.20                                                # 走廊搜索线速度，单位 m/s；调大会搜索更快但识别窗口更短
+    tracking_speed: 0.20                                                # 跟踪目标货柜时线速度上限，单位 m/s；调大会更快但更难稳定识别
+    entry_speed: 0.20                                                   # 兼容用进缝线速度，单位 m/s；关闭网格中心进入时作为固定进入速度参考
+    entry_distance: 1.2                                                 # 兼容用固定进缝距离，单位 m；关闭网格中心进入时使用
+    turn_speed: 0.40                                                    # 通用转向角速度，单位 rad/s；调大会转向更快但过冲风险更高
+    enter_linear_speed: 0.20                                            # 兼容用反应式进缝线速度，单位 m/s；调大会进缝更快但安全余量变小
+    enter_angular_speed: 0.30                                           # 兼容用反应式进缝角速度，单位 rad/s；调大会转向更快
+    enter_left_angular_multiplier: 1.0                                  # 左侧进缝角速度倍率；正值对应 /cmd_vel 左转，调大会左转更强
+    enter_right_angular_multiplier: -1.0                                # 右侧进缝角速度倍率；负值对应 /cmd_vel 右转，绝对值越大转向越强
+    enable_grid_center_entry: true                                      # 是否优先按目标深度网格中心计算进缝直行距离；关闭后回退固定 entry_distance
+    grid_depth_m: 1.0                                                   # 单个货柜深度网格长度，单位 m；调大会增加按深度索引计算的进缝距离
+    left_max_depth_index: 4                                             # 左/上排货柜允许的最大深度索引，单位 层；调大允许更深目标
+    right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
+    entry_center_offset_m: 0.0                                          # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
+    entry_turn_yaw_delta_rad: 1.5708                                    # 从走廊朝向转到进缝朝向的目标偏航差，单位 rad；调大会转角更大
+    entry_align_yaw_tolerance_rad: 0.08                                 # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
+    entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
+    entry_turn_timeout_sec: 40.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
+    entry_straight_speed: 0.20                                          # 转向对齐后直行到深度网格中心的速度，单位 m/s；调大会更快但精度下降
+    entry_straight_timeout_sec: 60.0                                    # MOVING_TO_GRID_CENTER 入缝直行到深度格中心的超时，单位 s；调大会允许低速入缝更久
+    entry_straight_yaw_kp: 1.00                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
+    entry_straight_yaw_deadband_rad: 0.03                               # 进缝直行航向保持死区，单位 rad；调大会减少小幅修正，调小更准
+    entry_straight_max_angular_speed: 0.20                              # 进缝直行航向保持角速度限幅，单位 rad/s；调大会纠偏更快
+    entry_side_hold_target_distance_m: 0.30                             # 进缝到网格中心时目标侧保持距离，单位 m；调大会离侧柜更远
+    entry_side_hold_kp: 0.00                                            # 目标侧距离保持比例增益，单位 rad/s/m；调大会更积极贴合目标侧距离
+    entry_side_hold_min_valid_points: 5                                 # 启用侧向保持所需最小有效雷达点数，单位 个；调大会更保守
+    max_dynamic_entry_distance_m: 10.0                                  # 动态计算进缝距离安全上限，单位 m；调小可防止异常目标导致长距离前进
+    enter_stop_distance: 0.20                                           # 反应式进缝硬停止距离阈值，单位 m；调大会更早停车
+    enter_slow_distance: 0.50                                           # 反应式进缝减速距离阈值，单位 m；调大会更早减速
+    enter_front_sector_start_deg: -20.0                                 # 进缝前方安全扇区起始角，单位 deg；调小扩大右前检测
+    enter_front_sector_end_deg: 20.0                                    # 进缝前方安全扇区结束角，单位 deg；调大扩大左前检测
+    enter_front_left_sector_start_deg: 20.0                             # 进缝左前安全扇区起始角，单位 deg；调大会缩小左前覆盖
+    enter_front_left_sector_end_deg: 75.0                               # 进缝左前安全扇区结束角，单位 deg；调大会扩大左侧覆盖
+    enter_left_side_sector_start_deg: 75.0                              # 进缝左侧安全扇区起始角，单位 deg；调大会更偏侧后
+    enter_left_side_sector_end_deg: 120.0                               # 进缝左侧安全扇区结束角，单位 deg；调大会扩大后侧覆盖
+    enter_front_right_sector_start_deg: -75.0                           # 进缝右前安全扇区起始角，单位 deg；调小扩大右侧覆盖
+    enter_front_right_sector_end_deg: -20.0                             # 进缝右前安全扇区结束角，单位 deg；调小缩小正前覆盖
+    enter_right_side_sector_start_deg: -120.0                           # 进缝右侧安全扇区起始角，单位 deg；调小扩大后侧覆盖
+    enter_right_side_sector_end_deg: -75.0                              # 进缝右侧安全扇区结束角，单位 deg；调小更偏侧前
 
-    # Distance-loop proportional gain in TARGET_TRACKING (gain).
-    tracking_kp_distance: 0.80
-    # Heading-loop proportional gain in TARGET_TRACKING (gain).
-    tracking_kp_heading: 1.20
-    # Pixel-to-heading normalization factor for horizontal offset (pixels).
-    tracking_offset_scale_px: 320.0
-    # Angular speed clamp in TARGET_TRACKING (radians/second).
-    tracking_max_angular: 0.80
+    tracking_kp_distance: 0.80                                          # TARGET_TRACKING 距离闭环比例增益；调大会距离修正更快但可能振荡
+    tracking_kp_heading: 1.20                                           # TARGET_TRACKING 航向闭环比例增益；调大会朝向修正更快
+    tracking_offset_scale_px: 320.0                                     # 图像水平偏移归一化尺度，单位 px；调大会同样像素偏差产生更小角速度
+    tracking_max_angular: 0.80                                          # TARGET_TRACKING 角速度限幅，单位 rad/s；调大会允许更快转向
 
-    # Distance tolerance to consider tracking error small (meters).
-    distance_tolerance: 0.25
-    # Required duration with stable distance/heading before "stable" (seconds).
-    distance_stable_time_sec: 1.2
-    # Recognition timeout used by tracking validity checks (seconds).
-    recognition_timeout_sec: 1.0
-    # Consecutive target-recognition frames required to stop Nav2 route search (frames/count).
-    target_recognition_stable_frames: 3
-    # Minimum time the target recognition must stay stable before stopping Nav2 route search (seconds).
-    target_recognition_stable_time_sec: 0.30
-    # Fallback fixed retreat distance after SEARCH_GAP timeout, before static confirmation (meters).
-    post_track_retreat_distance: 0.10
-    # Linear speed used for post-tracking retreat (meters/second).
-    retreat_speed: 0.08
-    # Stop-settle time after retreat/adjust motion before detection (seconds).
-    wait_gap_stop_settle_sec: 0.25
-    # Low speed used while SEARCH_GAP moves toward the expected physical-unit gap (meters/second).
-    search_gap_speed: 0.10
-    # SEARCH_GAP timeout for forward search before falling back to the micro-adjust sequence (seconds).
-    search_gap_forward_timeout_sec: 10.0
-    # SEARCH_GAP timeout for backward search before falling back to the micro-adjust sequence (seconds).
-    search_gap_backward_timeout_sec: 10.0
-    # Timeout of one WAITING_GAP detection cycle (seconds).
-    gap_detect_cycle_timeout_sec: 2.5
-    # Number of failed detect cycles before one pose adjustment (count).
-    gap_failures_before_adjust: 3
-    # Linear speed for gap-adjust sequence motions (meters/second).
-    gap_adjust_speed: 0.08
-    # Relative adjustment sequence applied per retry stage (meters list).
-    gap_adjust_sequence: [0.20, -0.10, 0.20, -0.3]
+    distance_tolerance: 0.25                                            # 目标侧向距离对齐允许误差，单位 m；调大会更容易判定稳定，调小对齐更严格
+    target_distance_aligned_min_m: 0.25                                 # 目标侧向距离合适区间下限，单位 m；低于该值认为过近并小幅后退
+    target_distance_aligned_max_m: 0.75                                 # 目标侧向距离合适区间上限，单位 m；不高于该值且不低于下限时可稳定后找缝
+    target_distance_gap_threshold_m: 1.50                               # 目标侧向距离开放空间阈值，单位 m；超过该值认为雷达扫到缝隙并停止向前追
+    target_distance_gap_confirm_count: 1                                # 开放空间判定连续确认次数，单位 次；调大会更抗噪但可能延迟进入找缝
+    distance_stable_time_sec: 1.2                                       # 距离和航向保持稳定所需时长，单位 s；调大会确认更稳但等待更久
+    recognition_timeout_sec: 1.0                                        # 跟踪有效性使用的识别超时时间，单位 s；调大会更容忍短暂丢识别
+    target_recognition_stable_frames: 3                                 # 停止 Nav2 路线搜索前所需连续识别帧数，单位 帧；调大会更稳但停车更慢
+    target_recognition_stable_time_sec: 0.30                            # 目标识别稳定所需最小时长，单位 s；调大会减少误停，调小响应更快
+    post_track_retreat_distance: 0.10                                   # SEARCH_GAP 超时后静态确认前的固定后退距离，单位 m；调大会后退更多
+    retreat_speed: 0.10                                                 # 跟踪后后退线速度，单位 m/s；调大会后退更快但定位误差可能变大
+    wait_gap_stop_settle_sec: 0.25                                      # 后退或调整动作后等待车体稳定时间，单位 s；调大会检测更稳但耗时更长
+    search_gap_speed: 0.20                                              # SEARCH_GAP 朝预期间隙移动的低速速度，单位 m/s；调大会找缝更快但可能越过目标
+    search_gap_forward_timeout_sec: 10.0                                # SEARCH_GAP 前向搜索超时，单位 s；调大会搜索更远，调小更快进入微调
+    search_gap_backward_timeout_sec: 10.0                               # SEARCH_GAP 后向搜索超时，单位 s；调大会后向搜索更远
+    gap_detect_cycle_timeout_sec: 2.5                                   # WAITING_GAP 单轮间隙检测超时，单位 s；调大会每轮等待更久
+    gap_failures_before_adjust: 3                                       # 触发一次位姿调整前允许的失败检测轮数，单位 轮；调大会减少调整频率
+    gap_adjust_speed: 0.10                                              # 间隙调整序列运动速度，单位 m/s；调大会调整更快但更难精确
+    gap_adjust_sequence: [-0.20, 0.10, -0.20, 0.30]                     # 每个重试阶段的相对调整距离列表，单位 m；正负号决定前后移动方向
+    post_gap_detect_advance_enabled: true                               # 检测到间隙后是否额外前进对齐；关闭会直接进入后续进缝流程
+    post_gap_detect_advance_distance_m: 0.80                            # 检测到间隙后的额外前进距离，单位 m；调大会更靠近目标间隙
+    post_gap_detect_advance_speed: 0.20                                 # 检测后额外前进速度，单位 m/s；调大会更快但对齐误差可能增加
+    post_gap_detect_advance_timeout_sec: 40.0                           # 检测后额外前进超时，单位 s；调大会允许更慢完成对齐
 
-    # Whether to return home after mission finishes (boolean).
-    return_home_on_finish: false
-    # Return target mode enum: start | charge (enum / mode).
-    return_target_mode: start
-    # Charging pose X coordinate (meters).
-    charge_pose_x: 0.0
-    # Charging pose Y coordinate (meters).
-    charge_pose_y: 0.0
-    # Charging pose yaw angle (radians).
-    charge_pose_yaw: 0.0
-    # Frame ID of charging pose coordinates (frame id string).
-    charge_pose_frame_id: odom_combined
-    # Enable Nav2-based return path as primary return method (boolean).
-    use_nav2_return: true
-    # NavigateToPose action name (action name string).
-    nav2_action_name: navigate_to_pose
-    # Goal frame for Nav2 return target (frame id string).
-    nav2_goal_frame: map
-    # Timeout waiting for Nav2 action server (seconds).
-    nav2_server_wait_timeout_sec: 1.0
-    # Wait for Nav2 action server before starting full inventory (boolean).
-    nav2_startup_wait_enabled: true
-    # Timeout for full-inventory startup Nav2 readiness wait (seconds).
-    nav2_startup_wait_timeout_sec: 60.0
-    # Poll interval for full-inventory startup Nav2 readiness wait (seconds).
-    nav2_startup_wait_poll_sec: 0.2
-    # Timeout waiting for Nav2 goal result (seconds).
-    nav2_goal_timeout_sec: 40.0
-    # Timeout for each route waypoint NavigateToPose goal (seconds).
-    nav2_route_waypoint_timeout_sec: 60.0
-    # Duration to continuously publish zero velocity after canceling Nav2 route search (seconds).
-    nav2_cancel_stop_duration_sec: 0.50
-    # Allow Nav2 return in search-return path (boolean).
-    nav2_enable_for_search_return: false
-    # Fallback rotate controller proportional gain (gain).
-    fallback_rotate_kp: 1.5
-    # Fallback rotate controller angular speed limit (radians/second).
-    fallback_rotate_max_angular: 0.8
-    # Fallback rotate finish tolerance (radians).
-    fallback_rotate_tolerance_rad: 0.08
-    # Stable hold time at rotate tolerance before completion (seconds).
-    fallback_rotate_stable_time_sec: 0.25
-    # Fallback straight-drive speed to home (meters/second).
-    fallback_drive_speed: 0.20
-    # Fallback heading controller proportional gain while driving (gain).
-    fallback_heading_kp: 1.2
-    # Fallback heading controller angular speed limit (radians/second).
-    fallback_drive_max_angular: 0.8
-    # Fallback return goal distance tolerance (meters).
-    fallback_goal_tolerance_m: 0.18
-    # Continue to next target after one target error (boolean).
-    continue_on_error: false
-    # Main mission manager control loop rate (hertz).
-    control_rate_hz: 10.0
+    return_home_on_finish: false                                        # 任务结束后是否返航；开启会在完成后执行回到起点或充电点流程
+    return_target_mode: start                                           # 返航目标模式；start 回起点，charge 回充电位
+    charge_pose_x: 0.0                                                  # 充电位 x 坐标，单位 m；修改会改变 charge 模式返航目标
+    charge_pose_y: 0.0                                                  # 充电位 y 坐标，单位 m；修改会改变 charge 模式返航目标
+    charge_pose_yaw: 0.0                                                # 充电位偏航角，单位 rad；修改会改变最终朝向
+    charge_pose_frame_id: odom_combined                                 # 充电位坐标所在坐标系；需与定位源一致
+    use_nav2_return: true                                               # 是否优先使用 Nav2 返航；关闭后使用本地兜底返航动作
+    nav2_action_name: navigate_to_pose                                  # Nav2 NavigateToPose 动作名；改名需与 Nav2 action server 一致
+    nav2_goal_frame: map                                                # Nav2 返航目标坐标系；通常为 map，改错会导致目标解释错误
+    nav2_server_wait_timeout_sec: 1.0                                   # 等待 Nav2 action server 超时，单位 s；调大会等待更久
+    nav2_startup_wait_enabled: true                                     # 全量盘库启动前是否等待 Nav2 就绪；关闭可更快启动但可能导航未准备好
+    nav2_startup_wait_timeout_sec: 60.0                                 # 启动等待 Nav2 就绪超时，单位 s；调大会更耐心等待
+    nav2_startup_wait_poll_sec: 0.2                                     # 轮询 Nav2 就绪状态间隔，单位 s；调小响应更快但检查更频繁
+    nav2_goal_timeout_sec: 40.0                                         # 等待单个 Nav2 目标结果超时，单位 s；调大会允许更长导航时间
+    nav2_route_waypoint_timeout_sec: 60.0                               # 路线航点单点导航超时，单位 s；调大会允许更慢到点
+    nav2_cancel_stop_duration_sec: 0.50                                 # 取消 Nav2 路线搜索后持续发布零速度时间，单位 s；调大会停车更稳
+    nav2_enable_for_search_return: false                                # 搜索返程路径中是否允许 Nav2；开启可用全局导航，关闭用本地逻辑
+    fallback_rotate_kp: 1.5                                             # 兜底旋转控制比例增益；调大会转向修正更快但可能过冲
+    fallback_rotate_max_angular: 0.8                                    # 兜底旋转角速度上限，单位 rad/s；调大会旋转更快
+    fallback_rotate_tolerance_rad: 0.08                                 # 兜底旋转完成角度误差，单位 rad；调小更准但耗时更久
+    fallback_rotate_stable_time_sec: 0.25                               # 旋转进入误差范围后保持稳定时间，单位 s；调大会完成判定更稳
+    fallback_drive_speed: 0.20                                          # 兜底直行返航速度，单位 m/s；调大会更快但安全余量更小
+    fallback_heading_kp: 1.2                                            # 兜底直行航向控制比例增益；调大会纠偏更强
+    fallback_drive_max_angular: 0.8                                     # 兜底直行角速度上限，单位 rad/s；调大会允许更快纠偏
+    fallback_goal_tolerance_m: 0.18                                     # 兜底返航目标距离允许误差，单位 m；调大会更容易完成，调小更精确
+    continue_on_error: false                                            # 单个目标失败后是否继续下一个目标；开启可提高任务连续性但可能跳过异常
+    control_rate_hz: 10.0                                               # 任务管理器主控制循环频率，单位 Hz；调大会响应更快但 CPU 占用增加
 
-    # Enable LaserScan safety checks during entering (boolean).
-    use_scan_safety: true
-    # Max accepted scan message age for safety checks (seconds).
-    max_scan_age_sec: 0.8
+    use_scan_safety: true                                               # 进入阶段是否启用激光雷达安全检查；关闭会减少保护
+    max_scan_age_sec: 0.8                                               # 安全检查接受的最大雷达消息年龄，单位 s；调大会容忍旧数据，调小更实时
 
-    # Enable ultrasonic safety checks during entering (boolean).
-    use_ultrasonic_safety: true
-    # Ultrasonic topic list used for entering safety checks (topic name list).
-    ultrasonic_topics:
+    use_ultrasonic_safety: true                                         # 进入阶段是否启用超声波安全检查；关闭会减少近距离保护
+    ultrasonic_topics:                                                  # 进入阶段安全检查使用的超声波话题列表；增减项会改变参与检测的传感器数量
       - /ultrasonic_data_A
       - /ultrasonic_data_B
       - /ultrasonic_data_C
       - /ultrasonic_data_D
       - /ultrasonic_data_E
       - /ultrasonic_data_F
-    # Ultrasonic hard-stop threshold during entering (meters).
-    entry_ultrasonic_stop_distance: 0.25
-    # Max accepted ultrasonic message age for safety checks (seconds).
-    max_ultrasonic_age_sec: 0.8
+    entry_ultrasonic_stop_distance: 0.25                                # 进入阶段超声波硬停止距离，单位 m；调大会更早停车
+    max_ultrasonic_age_sec: 0.8                                         # 安全检查接受的最大超声波消息年龄，单位 s；调大会更容忍旧数据
 
-    # Local web/API bridge mode. "local" acknowledges requests inside the client until HTTP is connected.
-    web_client_mode: local
-    # Wait for cabinet opening and closing completion (seconds).
-    open_gap_wait_sec: 5.0
-    close_gap_wait_sec: 3.0
+    web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
+    open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
+    close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
 
-    # Scanner action parameters used by in-gap inventory steps.
-    scanner_enabled: true
-    scan_duration_sec: 2.0
-    scan_timeout_sec: 5.0
-    scan_retry_count: 0
-    scan_result_timeout_sec: 2.0
+    scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
+    scan_duration_sec: 2.0                                              # 单次扫描动作持续时间，单位 s；调大会采集更久但任务变慢
+    scan_timeout_sec: 5.0                                               # 等待扫描完成超时，单位 s；调大会允许扫描设备更慢返回
+    scan_retry_count: 0                                                 # 扫描失败重试次数，单位 次；调大会提高成功机会但耗时增加
+    scan_result_timeout_sec: 2.0                                        # 等待扫描结果超时，单位 s；调大会更容忍结果延迟
 
-    # Lift action parameters used by in-gap inventory steps.
-    lift_enabled: true
-    lift_motion_duration_sec: 3.0
-    lift_motion_timeout_sec: 6.0
-    lift_level_count: 2
-    lift_home_level: 1
+    lift_enabled: true                                                  # 是否启用升降杆动作接口；关闭会跳过升降动作
+    lift_motion_duration_sec: 3.0                                       # 单次升降动作预计持续时间，单位 s；调大会等待更久
+    lift_motion_timeout_sec: 6.0                                        # 等待升降动作完成超时，单位 s；调大会更容忍慢速升降
+    lift_level_count: 2                                                 # 升降扫描层数，单位 层；调大会扫描更多高度层
+    lift_home_level: 1                                                  # 升降杆回零或默认层号；修改会改变扫描结束后的停靠层
 
-    # Nominal in-gap grid movement timing. Real distance control still uses odom feedback.
-    grid_motion_duration_sec: 1.0
-    grid_motion_timeout_sec: 10.0
+    grid_motion_duration_sec: 1.0                                       # 间隙内单次网格移动预计时长，单位 s；调大会给运动更多时间
+    grid_motion_timeout_sec: 10.0                                       # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
 
-    # Single-cabinet inventory runtime.
-    real_motion_enabled: true
-    real_motion_target_cabinet: 4
-    real_motion_target_gap: gap_02_03_04
-    real_motion_stop_after_scan: false
-    real_motion_final_recognition_wait_sec: 20.0
+    real_motion_enabled: true                                           # 是否启用单柜真实运动盘库流程；关闭可跳过该运行路径
+    real_motion_target_cabinet: 4                                       # 单柜真实运动目标货柜编号；改动会改变单柜测试目标
+    real_motion_target_gap: gap_02_03_04                                # 单柜真实运动目标间隙 ID；需与间隙映射配置一致
+    real_motion_stop_after_scan: false                                  # 单柜扫描后是否立即停止任务；开启便于单柜调试
+    real_motion_final_recognition_wait_sec: 20.0                        # 单柜流程最终识别等待时间，单位 s；调大会等待识别更久
 
-    # Side-row single-cabinet inventory across adjacent accessible gaps.
-    side_row_inventory_enabled: true
-    side_row_inventory_name: row_01_02_03_04
-    side_row_first_gap: gap_02_03_04
-    side_row_first_gap_scan_sequence: [4, 3]
-    side_row_second_gap: gap_01_02_03
-    side_row_second_gap_scan_sequence: [2, 1]
-    side_row_corridor_transfer_enabled: true
-    side_row_corridor_transfer_target_cabinet: 2
-    side_row_corridor_transfer_direction: toward_cabinet_1
+    side_row_inventory_enabled: true                                    # 是否启用同侧相邻间隙盘库流程；关闭会跳过该流程
+    side_row_inventory_name: row_01_02_03_04                            # 同侧盘库流程名称；用于日志和任务区分
+    side_row_first_gap: gap_02_03_04                                    # 同侧盘库第一处进入间隙 ID；需与映射配置一致
+    side_row_first_gap_scan_sequence: [4, 3]                            # 第一处间隙扫描货柜顺序，单位 货柜编号列表；调整会改变扫描先后
+    side_row_second_gap: gap_01_02_03                                   # 同侧盘库第二处进入间隙 ID；需与映射配置一致
+    side_row_second_gap_scan_sequence: [2, 1]                           # 第二处间隙扫描货柜顺序，单位 货柜编号列表；调整会改变扫描先后
+    side_row_corridor_transfer_enabled: true                            # 两处间隙之间是否通过走廊转移；关闭会减少转移动作
+    side_row_corridor_transfer_target_cabinet: 2                        # 走廊转移阶段用于定位的目标货柜编号；改动会改变转移参照
+    side_row_corridor_transfer_direction: toward_cabinet_1              # 走廊转移方向标识；改变会影响搜索移动方向
 
-    # Exit and re-entry behavior after in-gap scanning.
-    exit_gap_after_each_scan: true
-    exit_gap_mode: reverse
-    exit_gap_speed: 0.05
-    exit_gap_extra_distance_m: 0.10
-    exit_gap_timeout_sec: 40.0
-    exit_gap_distance_m: 1.40
-    # After straight reverse, rotate in place back to the corridor yaw.
-    exit_gap_turn_enabled: true
-    exit_gap_turn_angular_speed: 0.25
-    exit_gap_turn_yaw_tolerance_rad: 0.08
-    exit_gap_turn_timeout_sec: 16.0
-    reentry_for_position_adjustment: true
-    close_gap_after_final_exit: true
+    exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
+    exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
+    exit_gap_speed: 0.15                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
+    exit_gap_extra_distance_m: 0.10                                     # 退出间隙额外距离，单位 m；调大会多退一些
+    exit_gap_timeout_sec: 40.0                                          # 退出间隙超时，单位 s；调大会允许更慢退出
+    exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
+    exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
+    exit_gap_turn_angular_speed: 0.25                                   # 退出后转向角速度，单位 rad/s；调大会转向更快
+    exit_gap_turn_yaw_tolerance_rad: 0.08                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
+    exit_gap_turn_timeout_sec: 40.0                                     # 退出后转向超时，单位 s；调大会允许更慢完成转向
+    reentry_for_position_adjustment: true                               # 是否允许为位置调整重新进入间隙；关闭可减少重复进出动作
+    close_gap_after_final_exit: true                                    # 最终退出后是否请求关闭间隙；关闭会跳过关闭请求
 
-    # Depth-grid movement inside a gap.
-    grid_motion_enabled: true
-    grid_spacing_m: 0.30
-    grid_move_speed: 0.04
-    grid_move_timeout_sec: 10.0
-    grid_move_return_between_layers: false
+    grid_motion_enabled: true                                           # 是否启用间隙内深度网格移动；关闭会跳过网格位移
+    grid_spacing_m: 0.30                                                # 间隙内相邻扫描网格间距，单位 m；调大会每层移动更远
+    grid_move_speed: 0.10                                               # 间隙内网格移动速度，单位 m/s；调大会移动更快但定位误差可能增大
+    grid_move_timeout_sec: 50.0                                         # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
+    grid_move_return_between_layers: false                              # 不同升降层之间是否回到网格起点；开启会增加回退动作但层间位置一致
 
-    # Full inventory queue and routes.
-    full_inventory_enabled: true
-    inventory_plan: [4, 3, 8, 7]
-    # Keep cabinet number recognition enabled while mission_manager is IDLE (boolean).
-    recognize_in_idle: true
-    recognize_during_nav: false
-    inventory_left_route: left_route
-    inventory_right_route: right_route
-    return_home_between_sides: true
-    return_home_after_full_inventory: true
+    full_inventory_enabled: true                                        # 是否启用全量盘库队列；关闭会跳过全量任务流程
+    inventory_plan: [4, 3, 8, 7]                                        # 全量盘库货柜编号计划列表；调整会改变任务顺序和目标
+    recognize_in_idle: true                                             # IDLE 状态是否保持货柜编号识别；开启便于待机观察，关闭可省资源
+    recognize_during_nav: false                                         # Nav2 导航期间是否保持识别；开启可提前发现目标但占用算力
+    inventory_left_route: left_route                                    # 左/上排盘库使用的路线名；需与路线航点配置一致
+    inventory_right_route: right_route                                  # 右/下排盘库使用的路线名；需与路线航点配置一致
+    return_home_between_sides: true                                     # 左右两侧任务之间是否先返航；开启更稳但耗时增加
+    return_home_after_full_inventory: true                              # 全量盘库结束后是否返航；关闭会停在最后任务位置
 
-    # Same-side next target search after exiting a gap.
-    same_side_next_search_enabled: true
-    same_side_search_speed: 0.04
-    same_side_search_timeout_sec: 40.0
-    same_side_pose_hold_enabled: true
-    same_side_left_fixed_y_m: 0.690
-    same_side_left_fixed_yaw_rad: -3.1400
-    same_side_right_fixed_y_m: -0.6174
-    same_side_right_fixed_yaw_rad: -3.1400
-    same_side_yaw_kp: 0.40
-    same_side_yaw_deadband_rad: 0.03
-    same_side_y_kp: 0.30
-    same_side_y_deadband_m: 0.03
-    same_side_y_correction_sign: 1.0
-    same_side_max_angular: 0.15
+    same_side_next_search_enabled: true                                 # 退出间隙后是否启用同侧下一目标搜索；关闭会减少连续盘库能力
+    same_side_search_speed: 0.10                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
+    same_side_search_timeout_sec: 40.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
+    same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
+    same_side_left_fixed_y_m: 0.790                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_left_fixed_yaw_rad: -3.1400                               # 左/上排同侧搜索保持的航向，单位 rad；改动会改变车头方向
+    same_side_right_fixed_y_m: -0.6174                                  # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_right_fixed_yaw_rad: -3.1400                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
+    same_side_yaw_kp: 0.40                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
+    same_side_yaw_deadband_rad: 0.03                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
+    same_side_y_kp: 0.30                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
+    same_side_y_deadband_m: 0.03                                        # 同侧搜索 y 坐标误差死区，单位 m；调大会减少小幅横向修正
+    same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
+    same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
 
-    # Recognition fallback and post-gap alignment for full inventory.
-    overall_final_recognition_wait_sec: 10.0
-    recognition_fallback_enabled: true
-    recognition_fallback_speed: 0.04
-    recognition_fallback_wait_sec: 5.0
-    recognition_fallback_timeout_sec: 20.0
-    recognition_fallback_sequence_m: [1.60]
-    post_gap_detect_advance_enabled: true
-    post_gap_detect_advance_distance_m: 0.25
-    post_gap_detect_advance_speed: 0.04
-    post_gap_detect_advance_timeout_sec: 8.0
+    overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
+    recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
+    recognition_fallback_speed: 0.10                                    # 识别兜底移动速度，单位 m/s；调大会搜索更快但可能错过目标
+    recognition_fallback_wait_sec: 5.0                                  # 每次识别兜底动作后的等待时间，单位 s；调大会给识别更多稳定时间
+    recognition_fallback_timeout_sec: 20.0                              # 识别兜底总超时，单位 s；调大会允许更长搜索
+    recognition_fallback_sequence_m: [0.20, -0.20, 0.30]                # 识别兜底移动距离序列，单位 m；正负号决定前后搜索方向
 
-    # Inventory scan grid dimensions and web bridge endpoints.
-    scan_layers: 2
-    scan_depth_count: 3
-    web_base_url: ""
-    web_open_gap_endpoint: "/api/gap/open"
-    web_close_gap_endpoint: "/api/gap/close"
-    web_status_endpoint: "/api/robot/status"
-    web_result_endpoint: "/api/inventory/result"
+
+    scan_layers: 2                                                      # 盘库扫描层数，单位 层；调大会扫描更多高度层
+    scan_depth_count: 3                                                 # 每个货柜深度方向扫描点数量，单位 个；调大会覆盖更多深度位置
+    web_base_url: ""                                                    # Web 服务基础地址；为空时通常使用本地模式，填写后请求远端接口
+    web_open_gap_endpoint: "/api/gap/open"                              # 打开间隙 API 路径；改动需与 Web 后端接口一致
+    web_close_gap_endpoint: "/api/gap/close"                            # 关闭间隙 API 路径；改动需与 Web 后端接口一致
+    web_status_endpoint: "/api/robot/status"                            # 机器人状态上报 API 路径；改动需与 Web 后端接口一致
+    web_result_endpoint: "/api/inventory/result"                        # 盘库结果上报 API 路径；改动需与 Web 后端接口一致

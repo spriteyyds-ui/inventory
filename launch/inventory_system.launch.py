@@ -16,8 +16,8 @@ def generate_launch_description():
         description='是否随盘库系统启动 wheeltec_nav2'
     )
 
-    params_file_arg = DeclareLaunchArgument(
-        'params_file',
+    inventory_params_file_arg = DeclareLaunchArgument(
+        'inventory_params_file',
         default_value=PathJoinSubstitution([
             FindPackageShare('wheeltec_inventory_system'),
             'config',
@@ -27,7 +27,7 @@ def generate_launch_description():
     )
 
     launch_nav2 = LaunchConfiguration('launch_nav2')
-    params_file = LaunchConfiguration('params_file')
+    inventory_params_file = LaunchConfiguration('inventory_params_file')
     nav2_launch_file = os.path.join(
         get_package_share_directory('wheeltec_nav2'),
         'launch',
@@ -44,7 +44,7 @@ def generate_launch_description():
         executable='corridor_follower_node',
         name='corridor_follower_node',
         output='screen',
-        parameters=[params_file]
+        parameters=[inventory_params_file]
     )
 
     c100_right_camera_node = Node(
@@ -76,7 +76,7 @@ def generate_launch_description():
         executable='number_recognizer_node',
         name='number_recognizer_node',
         output='screen',
-        parameters=[params_file, {
+        parameters=[inventory_params_file, {
             'camera_topic': '/c100_right/image_raw',
             'recognized_topic': '/inventory/recognized_number',
             'enable_control_topic': '/inventory/recognizer_enable',
@@ -92,7 +92,7 @@ def generate_launch_description():
         executable='distance_estimator_node',
         name='distance_estimator_node',
         output='screen',
-        parameters=[params_file]
+        parameters=[inventory_params_file]
     )
 
     gap_detector_node = Node(
@@ -100,7 +100,7 @@ def generate_launch_description():
         executable='gap_detector_node',
         name='gap_detector_node',
         output='screen',
-        parameters=[params_file]
+        parameters=[inventory_params_file]
     )
 
     mission_manager_node = Node(
@@ -108,12 +108,12 @@ def generate_launch_description():
         executable='mission_manager_node',
         name='mission_manager_node',
         output='screen',
-        parameters=[params_file]
+        parameters=[inventory_params_file]
     )
 
     return LaunchDescription([
         launch_nav2_arg,
-        params_file_arg,
+        inventory_params_file_arg,
         nav2_launch,
         corridor_follower_node,
         c100_right_camera_node,
