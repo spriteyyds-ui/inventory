@@ -303,25 +303,15 @@ mission_manager_node:
     charge_pose_y: 0.0                                                  # 充电位 y 坐标，单位 m；修改会改变 charge 模式返航目标
     charge_pose_yaw: 0.0                                                # 充电位偏航角，单位 rad；修改会改变最终朝向
     charge_pose_frame_id: odom_combined                                 # 充电位坐标所在坐标系；需与定位源一致
-    use_nav2_return: true                                               # 是否优先使用 Nav2 返航；关闭后使用本地兜底返航动作
     nav2_action_name: navigate_to_pose                                  # Nav2 NavigateToPose 动作名；改名需与 Nav2 action server 一致
     nav2_goal_frame: map                                                # Nav2 返航目标坐标系；通常为 map，改错会导致目标解释错误
-    nav2_server_wait_timeout_sec: 1.0                                   # 等待 Nav2 action server 超时，单位 s；调大会等待更久
+    nav2_server_wait_timeout_sec: 5.0                                   # 等待 Nav2 action server 超时，单位 s；调大会等待更久
     nav2_startup_wait_enabled: true                                     # 全量盘库启动前是否等待 Nav2 就绪；关闭可更快启动但可能导航未准备好
     nav2_startup_wait_timeout_sec: 60.0                                 # 启动等待 Nav2 就绪超时，单位 s；调大会更耐心等待
     nav2_startup_wait_poll_sec: 0.2                                     # 轮询 Nav2 就绪状态间隔，单位 s；调小响应更快但检查更频繁
-    nav2_goal_timeout_sec: 40.0                                         # 等待单个 Nav2 目标结果超时，单位 s；调大会允许更长导航时间
+    nav2_goal_timeout_sec: 120.0                                        # Nav2 目标等待超时，单位 s；返航超时后直接报错，不再执行兜底返航
     nav2_route_waypoint_timeout_sec: 60.0                               # 路线航点单点导航超时，单位 s；调大会允许更慢到点
     nav2_cancel_stop_duration_sec: 0.50                                 # 取消 Nav2 路线搜索后持续发布零速度时间，单位 s；调大会停车更稳
-    nav2_enable_for_search_return: false                                # 搜索返程路径中是否允许 Nav2；开启可用全局导航，关闭用本地逻辑
-    fallback_rotate_kp: 1.5                                             # 兜底旋转控制比例增益；调大会转向修正更快但可能过冲
-    fallback_rotate_max_angular: 0.8                                    # 兜底旋转角速度上限，单位 rad/s；调大会旋转更快
-    fallback_rotate_tolerance_rad: 0.08                                 # 兜底旋转完成角度误差，单位 rad；调小更准但耗时更久
-    fallback_rotate_stable_time_sec: 0.25                               # 旋转进入误差范围后保持稳定时间，单位 s；调大会完成判定更稳
-    fallback_drive_speed: 0.20                                          # 兜底直行返航速度，单位 m/s；调大会更快但安全余量更小
-    fallback_heading_kp: 1.2                                            # 兜底直行航向控制比例增益；调大会纠偏更强
-    fallback_drive_max_angular: 0.8                                     # 兜底直行角速度上限，单位 rad/s；调大会允许更快纠偏
-    fallback_goal_tolerance_m: 0.18                                     # 兜底返航目标距离允许误差，单位 m；调大会更容易完成，调小更精确
     continue_on_error: false                                            # 单个目标失败后是否继续下一个目标；开启可提高任务连续性但可能跳过异常
     control_rate_hz: 10.0                                               # 任务管理器主控制循环频率，单位 Hz；调大会响应更快但 CPU 占用增加
 
