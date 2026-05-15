@@ -196,7 +196,6 @@ public:
     charge_pose_y_ = declare_parameter<double>("charge_pose_y", 0.0);
     charge_pose_yaw_ = declare_parameter<double>("charge_pose_yaw", 0.0);
     charge_pose_frame_id_ = declare_parameter<std::string>("charge_pose_frame_id", "odom_combined");
-    use_nav2_return_ = declare_parameter<bool>("use_nav2_return", true);
     nav2_action_name_ = declare_parameter<std::string>("nav2_action_name", "navigate_to_pose");
     nav2_goal_frame_ = declare_parameter<std::string>("nav2_goal_frame", "map");
     nav2_server_wait_timeout_sec_ = declare_parameter<double>("nav2_server_wait_timeout_sec", 1.0);
@@ -205,20 +204,11 @@ public:
       declare_parameter<double>("nav2_startup_wait_timeout_sec", 60.0);
     nav2_startup_wait_poll_sec_ =
       declare_parameter<double>("nav2_startup_wait_poll_sec", 0.2);
-    nav2_goal_timeout_sec_ = declare_parameter<double>("nav2_goal_timeout_sec", 40.0);
+    nav2_goal_timeout_sec_ = declare_parameter<double>("nav2_goal_timeout_sec", 120.0);
     nav2_route_waypoint_timeout_sec_ =
       declare_parameter<double>("nav2_route_waypoint_timeout_sec", 60.0);
     nav2_cancel_stop_duration_sec_ =
       declare_parameter<double>("nav2_cancel_stop_duration_sec", 0.50);
-    nav2_enable_for_search_return_ = declare_parameter<bool>("nav2_enable_for_search_return", false);
-    fallback_rotate_kp_ = declare_parameter<double>("fallback_rotate_kp", 1.5);
-    fallback_rotate_max_angular_ = declare_parameter<double>("fallback_rotate_max_angular", 0.8);
-    fallback_rotate_tolerance_rad_ = declare_parameter<double>("fallback_rotate_tolerance_rad", 0.08);
-    fallback_rotate_stable_time_sec_ = declare_parameter<double>("fallback_rotate_stable_time_sec", 0.25);
-    fallback_drive_speed_ = declare_parameter<double>("fallback_drive_speed", 0.20);
-    fallback_heading_kp_ = declare_parameter<double>("fallback_heading_kp", 1.2);
-    fallback_drive_max_angular_ = declare_parameter<double>("fallback_drive_max_angular", 0.8);
-    fallback_goal_tolerance_m_ = declare_parameter<double>("fallback_goal_tolerance_m", 0.18);
 
     continue_on_error_ = declare_parameter<bool>("continue_on_error", false);
     control_rate_hz_ = declare_parameter<double>("control_rate_hz", 10.0);
@@ -543,11 +533,11 @@ public:
     set_state(State::IDLE, "系统待机");
     RCLCPP_INFO(
       get_logger(),
-      "任务管理节点已启动，odom主话题=%s，fallback=%s，return_mode=%s，nav2=%s",
+      "任务管理节点已启动，odom主话题=%s，备用odom=%s，return_mode=%s，nav2_action=%s",
       odom_topic_.c_str(),
       odom_fallback_topic_.c_str(),
       return_target_mode_.c_str(),
-      use_nav2_return_ ? "on" : "off");
+      nav2_action_name_.c_str());
   }
 
 private:
@@ -621,20 +611,6 @@ private:
   {
     START,
     CHARGE,
-  };
-
-  enum class FallbackDriveMode
-  {
-    NONE,
-    CORRIDOR_DISTANCE,
-    DIRECT_POSE,
-  };
-
-  enum class FallbackPhase
-  {
-    IDLE,
-    ROTATING,
-    DRIVING,
   };
 
   enum class WaitGapPhase
@@ -3296,7 +3272,7 @@ private:
       mode_text = "起始点无效";
       return false;
     }
-    if (use_nav2_return_ && mission_start_pose_nav2_.valid) {
+    if (mission_start_pose_nav2_.valid) {
       target_pose = mission_start_pose_nav2_;
       mode_text = "起始点(Nav2全局)";
       return true;
@@ -3309,10 +3285,6 @@ private:
   bool begin_nav2_return(const Pose2D & target_pose, std::string & fail_reason)
   {
     fail_reason.clear();
-    if (!use_nav2_return_) {
-      fail_reason = "参数关闭 Nav2 返航";
-      return false;
-    }
     if (!nav2_client_) {
       fail_reason = "Nav2 action client 未初始化";
       return false;
@@ -3394,6 +3366,7 @@ private:
     options.result_callback =
       [this](const NavigateGoalHandle::WrappedResult & result) {
         nav2_return_in_progress_ = false;
+        nav2_goal_handle_.reset();
         nav2_result_ready_ = true;
         nav2_result_success_ = (result.code == rclcpp_action::ResultCode::SUCCEEDED);
         if (nav2_result_success_) {
@@ -3409,75 +3382,6 @@ private:
       };
 
     (void)nav2_client_->async_send_goal(goal, options);
-    return_using_nav2_ = true;
-    return true;
-  }
-
-  bool begin_fallback_return(
-    ReturnMode mode, const Pose2D & resolved_target, const std::string & reason)
-  {
-    (void)reason;
-    cancel_nav2_return_goal("切换到兜底返航");
-    return_using_nav2_ = false;
-    nav2_result_ready_ = false;
-    nav2_result_text_.clear();
-
-    fallback_phase_ = FallbackPhase::ROTATING;
-    fallback_drive_mode_ = FallbackDriveMode::NONE;
-    fallback_rotate_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-    request_recognizer_enable(false);
-
-    if (!latest_odom_ || !has_yaw_) {
-      if (full_inventory_active_) {
-        fail_full_inventory("返航失败：无可用里程计/航向");
-        return false;
-      }
-      mission_active_ = false;
-      set_state(State::ERROR, "返航失败：无可用里程计/航向");
-      return false;
-    }
-
-    if (mode == ReturnMode::SEARCH_TARGET || get_return_target_mode() == ReturnTargetMode::START) {
-      fallback_target_yaw_ = normalize_angle(latest_yaw_ + M_PI);
-      fallback_target_distance_ = std::max(0.20, odom_cumulative_distance_ - mission_start_distance_);
-      fallback_drive_mode_ = FallbackDriveMode::CORRIDOR_DISTANCE;
-      reset_segment_distance();
-      publish_log("兜底返航：掉头180度后按走行里程回退");
-      return true;
-    }
-
-    const Pose2D current = current_pose_2d();
-    if (!current.valid) {
-      if (full_inventory_active_) {
-        fail_full_inventory("返航失败：当前位姿不可用");
-        return false;
-      }
-      mission_active_ = false;
-      set_state(State::ERROR, "返航失败：当前位姿不可用");
-      return false;
-    }
-
-    if (!resolved_target.frame_id.empty() && !current.frame_id.empty() &&
-      resolved_target.frame_id != current.frame_id)
-    {
-      // 坐标系不一致时，兜底策略退化为“掉头+里程返回”，确保仍可回撤。
-      fallback_target_yaw_ = normalize_angle(latest_yaw_ + M_PI);
-      fallback_target_distance_ = std::max(0.20, odom_cumulative_distance_ - mission_start_distance_);
-      fallback_drive_mode_ = FallbackDriveMode::CORRIDOR_DISTANCE;
-      reset_segment_distance();
-      publish_log("兜底返航：坐标系不一致，退化为掉头+里程返回");
-      return true;
-    }
-
-    const double dx = resolved_target.x - current.x;
-    const double dy = resolved_target.y - current.y;
-    fallback_target_x_ = resolved_target.x;
-    fallback_target_y_ = resolved_target.y;
-    fallback_target_distance_ = std::hypot(dx, dy);
-    fallback_target_yaw_ = fallback_target_distance_ > fallback_goal_tolerance_m_ ?
-      std::atan2(dy, dx) : current.yaw;
-    fallback_drive_mode_ = FallbackDriveMode::DIRECT_POSE;
-    publish_log("兜底返航：按里程计坐标闭环返回目标点");
     return true;
   }
 
@@ -3485,9 +3389,10 @@ private:
   {
     set_corridor_mode(false, false);
     publish_stop();
-    return_using_nav2_ = false;
-    fallback_phase_ = FallbackPhase::IDLE;
-    fallback_drive_mode_ = FallbackDriveMode::NONE;
+    nav2_return_in_progress_ = false;
+    nav2_result_ready_ = false;
+    nav2_result_success_ = false;
+    nav2_goal_handle_.reset();
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
     publish_gap_context();
@@ -3524,75 +3429,33 @@ private:
     }
   }
 
-  void run_fallback_return()
+  void fail_nav2_return(const std::string & reason)
   {
-    if (fallback_phase_ == FallbackPhase::IDLE) {
+    const std::string detail = reason + "，不执行兜底返航";
+    RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+    publish_log(detail);
+    nav2_return_in_progress_ = false;
+    nav2_result_ready_ = false;
+    nav2_result_success_ = false;
+    nav2_result_text_.clear();
+    nav2_goal_handle_.reset();
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(false);
+    return_mode_ = ReturnMode::NONE;
+
+    if (full_inventory_active_) {
+      fail_full_inventory(detail);
       return;
     }
 
-    if (!latest_odom_ || !has_yaw_) {
-      publish_stop();
+    if (single_cabinet_motion_active_) {
+      fail_single_cabinet_motion(detail);
       return;
     }
 
-    if (fallback_phase_ == FallbackPhase::ROTATING) {
-      const double yaw_error = normalize_angle(fallback_target_yaw_ - latest_yaw_);
-      geometry_msgs::msg::Twist cmd;
-      cmd.linear.x = 0.0;
-      cmd.angular.z = std::clamp(
-        fallback_rotate_kp_ * yaw_error,
-        -std::abs(fallback_rotate_max_angular_),
-        std::abs(fallback_rotate_max_angular_));
-      cmd_pub_->publish(cmd);
-
-      if (std::abs(yaw_error) <= fallback_rotate_tolerance_rad_) {
-        if (fallback_rotate_stable_start_.nanoseconds() == 0) {
-          fallback_rotate_stable_start_ = this->now();
-        }
-        if ((this->now() - fallback_rotate_stable_start_).seconds() >= fallback_rotate_stable_time_sec_) {
-          publish_stop();
-          fallback_phase_ = FallbackPhase::DRIVING;
-          if (fallback_drive_mode_ == FallbackDriveMode::CORRIDOR_DISTANCE) {
-            reset_segment_distance();
-            set_corridor_mode(true, false);
-          }
-        }
-      } else {
-        fallback_rotate_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
-      }
-      return;
-    }
-
-    if (fallback_phase_ == FallbackPhase::DRIVING) {
-      if (fallback_drive_mode_ == FallbackDriveMode::CORRIDOR_DISTANCE) {
-        if (segment_distance() < fallback_target_distance_) {
-          return;
-        }
-        finalize_return_success();
-        return;
-      }
-
-      if (fallback_drive_mode_ == FallbackDriveMode::DIRECT_POSE) {
-        const Pose2D current = current_pose_2d();
-        const double dx = fallback_target_x_ - current.x;
-        const double dy = fallback_target_y_ - current.y;
-        const double dist = std::hypot(dx, dy);
-        if (dist <= fallback_goal_tolerance_m_) {
-          finalize_return_success();
-          return;
-        }
-
-        const double heading_ref = std::atan2(dy, dx);
-        const double heading_error = normalize_angle(heading_ref - current.yaw);
-        geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = std::abs(fallback_drive_speed_);
-        cmd.angular.z = std::clamp(
-          fallback_heading_kp_ * heading_error,
-          -std::abs(fallback_drive_max_angular_),
-          std::abs(fallback_drive_max_angular_));
-        cmd_pub_->publish(cmd);
-      }
-    }
+    mission_active_ = false;
+    set_state(State::ERROR, detail);
   }
 
   void switch_to_returning(ReturnMode mode, const std::string & reason)
@@ -3603,12 +3466,8 @@ private:
     request_recognizer_enable(false);
 
     return_mode_ = mode;
-    return_using_nav2_ = false;
     nav2_return_in_progress_ = false;
     nav2_result_ready_ = false;
-    fallback_phase_ = FallbackPhase::IDLE;
-    fallback_drive_mode_ = FallbackDriveMode::NONE;
-    fallback_rotate_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
     publish_gap_context();
@@ -3654,29 +3513,13 @@ private:
         target_pose.frame_id.c_str());
     }
 
-    const bool allow_nav2 = use_nav2_return_ && (mode != ReturnMode::SEARCH_TARGET || nav2_enable_for_search_return_);
-    bool nav2_started = false;
-    bool fallback_started = false;
     std::string nav2_fail_reason;
-    if (allow_nav2) {
-      nav2_started = begin_nav2_return(target_pose, nav2_fail_reason);
-    }
-    if (!nav2_started) {
-      fallback_started = begin_fallback_return(mode, target_pose, reason);
-      if (!fallback_started) {
-        return;
-      }
+    if (!begin_nav2_return(target_pose, nav2_fail_reason)) {
+      fail_nav2_return("Nav2 返航目标发送失败: " + nav2_fail_reason);
+      return;
     }
 
-    std::string detail = reason + "，返航目标=" + target_mode_text;
-    if (nav2_started) {
-      detail += "，方式=Nav2";
-    } else {
-      detail += "，方式=兜底";
-      if (!nav2_fail_reason.empty()) {
-        detail += "（" + nav2_fail_reason + "）";
-      }
-    }
+    std::string detail = reason + "，返航目标=" + target_mode_text + "，方式=Nav2";
     set_state(State::RETURNING, detail);
   }
 
@@ -4121,12 +3964,8 @@ private:
     has_distance_ = false;
     latest_distance_ = 0.0;
     return_mode_ = ReturnMode::NONE;
-    return_target_distance_ = 0.0;
-    return_using_nav2_ = false;
     nav2_return_in_progress_ = false;
     nav2_result_ready_ = false;
-    fallback_phase_ = FallbackPhase::IDLE;
-    fallback_drive_mode_ = FallbackDriveMode::NONE;
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
     publish_gap_context();
@@ -6560,12 +6399,8 @@ private:
     latest_distance_ = 0.0;
 
     return_mode_ = ReturnMode::NONE;
-    return_target_distance_ = 0.0;
-    return_using_nav2_ = false;
     nav2_return_in_progress_ = false;
     nav2_result_ready_ = false;
-    fallback_phase_ = FallbackPhase::IDLE;
-    fallback_drive_mode_ = FallbackDriveMode::NONE;
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
     publish_gap_context();
@@ -6659,44 +6494,31 @@ private:
 
   void handle_returning_state()
   {
-    if (return_using_nav2_) {
-      if (nav2_return_in_progress_) {
-        if ((this->now() - nav2_goal_sent_time_).seconds() > nav2_goal_timeout_sec_) {
-          cancel_nav2_return_goal("Nav2 返航超时");
-          Pose2D target_pose;
-          std::string mode_text;
-          if (resolve_return_pose(return_mode_, target_pose, mode_text)) {
-            (void)begin_fallback_return(return_mode_, target_pose, "Nav2 超时，切换兜底");
-          } else {
-            mission_active_ = false;
-            set_state(State::ERROR, "Nav2 超时且无法切换兜底");
-          }
-        }
-        return;
-      }
-
-      if (nav2_result_ready_) {
-        nav2_result_ready_ = false;
-        if (nav2_result_success_) {
-          publish_log(nav2_result_text_);
-          finalize_return_success();
-          return;
-        }
-
-        publish_log(nav2_result_text_ + "，切换兜底返航");
-        Pose2D target_pose;
-        std::string mode_text;
-        if (resolve_return_pose(return_mode_, target_pose, mode_text)) {
-          (void)begin_fallback_return(return_mode_, target_pose, "Nav2 失败，切换兜底");
-        } else {
-          mission_active_ = false;
-          set_state(State::ERROR, "Nav2 失败且无法切换兜底");
-        }
+    if (nav2_return_in_progress_) {
+      if ((this->now() - nav2_goal_sent_time_).seconds() >
+        std::max(0.1, nav2_goal_timeout_sec_))
+      {
+        cancel_nav2_return_goal("Nav2 返航超时");
+        fail_nav2_return("Nav2 返航超时，已取消返航目标");
       }
       return;
     }
 
-    run_fallback_return();
+    if (nav2_result_ready_) {
+      nav2_result_ready_ = false;
+      if (nav2_result_success_) {
+        publish_log(nav2_result_text_);
+        finalize_return_success();
+        return;
+      }
+
+      const std::string result_text =
+        nav2_result_text_.empty() ? "Nav2 返航失败" : nav2_result_text_;
+      fail_nav2_return(result_text);
+      return;
+    }
+
+    fail_nav2_return("RETURNING 状态无活动 Nav2 返航目标");
   }
 
   void publish_gap_context() const
@@ -7824,12 +7646,8 @@ private:
         has_distance_ = false;
         latest_distance_ = 0.0;
         return_mode_ = ReturnMode::NONE;
-        return_target_distance_ = 0.0;
-        return_using_nav2_ = false;
         nav2_return_in_progress_ = false;
         nav2_result_ready_ = false;
-        fallback_phase_ = FallbackPhase::IDLE;
-        fallback_drive_mode_ = FallbackDriveMode::NONE;
         reset_wait_gap_runtime();
         reset_entry_gap_runtime();
         publish_gap_context();
@@ -8296,25 +8114,15 @@ private:
   double charge_pose_y_{0.0};
   double charge_pose_yaw_{0.0};
   std::string charge_pose_frame_id_{"odom_combined"};
-  bool use_nav2_return_{true};
   std::string nav2_action_name_{"navigate_to_pose"};
   std::string nav2_goal_frame_{"map"};
   double nav2_server_wait_timeout_sec_{1.0};
   bool nav2_startup_wait_enabled_{true};
   double nav2_startup_wait_timeout_sec_{60.0};
   double nav2_startup_wait_poll_sec_{0.2};
-  double nav2_goal_timeout_sec_{40.0};
+  double nav2_goal_timeout_sec_{120.0};
   double nav2_route_waypoint_timeout_sec_{60.0};
   double nav2_cancel_stop_duration_sec_{0.50};
-  bool nav2_enable_for_search_return_{false};
-  double fallback_rotate_kp_{1.5};
-  double fallback_rotate_max_angular_{0.8};
-  double fallback_rotate_tolerance_rad_{0.08};
-  double fallback_rotate_stable_time_sec_{0.25};
-  double fallback_drive_speed_{0.20};
-  double fallback_heading_kp_{1.2};
-  double fallback_drive_max_angular_{0.8};
-  double fallback_goal_tolerance_m_{0.18};
   bool continue_on_error_{false};
   double control_rate_hz_{10.0};
 
@@ -8493,7 +8301,6 @@ private:
   bool gap_detector_enable_initialized_{false};
   bool distance_estimator_enabled_cmd_{false};
   bool distance_estimator_enable_initialized_{false};
-  bool return_using_nav2_{false};
   bool nav2_return_in_progress_{false};
   bool nav2_result_ready_{false};
   bool nav2_result_success_{false};
@@ -8541,14 +8348,6 @@ private:
   double odom_cumulative_distance_{0.0};
   double segment_start_distance_{0.0};
   double mission_start_distance_{0.0};
-  double return_target_distance_{0.0};
-  double fallback_target_yaw_{0.0};
-  double fallback_target_x_{0.0};
-  double fallback_target_y_{0.0};
-  double fallback_target_distance_{0.0};
-  FallbackDriveMode fallback_drive_mode_{FallbackDriveMode::NONE};
-  FallbackPhase fallback_phase_{FallbackPhase::IDLE};
-  rclcpp::Time fallback_rotate_stable_start_{0, 0, RCL_ROS_TIME};
   WaitGapPhase wait_gap_phase_{WaitGapPhase::IDLE};
   rclcpp::Time search_gap_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time wait_gap_phase_start_{0, 0, RCL_ROS_TIME};
