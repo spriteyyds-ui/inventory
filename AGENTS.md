@@ -26,10 +26,17 @@ Use commands like:
 
     cd /home/wheeltec/wheeltec_ros2/src/wheeltec_inventory_system
 
+When the target file, function name, parameter name, or line number is already known, prefer precise
+local reads and targeted grep first:
+
+    grep -n "function_name" src/mission_manager_node.cpp
+    grep -n "parameter_name" config/inventory_system.yaml
+    sed -n '120,220p' src/mission_manager_node.cpp
+
+Only use broad recursive searches when the target file or symbol is not yet known:
+
     grep -R "keyword" -n src include config
     grep -R "StateName" -n src include config
-    grep -R "parameter_name" -n src include config
-    grep -R "cmd.linear.x" -n src include config
 
 After the search, summarize:
 
@@ -39,6 +46,25 @@ After the search, summarize:
 4. Which old logic should be removed.
 
 Do not modify files before this analysis is complete.
+
+## Codex Token Usage Policy
+
+Use a lightweight workflow by default to reduce unnecessary Codex quota consumption.
+
+- When the target file, function name, parameter name, or line number is already known, prefer local
+  reads and precise grep instead of broad project-wide searches.
+- Do not default to large recursive grep commands or full state-machine analysis when the relevant
+  scope is already clear.
+- When a plan has already been confirmed in the previous turn, do not repeat the full planning
+  analysis before implementing it; re-check only the context needed for a safe edit.
+- Keep reports concise by default, focusing on changed files, important line numbers, verification
+  results, and remaining risks.
+- Do not sacrifice correctness to save tokens while writing code. Necessary context reading,
+  implementation, cleanup of obsolete logic, compile-error fixes, and build verification must still
+  be done when needed.
+- Safety rules remain higher priority than token savings, including allowed-path restrictions,
+  preserving user changes, keeping lift and scanning interfaces, and avoiding sim/mock/fake/
+  temporary/placeholder names as formal interface names.
 
 ## Code Modification Rules
 

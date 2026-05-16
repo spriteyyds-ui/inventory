@@ -114,6 +114,8 @@ public:
     right_max_depth_index_ = declare_parameter<int>("right_max_depth_index", 3);
     entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
     entry_turn_yaw_delta_rad_ = declare_parameter<double>("entry_turn_yaw_delta_rad", 1.57079632679);
+    entry_right_target_yaw_rad_ = declare_parameter<double>("entry_right_target_yaw_rad", 1.5708);
+    entry_left_target_yaw_rad_ = declare_parameter<double>("entry_left_target_yaw_rad", -1.5708);
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
     entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", enter_angular_speed_);
@@ -6799,8 +6801,12 @@ private:
       reason = "入缝深度规划尚未生成";
       return false;
     }
-    if (!std::isfinite(entry_turn_yaw_delta_rad_) || std::abs(entry_turn_yaw_delta_rad_) <= 1e-4) {
-      reason = "entry_turn_yaw_delta_rad 必须为非零有限值";
+    if (!std::isfinite(entry_turn_yaw_delta_rad_)) {
+      reason = "entry_turn_yaw_delta_rad 必须为有限值";
+      return false;
+    }
+    if (!std::isfinite(entry_right_target_yaw_rad_) || !std::isfinite(entry_left_target_yaw_rad_)) {
+      reason = "entry_right_target_yaw_rad / entry_left_target_yaw_rad 必须为有限值";
       return false;
     }
     if (!std::isfinite(entry_align_yaw_tolerance_rad_) || entry_align_yaw_tolerance_rad_ <= 0.0) {
@@ -6914,14 +6920,35 @@ private:
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     entry_turn_start_yaw_ = current.yaw;
-    const double signed_delta = current_entry_side_ == "right" ?
-      -std::abs(entry_turn_yaw_delta_rad_) : std::abs(entry_turn_yaw_delta_rad_);
-    target_gap_yaw_ = normalize_angle(entry_turn_start_yaw_ + signed_delta);
+    if (current_entry_side_ == "right") {
+      target_gap_yaw_ = normalize_angle(entry_right_target_yaw_rad_);
+    } else if (current_entry_side_ == "left") {
+      target_gap_yaw_ = normalize_angle(entry_left_target_yaw_rad_);
+    } else {
+      fail_entering_gap("entry_side 非法，无法确定固定 map Y 入缝目标 yaw: " + current_entry_side_);
+      return;
+    }
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][entering_gap] fixed map-y target yaw entry_side=%s "
+      "target_gap_yaw=%.4f entry_right_target_yaw_rad=%.4f entry_left_target_yaw_rad=%.4f "
+      "target_yaw_source=fixed_map_y",
+      current_entry_side_.c_str(),
+      target_gap_yaw_,
+      entry_right_target_yaw_rad_,
+      entry_left_target_yaw_rad_);
+    publish_motion_log(
+      "[entering_gap] fixed map-y target yaw entry_side=" + current_entry_side_ +
+      " target_gap_yaw=" + format_fixed(target_gap_yaw_, 4) +
+      " entry_right_target_yaw_rad=" + format_fixed(entry_right_target_yaw_rad_, 4) +
+      " entry_left_target_yaw_rad=" + format_fixed(entry_left_target_yaw_rad_, 4) +
+      " target_yaw_source=fixed_map_y");
     reset_segment_distance();
     set_entry_gap_phase(
       EntryGapPhase::ENTERING_TURN,
       "entry_turn_start_yaw=" + std::to_string(entry_turn_start_yaw_) +
       " target_gap_yaw=" + std::to_string(target_gap_yaw_) +
+      " target_yaw_source=fixed_map_y" +
       " direction=" + entry_turn_direction_text());
     const std::string state_detail =
       detail + "，开始转入缝隙 target_straight_distance=" +
@@ -8160,6 +8187,8 @@ private:
   double target_straight_distance_{1.2};
   bool current_entry_profile_valid_{false};
   double entry_turn_yaw_delta_rad_{1.57079632679};
+  double entry_right_target_yaw_rad_{1.5708};
+  double entry_left_target_yaw_rad_{-1.5708};
   double entry_align_yaw_tolerance_rad_{0.08};
   double entry_turn_angular_speed_{0.30};
   double entry_turn_timeout_sec_{12.0};
