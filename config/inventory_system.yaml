@@ -21,7 +21,11 @@ corridor_follower_node:
 
 number_recognizer_node:
   ros__parameters:
-    camera_topic: /c100_right/image_raw                                 # 数字识别输入图像话题；改动会切换识别所用摄像头
+    camera_topic: /c100_right/image_raw                                 # 动态相机选择失败时的兜底输入图像话题
+    left_camera_topic: /c100_left/image_raw                             # entry_side=left 时使用的车身左侧相机图像话题
+    right_camera_topic: /c100_right/image_raw                           # entry_side=right 时使用的车身右侧相机图像话题
+    target_cabinet_topic: /inventory/current_target_cabinet             # 当前目标货柜号话题；任务管理器发布，识别节点据此切换相机
+    route_waypoints_file: config/route_waypoints.yaml                   # 读取 cabinet_entry_side_map 的路线配置文件；不要复制映射到本文件
     recognized_topic: /inventory/recognized_number                      # 货柜编号识别结果输出话题；任务管理器订阅该话题
     debug_a4_topic: /inventory/debug_a4_region                          # A4 区域调试图输出话题；用于观察透视矫正效果
     debug_digits_topic: /inventory/debug_digits                         # 数字分割调试图输出话题；用于检查候选数字裁剪
@@ -216,6 +220,7 @@ mission_manager_node:
     distance_estimator_enable_topic: /inventory/distance_estimator_enable # 距离估计器使能发布话题；目标距离对齐阶段打开
     entry_side_topic: /inventory/entry_side                             # 发布给间隙检测器的进入侧话题；取值通常为 left/right
     target_lidar_side_topic: /inventory/target_lidar_side               # 发布给距离估计器的目标雷达侧话题；取值通常为 left/right
+    current_target_cabinet_topic: /inventory/current_target_cabinet     # 发布当前目标货柜号；识别节点据此选择左/右相机，-1 表示无目标
 
     start_service_name: /inventory/start_mission                        # 启动盘库任务服务名；改名需同步 Web 或测试调用端
     cancel_service_name: /inventory/cancel_mission                      # 取消盘库任务服务名；改名需同步外部调用端
@@ -368,8 +373,8 @@ mission_manager_node:
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
     exit_gap_speed: 0.15                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
     exit_gap_extra_distance_m: 0.20                                     # 退出间隙额外距离，单位 m；调大会多退一些
-    exit_gap_timeout_sec: 60.0                                          # 退出间隙超时，单位 s；调大会允许更慢退出
-    exit_gap_distance_m: 1.70                                           # 退出间隙目标距离，单位 m；调大会倒退更远
+    exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
+    exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
     exit_gap_turn_angular_speed: 0.25                                   # 退出后转向角速度，单位 rad/s；调大会转向更快
     exit_gap_turn_yaw_tolerance_rad: 0.08                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
@@ -398,8 +403,8 @@ mission_manager_node:
     same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
     same_side_left_fixed_y_m: 0.790                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_left_fixed_yaw_rad: -3.1400                               # 左/上排同侧搜索保持的航向，单位 rad；改动会改变车头方向
-    same_side_right_fixed_y_m: -0.6174                                  # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
-    same_side_right_fixed_yaw_rad: -3.1400                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
+    same_side_right_fixed_y_m: -0.530                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_right_fixed_yaw_rad: -3.0600                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
     same_side_yaw_kp: 0.40                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
     same_side_yaw_deadband_rad: 0.03                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
     same_side_y_kp: 0.30                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
