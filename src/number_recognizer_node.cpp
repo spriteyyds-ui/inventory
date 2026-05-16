@@ -1,8 +1,10 @@
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -18,12 +20,14 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/int32.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "wheeltec_inventory_system/a4_detector.hpp"
 #include "wheeltec_inventory_system/digit_classifier.hpp"
 #include "wheeltec_inventory_system/digit_segmenter.hpp"
 #include "wheeltec_inventory_system/id_utils.hpp"
 #include "wheeltec_inventory_system/msg/recognized_number.hpp"
+#include "yaml-cpp/yaml.h"
 
 class NumberRecognizerNode : public rclcpp::Node
 {
@@ -43,12 +47,13 @@ public:
     debug_digits_pub_ = create_publisher<sensor_msgs::msg::Image>(debug_digits_topic_, 10);
     vis_pub_ = create_publisher<sensor_msgs::msg::Image>(visualization_topic_, 10);
 
-    image_sub_ = create_subscription<sensor_msgs::msg::Image>(
-      camera_topic_,
-      rclcpp::SensorDataQoS(),
-      [this](const sensor_msgs::msg::Image::SharedPtr msg) {
-        image_callback(msg);
-      });
+    if (!load_cabinet_entry_side_map()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "cabinet_entry_side_map 加载失败，识别节点将使用 fallback camera_topic=%s",
+        camera_topic_.c_str());
+    }
+    set_image_subscription(camera_topic_, -1, "fallback", true);
 
     trigger_srv_ = create_service<std_srvs::srv::SetBool>(
       trigger_service_name_,
@@ -64,6 +69,13 @@ public:
       control_qos,
       [this](const std_msgs::msg::Bool::SharedPtr msg) {
         enable_control_callback(msg);
+      });
+
+    target_cabinet_sub_ = create_subscription<std_msgs::msg::Int32>(
+      target_cabinet_topic_,
+      control_qos,
+      [this](const std_msgs::msg::Int32::SharedPtr msg) {
+        target_cabinet_callback(msg);
       });
 
     distance_sub_ = create_subscription<std_msgs::msg::Float32>(
@@ -94,6 +106,14 @@ private:
   void declare_all_parameters()
   {
     camera_topic_ = declare_parameter<std::string>("camera_topic", "/camera/color/image_raw");
+    left_camera_topic_ = declare_parameter<std::string>(
+      "left_camera_topic", "/c100_left/image_raw");
+    right_camera_topic_ = declare_parameter<std::string>(
+      "right_camera_topic", "/c100_right/image_raw");
+    target_cabinet_topic_ = declare_parameter<std::string>(
+      "target_cabinet_topic", "/inventory/current_target_cabinet");
+    route_waypoints_file_ = declare_parameter<std::string>(
+      "route_waypoints_file", "config/route_waypoints.yaml");
     recognized_topic_ = declare_parameter<std::string>(
       "recognized_topic", "/inventory/recognized_number");
     debug_a4_topic_ = declare_parameter<std::string>(
@@ -264,8 +284,15 @@ private:
   {
     RCLCPP_INFO(
       get_logger(),
-      "camera_topic=%s, recognized_topic=%s, onnx=%s, min_conf=%.2f, attempts=%d, input_size=%d",
+      "camera_topic(fallback)=%s, active_camera_topic=%s, left_camera_topic=%s, right_camera_topic=%s, "
+      "target_cabinet_topic=%s, route_waypoints_file=%s, recognized_topic=%s, onnx=%s, min_conf=%.2f, "
+      "attempts=%d, input_size=%d",
       camera_topic_.c_str(),
+      active_camera_topic_.c_str(),
+      left_camera_topic_.c_str(),
+      right_camera_topic_.c_str(),
+      target_cabinet_topic_.c_str(),
+      route_waypoints_file_.c_str(),
       recognized_topic_.c_str(),
       cls_params_.onnx_model_path.c_str(),
       min_confidence_,
@@ -354,6 +381,193 @@ private:
       distance_overlay_topic_.c_str(),
       distance_overlay_timeout_sec_,
       enable_union_fallback_classification_ ? 1 : 0);
+  }
+
+  std::filesystem::path resolve_config_path(const std::string & raw_path) const
+  {
+    const std::filesystem::path path(raw_path);
+    if (path.is_absolute()) {
+      return path;
+    }
+    const std::string share_dir =
+      ament_index_cpp::get_package_share_directory("wheeltec_inventory_system");
+    return std::filesystem::path(share_dir) / path;
+  }
+
+  static bool normalize_entry_side(std::string side, std::string & normalized)
+  {
+    side.erase(
+      std::remove_if(
+        side.begin(), side.end(),
+        [](unsigned char c) {
+          return std::isspace(c) != 0;
+        }),
+      side.end());
+    std::transform(
+      side.begin(), side.end(), side.begin(),
+      [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+      });
+    if (side != "left" && side != "right") {
+      return false;
+    }
+    normalized = side;
+    return true;
+  }
+
+  bool load_cabinet_entry_side_map()
+  {
+    cabinet_entry_side_map_.clear();
+    try {
+      const auto route_path = resolve_config_path(route_waypoints_file_);
+      if (!std::filesystem::exists(route_path)) {
+        RCLCPP_ERROR(
+          get_logger(),
+          "路线配置文件不存在: %s",
+          route_path.string().c_str());
+        return false;
+      }
+
+      const YAML::Node root = YAML::LoadFile(route_path.string());
+      const YAML::Node map_root = root["cabinet_entry_side_map"];
+      if (!map_root || !map_root.IsMap()) {
+        RCLCPP_ERROR(
+          get_logger(),
+          "route_waypoints.yaml 缺少 cabinet_entry_side_map 映射");
+        return false;
+      }
+
+      for (const auto map_item : map_root) {
+        int cabinet_id = -1;
+        const std::string cabinet_text = map_item.first.as<std::string>();
+        if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
+          RCLCPP_ERROR(
+            get_logger(),
+            "cabinet_entry_side_map 货柜号非法: %s",
+            cabinet_text.c_str());
+          return false;
+        }
+        if (!map_item.second.IsScalar()) {
+          RCLCPP_ERROR(
+            get_logger(),
+            "cabinet_entry_side_map 条目必须直接映射到 left/right: %s",
+            cabinet_text.c_str());
+          return false;
+        }
+
+        const std::string raw_side = map_item.second.as<std::string>();
+        std::string side;
+        if (!normalize_entry_side(raw_side, side)) {
+          RCLCPP_ERROR(
+            get_logger(),
+            "cabinet_entry_side_map side 必须为 left/right: cabinet=%s side=%s",
+            cabinet_text.c_str(),
+            raw_side.c_str());
+          return false;
+        }
+        cabinet_entry_side_map_[cabinet_id] = side;
+      }
+
+      RCLCPP_INFO(
+        get_logger(),
+        "已加载 cabinet_entry_side_map: file=%s entries=%zu",
+        route_path.string().c_str(),
+        cabinet_entry_side_map_.size());
+      return true;
+    } catch (const std::exception & ex) {
+      RCLCPP_ERROR(get_logger(), "解析 cabinet_entry_side_map 失败: %s", ex.what());
+      return false;
+    }
+  }
+
+  void set_image_subscription(
+    const std::string & topic,
+    int target_cabinet,
+    const std::string & entry_side,
+    bool force = false)
+  {
+    const std::string next_topic = topic.empty() ? camera_topic_ : topic;
+    if (next_topic.empty()) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "无法切换相机订阅: target_cabinet=%d entry_side=%s camera_topic 为空",
+        target_cabinet,
+        entry_side.c_str());
+      return;
+    }
+
+    if (!force && next_topic == active_camera_topic_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "相机订阅保持: target_cabinet=%d entry_side=%s camera_topic=%s",
+        target_cabinet,
+        entry_side.c_str(),
+        active_camera_topic_.c_str());
+      return;
+    }
+
+    image_sub_.reset();
+    active_camera_topic_ = next_topic;
+    attempts_ = 0;
+    image_sub_ = create_subscription<sensor_msgs::msg::Image>(
+      active_camera_topic_,
+      rclcpp::SensorDataQoS(),
+      [this](const sensor_msgs::msg::Image::SharedPtr msg) {
+        image_callback(msg);
+      });
+
+    RCLCPP_INFO(
+      get_logger(),
+      "相机订阅切换: target_cabinet=%d entry_side=%s camera_topic=%s",
+      target_cabinet,
+      entry_side.c_str(),
+      active_camera_topic_.c_str());
+  }
+
+  void switch_camera_for_target(int target_cabinet)
+  {
+    current_target_cabinet_ = target_cabinet;
+    if (target_cabinet <= 0) {
+      set_image_subscription(camera_topic_, target_cabinet, "fallback");
+      return;
+    }
+
+    const auto side_it = cabinet_entry_side_map_.find(target_cabinet);
+    if (side_it == cabinet_entry_side_map_.end()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "target_cabinet=%d 未配置 cabinet_entry_side_map，使用 fallback camera_topic=%s",
+        target_cabinet,
+        camera_topic_.c_str());
+      set_image_subscription(camera_topic_, target_cabinet, "fallback");
+      return;
+    }
+
+    const std::string & entry_side = side_it->second;
+    if (entry_side == "left") {
+      set_image_subscription(left_camera_topic_, target_cabinet, entry_side);
+      return;
+    }
+    if (entry_side == "right") {
+      set_image_subscription(right_camera_topic_, target_cabinet, entry_side);
+      return;
+    }
+
+    RCLCPP_WARN(
+      get_logger(),
+      "target_cabinet=%d entry_side=%s 非 left/right，使用 fallback camera_topic=%s",
+      target_cabinet,
+      entry_side.c_str(),
+      camera_topic_.c_str());
+    set_image_subscription(camera_topic_, target_cabinet, "fallback");
+  }
+
+  void target_cabinet_callback(const std_msgs::msg::Int32::SharedPtr msg)
+  {
+    if (!msg) {
+      return;
+    }
+    switch_camera_for_target(msg->data);
   }
 
   bool reload_classifier_model()
@@ -1604,6 +1818,11 @@ private:
   }
 
   std::string camera_topic_;
+  std::string active_camera_topic_;
+  std::string left_camera_topic_;
+  std::string right_camera_topic_;
+  std::string target_cabinet_topic_;
+  std::string route_waypoints_file_;
   std::string recognized_topic_;
   std::string debug_a4_topic_;
   std::string debug_digits_topic_;
@@ -1623,6 +1842,7 @@ private:
 
   int cabinet_id_min_{1};
   int cabinet_id_max_{36};
+  int current_target_cabinet_{-1};
 
   double known_digit_height_px_{40.0};
   double known_distance_m_{1.0};
@@ -1645,6 +1865,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr distance_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr target_cabinet_sub_;
   rclcpp::Publisher<wheeltec_inventory_system::msg::RecognizedNumber>::SharedPtr recog_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_a4_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_digits_pub_;
@@ -1652,6 +1873,7 @@ private:
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr trigger_srv_;
 
   rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr param_cb_handle_;
+  std::map<int, std::string> cabinet_entry_side_map_;
 };
 
 int main(int argc, char ** argv)

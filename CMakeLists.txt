@@ -74,10 +74,19 @@ ament_target_dependencies(number_recognizer_node
   image_transport
   ament_index_cpp
 )
-target_link_libraries(number_recognizer_node
-  ${OpenCV_LIBS}
-  ${cpp_typesupport_target}
-)
+if(TARGET yaml-cpp::yaml-cpp)
+  target_link_libraries(number_recognizer_node
+    ${OpenCV_LIBS}
+    ${cpp_typesupport_target}
+    yaml-cpp::yaml-cpp
+  )
+else()
+  target_link_libraries(number_recognizer_node
+    ${OpenCV_LIBS}
+    ${cpp_typesupport_target}
+    yaml-cpp
+  )
+endif()
 
 add_executable(distance_estimator_node src/distance_estimator_node.cpp)
 ament_target_dependencies(distance_estimator_node

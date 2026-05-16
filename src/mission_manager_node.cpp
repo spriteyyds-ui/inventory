@@ -25,6 +25,7 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
+#include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "std_srvs/srv/trigger.hpp"
@@ -74,6 +75,9 @@ public:
       declare_parameter<std::string>("entry_side_topic", "/inventory/entry_side");
     target_lidar_side_topic_ =
       declare_parameter<std::string>("target_lidar_side_topic", "/inventory/target_lidar_side");
+    current_target_cabinet_topic_ =
+      declare_parameter<std::string>(
+      "current_target_cabinet_topic", "/inventory/current_target_cabinet");
     distance_estimator_enable_topic_ =
       declare_parameter<std::string>(
       "distance_estimator_enable_topic", "/inventory/distance_estimator_enable");
@@ -480,6 +484,8 @@ public:
     entry_side_pub_ = create_publisher<std_msgs::msg::String>(entry_side_topic_, control_qos);
     target_lidar_side_pub_ =
       create_publisher<std_msgs::msg::String>(target_lidar_side_topic_, control_qos);
+    current_target_cabinet_pub_ =
+      create_publisher<std_msgs::msg::Int32>(current_target_cabinet_topic_, control_qos);
     recognizer_enable_pub_ =
       create_publisher<std_msgs::msg::Bool>(recognizer_enable_topic_, control_qos);
     gap_detector_enable_pub_ =
@@ -1962,6 +1968,26 @@ private:
       side.c_str());
   }
 
+  void publish_current_target_cabinet(int cabinet_id)
+  {
+    if (!current_target_cabinet_pub_) {
+      return;
+    }
+
+    std_msgs::msg::Int32 msg;
+    msg.data = cabinet_id;
+    current_target_cabinet_pub_->publish(msg);
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][recognizer] publish current_target_cabinet=%d",
+      cabinet_id);
+  }
+
+  void clear_current_target_cabinet()
+  {
+    publish_current_target_cabinet(-1);
+  }
+
   void set_gap_detector_enabled(bool enabled)
   {
     if (!gap_detector_enable_pub_) {
@@ -2062,6 +2088,12 @@ private:
       s == State::TARGET_TRACKING ||
       s == State::SINGLE_CABINET_TARGET_TRACKING ||
       s == State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN;
+
+    if (s == State::DONE || s == State::ERROR ||
+      (s == State::IDLE && !mission_active_ && !inventory_flow_active_))
+    {
+      clear_current_target_cabinet();
+    }
 
     set_gap_detector_enabled(gap_enabled);
     set_distance_estimator_enabled(distance_enabled);
@@ -2295,6 +2327,7 @@ private:
       current_route_.waypoints.size());
     publish_entry_side();
     publish_target_lidar_side();
+    publish_current_target_cabinet(current_target_cabinet_);
     return true;
   }
 
@@ -6442,6 +6475,7 @@ private:
 
     std::string nav_route_fail_reason;
     if (!begin_nav_route_for_current_target("开始Nav2巡航路线识别", nav_route_fail_reason)) {
+      clear_current_target_cabinet();
       response->accepted = false;
       response->message = nav_route_fail_reason;
       return;
@@ -6458,6 +6492,7 @@ private:
     (void)request;
 
     if (inventory_flow_active_) {
+      clear_current_target_cabinet();
       if (full_inventory_active_) {
         fail_full_inventory("收到取消请求，停止全部盘库");
         response->message = "全部盘库已请求停止";
@@ -6473,6 +6508,7 @@ private:
     }
 
     if (!mission_active_ && state_ == State::IDLE) {
+      clear_current_target_cabinet();
       publish_stop();
       set_corridor_mode(false, false);
       response->success = true;
@@ -6486,6 +6522,7 @@ private:
     has_distance_ = false;
 
     request_recognizer_enable(false);
+    clear_current_target_cabinet();
     switch_to_returning(ReturnMode::CANCEL_HOME, "收到取消任务，立即停车并返回起点");
 
     response->success = true;
@@ -7995,6 +8032,7 @@ private:
   std::string gap_detector_enable_topic_;
   std::string entry_side_topic_;
   std::string target_lidar_side_topic_;
+  std::string current_target_cabinet_topic_;
   std::string distance_estimator_enable_topic_;
 
   std::string start_service_name_;
@@ -8390,6 +8428,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr gap_context_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr entry_side_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr target_lidar_side_pub_;
+  rclcpp::Publisher<std_msgs::msg::Int32>::SharedPtr current_target_cabinet_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr recognizer_enable_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr gap_detector_enable_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr distance_estimator_enable_pub_;
