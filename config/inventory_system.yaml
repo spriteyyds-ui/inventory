@@ -371,10 +371,10 @@ mission_manager_node:
 
     exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
-    exit_gap_speed: 0.15                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
+    exit_gap_speed: 0.10                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
     exit_gap_extra_distance_m: 0.20                                     # 退出间隙额外距离，单位 m；调大会多退一些
     exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
-    exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
+    exit_gap_distance_m: 1.50                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
     exit_gap_turn_angular_speed: 0.25                                   # 退出后转向角速度，单位 rad/s；调大会转向更快
     exit_gap_turn_yaw_tolerance_rad: 0.08                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
@@ -404,13 +404,15 @@ mission_manager_node:
     same_side_left_fixed_y_m: 0.790                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_left_fixed_yaw_rad: -3.1400                               # 左/上排同侧搜索保持的航向，单位 rad；改动会改变车头方向
     same_side_right_fixed_y_m: -0.530                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
-    same_side_right_fixed_yaw_rad: -3.0600                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
+    same_side_right_fixed_yaw_rad: -3.1400                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
     same_side_yaw_kp: 0.40                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
     same_side_yaw_deadband_rad: 0.03                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
     same_side_y_kp: 0.30                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
     same_side_y_deadband_m: 0.03                                        # 同侧搜索 y 坐标误差死区，单位 m；调大会减少小幅横向修正
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
+    full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
+    full_inventory_same_side_recognition_delay_distance_m: 0.6          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
