@@ -366,6 +366,10 @@ public:
       declare_parameter<double>("same_side_y_correction_sign", 1.0);
     full_inventory_same_side_max_angular_ =
       declare_parameter<double>("same_side_max_angular", 0.15);
+    full_inventory_same_side_recognition_delay_enabled_ =
+      declare_parameter<bool>("full_inventory_same_side_recognition_delay_enabled", true);
+    full_inventory_same_side_recognition_delay_distance_m_ =
+      declare_parameter<double>("full_inventory_same_side_recognition_delay_distance_m", 1.0);
     full_inventory_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_final_recognition_wait_sec", 5.0);
     full_inventory_recognition_fallback_enabled_ =
@@ -1431,7 +1435,8 @@ private:
       "same_side_search=%s speed=%.3f timeout=%.2f pose_hold=%s "
       "left_fixed_y=%.3f left_fixed_yaw=%.4f right_fixed_y=%.3f right_fixed_yaw=%.4f "
       "yaw_kp=%.3f yaw_deadband=%.3f y_kp=%.3f y_deadband=%.3f "
-      "y_sign=%.1f max_angular=%.3f final_recognition_wait=%.2f "
+      "y_sign=%.1f max_angular=%.3f recognition_delay=%s delay_distance=%.2f "
+      "final_recognition_wait=%.2f "
       "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
       "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
       full_inventory_enabled_ ? "true" : "false",
@@ -1455,6 +1460,8 @@ private:
       full_inventory_same_side_y_deadband_m_,
       full_inventory_same_side_y_correction_sign_,
       full_inventory_same_side_max_angular_,
+      full_inventory_same_side_recognition_delay_enabled_ ? "true" : "false",
+      full_inventory_same_side_recognition_delay_distance_m_,
       full_inventory_final_recognition_wait_sec_,
       full_inventory_recognition_fallback_enabled_ ? "true" : "false",
       full_inventory_recognition_fallback_speed_,
@@ -2066,8 +2073,7 @@ private:
       s == State::SINGLE_CABINET_FINAL_RECOGNITION_WAIT ||
       (s == State::FULL_INVENTORY_NAV_TO_OBSERVE && full_inventory_recognize_during_nav_) ||
       s == State::FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT ||
-      s == State::FULL_INVENTORY_RECOGNITION_FALLBACK ||
-      s == State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH;
+      s == State::FULL_INVENTORY_RECOGNITION_FALLBACK;
   }
 
   void set_state(State s, const std::string & detail)
@@ -2159,6 +2165,25 @@ private:
   double segment_distance() const
   {
     return std::max(0.0, odom_cumulative_distance_ - segment_start_distance_);
+  }
+
+  double full_inventory_same_side_recognition_delay_distance() const
+  {
+    if (!full_inventory_same_side_recognition_delay_enabled_ ||
+      !std::isfinite(full_inventory_same_side_recognition_delay_distance_m_))
+    {
+      return 0.0;
+    }
+    return std::max(0.0, full_inventory_same_side_recognition_delay_distance_m_);
+  }
+
+  bool full_inventory_same_side_recognition_delayed() const
+  {
+    if (state_ != State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH) {
+      return false;
+    }
+    const double delay_distance = full_inventory_same_side_recognition_delay_distance();
+    return delay_distance > 1e-4 && segment_distance() < delay_distance;
   }
 
   bool parse_target_metadata(
@@ -4193,6 +4218,24 @@ private:
       return false;
     }
 
+    if (full_inventory_same_side_recognition_delayed()) {
+      reset_target_recognition_stability();
+      const double progress = segment_distance();
+      const double delay_distance = full_inventory_same_side_recognition_delay_distance();
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][FULL_INVENTORY][recognition] delayed ignore state=%s recognized=%d "
+        "target=%d progress=%.2f/%.2f",
+        state_to_string(state_).c_str(),
+        rec_id,
+        current_target_cabinet_,
+        progress,
+        delay_distance);
+      return true;
+    }
+
     const bool matched = rec_id == current_target_cabinet_;
     if (!matched) {
       reset_target_recognition_stability();
@@ -4258,18 +4301,23 @@ private:
     full_inventory_same_side_search_start_ = this->now();
     select_full_inventory_same_side_pose_hold_target();
     reset_target_recognition_stability();
+    reset_segment_distance();
     target_visible_ = false;
     has_distance_ = false;
     latest_distance_ = 0.0;
-    request_recognizer_enable(true);
-    set_recognizer_topic_enabled(true, true);
+    const double delay_distance = full_inventory_same_side_recognition_delay_distance();
+    const bool recognizer_allowed = delay_distance <= 1e-4;
+    request_recognizer_enable(recognizer_allowed);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     set_corridor_mode(false, false);
     publish_full_inventory_log(
       "same-side next search start target=" +
       std::to_string(full_inventory_current_target_) +
-      " recognizer=on distance=off gap=off speed=" +
+      (recognizer_allowed ?
+      " recognizer=on" :
+      " recognizer=delayed/off until distance=" + format_fixed(delay_distance, 2) + "m") +
+      " distance=off gap=off speed=" +
       format_seconds(full_inventory_same_side_search_speed_) +
       " timeout=" + format_seconds(full_inventory_same_side_search_timeout_sec_));
     if (full_inventory_same_side_pose_hold_enabled_) {
@@ -4284,6 +4332,7 @@ private:
       State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
       "[FULL_INVENTORY] same-side next search target=" +
       std::to_string(full_inventory_current_target_));
+    set_recognizer_topic_enabled(recognizer_allowed, true);
   }
 
   bool current_same_side_pose_hold_pose(Pose2D & pose, std::string & pose_note) const
@@ -4313,12 +4362,11 @@ private:
 
   void handle_full_inventory_same_side_next_search_state()
   {
-    request_recognizer_enable(true);
-    set_recognizer_topic_enabled(true);
     set_distance_estimator_enabled(false);
     set_gap_detector_enabled(false);
     if (full_inventory_same_side_search_start_.nanoseconds() == 0) {
       full_inventory_same_side_search_start_ = this->now();
+      reset_segment_distance();
     }
     const double elapsed = (this->now() - full_inventory_same_side_search_start_).seconds();
     const double timeout = std::max(0.1, full_inventory_same_side_search_timeout_sec_);
@@ -4328,6 +4376,24 @@ private:
         "same side recognition search timeout target=" +
         std::to_string(current_target_cabinet_));
       return;
+    }
+
+    const double delay_distance = full_inventory_same_side_recognition_delay_distance();
+    const double delay_progress = segment_distance();
+    const bool recognition_delayed = delay_distance > 1e-4 && delay_progress < delay_distance;
+    if (recognition_delayed) {
+      request_recognizer_enable(false);
+      set_recognizer_topic_enabled(false);
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[FULL_INVENTORY] same_side_next_search recognition delayed progress=%.2f/%.2f",
+        delay_progress,
+        delay_distance);
+    } else {
+      request_recognizer_enable(true);
+      set_recognizer_topic_enabled(true);
     }
 
     geometry_msgs::msg::Twist cmd;
@@ -5621,7 +5687,7 @@ private:
       return;
     }
 
-    const double speed = std::clamp(std::abs(single_cabinet_exit_speed_), 0.0, 0.05);
+    const double speed = std::clamp(std::abs(single_cabinet_exit_speed_), 0.0, 0.50);
     if (speed <= 1e-4) {
       if (full_inventory_active_) {
         fail_full_inventory("倒退出缝速度非法: " + std::to_string(single_cabinet_exit_speed_));
@@ -8244,6 +8310,8 @@ private:
   double full_inventory_same_side_y_deadband_m_{0.03};
   double full_inventory_same_side_y_correction_sign_{1.0};
   double full_inventory_same_side_max_angular_{0.15};
+  bool full_inventory_same_side_recognition_delay_enabled_{true};
+  double full_inventory_same_side_recognition_delay_distance_m_{1.0};
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{-3.1400};
   std::string full_inventory_same_side_active_map_side_{"left"};
