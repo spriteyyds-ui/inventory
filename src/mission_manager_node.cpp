@@ -84,6 +84,23 @@ public:
 
     start_service_name_ = declare_parameter<std::string>("start_service_name", "/inventory/start_mission");
     cancel_service_name_ = declare_parameter<std::string>("cancel_service_name", "/inventory/cancel_mission");
+    return_home_service_name_ =
+      declare_parameter<std::string>("return_home_service_name", "/inventory/return_home");
+    return_to_charge_service_name_ =
+      declare_parameter<std::string>("return_to_charge_service_name", "/inventory/return_to_charge");
+    inventory_auto_recharge_start_service_name_ =
+      declare_parameter<std::string>(
+      "inventory_auto_recharge_start_service_name", "/inventory/auto_recharge/start");
+    inventory_auto_recharge_cancel_service_name_ =
+      declare_parameter<std::string>(
+      "inventory_auto_recharge_cancel_service_name", "/inventory/auto_recharge/cancel");
+    cancel_auto_recharge_service_name_ =
+      declare_parameter<std::string>(
+      "cancel_auto_recharge_service_name", "/inventory/cancel_auto_recharge");
+    auto_recharge_service_timeout_sec_ =
+      declare_parameter<double>("auto_recharge_service_timeout_sec", 3.0);
+    auto_recharge_cancel_timeout_sec_ =
+      declare_parameter<double>("auto_recharge_cancel_timeout_sec", 3.0);
     recognizer_trigger_service_ =
       declare_parameter<std::string>("recognizer_trigger_service", "/inventory/trigger_recognition");
 
@@ -118,6 +135,8 @@ public:
     entry_left_target_yaw_rad_ = declare_parameter<double>("entry_left_target_yaw_rad", -1.5708);
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
+    entry_turn_yaw_stable_required_count_ =
+      declare_parameter<int>("entry_turn_yaw_stable_required_count", 3);
     entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", enter_angular_speed_);
     entry_turn_timeout_sec_ = declare_parameter<double>("entry_turn_timeout_sec", 12.0);
     entry_turn_timeout_sec_ = std::isfinite(entry_turn_timeout_sec_) ?
@@ -198,10 +217,10 @@ public:
 
     return_home_on_finish_ = declare_parameter<bool>("return_home_on_finish", false);
     return_target_mode_ = declare_parameter<std::string>("return_target_mode", "start");
-    charge_pose_x_ = declare_parameter<double>("charge_pose_x", 0.0);
-    charge_pose_y_ = declare_parameter<double>("charge_pose_y", 0.0);
-    charge_pose_yaw_ = declare_parameter<double>("charge_pose_yaw", 0.0);
-    charge_pose_frame_id_ = declare_parameter<std::string>("charge_pose_frame_id", "odom_combined");
+    home_pose_frame_id_ = declare_parameter<std::string>("home_pose_frame_id", "map");
+    home_pose_x_ = declare_parameter<double>("home_pose_x", 0.0);
+    home_pose_y_ = declare_parameter<double>("home_pose_y", 0.0);
+    home_pose_yaw_ = declare_parameter<double>("home_pose_yaw", 0.0);
     nav2_action_name_ = declare_parameter<std::string>("nav2_action_name", "navigate_to_pose");
     nav2_goal_frame_ = declare_parameter<std::string>("nav2_goal_frame", "map");
     nav2_server_wait_timeout_sec_ = declare_parameter<double>("nav2_server_wait_timeout_sec", 1.0);
@@ -515,8 +534,36 @@ public:
         cancel_service_callback(request, response);
       });
 
+    return_home_srv_ = create_service<std_srvs::srv::Trigger>(
+      return_home_service_name_,
+      [this](
+        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        return_home_service_callback(request, response);
+      });
+
+    return_to_charge_srv_ = create_service<std_srvs::srv::Trigger>(
+      return_to_charge_service_name_,
+      [this](
+        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        return_to_charge_service_callback(request, response);
+      });
+
+    cancel_auto_recharge_srv_ = create_service<std_srvs::srv::Trigger>(
+      cancel_auto_recharge_service_name_,
+      [this](
+        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        cancel_auto_recharge_service_callback(request, response);
+      });
+
     recognizer_trigger_client_ = create_client<std_srvs::srv::SetBool>(
       recognizer_trigger_service_);
+    inventory_auto_recharge_start_client_ = create_client<std_srvs::srv::Trigger>(
+      inventory_auto_recharge_start_service_name_);
+    inventory_auto_recharge_cancel_client_ = create_client<std_srvs::srv::Trigger>(
+      inventory_auto_recharge_cancel_service_name_);
     nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -570,6 +617,8 @@ private:
     REQUEST_CLOSE_GAP,
     WAIT_CLOSE_DONE,
     RETURNING,
+    RETURNING_HOME,
+    AUTO_RECHARGING,
     DONE,
     ERROR,
     SINGLE_CABINET_PREPARE_NAV,
@@ -622,7 +671,13 @@ private:
   enum class ReturnTargetMode
   {
     START,
-    CHARGE,
+  };
+
+  enum class PendingInterruptRequest
+  {
+    NONE,
+    RETURN_HOME,
+    AUTO_RECHARGE,
   };
 
   enum class WaitGapPhase
@@ -765,6 +820,14 @@ private:
     std::size_t right_valid_points{0};
   };
 
+  struct EnteringYawControl
+  {
+    double yaw{0.0};
+    std::string yaw_frame{"odom_fallback"};
+    std::string pose_note{"not evaluated"};
+    bool valid{false};
+  };
+
   static std::string state_to_string(State s)
   {
     switch (s) {
@@ -792,6 +855,10 @@ private:
         return "WAIT_CLOSE_DONE";
       case State::RETURNING:
         return "RETURNING";
+      case State::RETURNING_HOME:
+        return "RETURNING_HOME";
+      case State::AUTO_RECHARGING:
+        return "AUTO_RECHARGING";
       case State::DONE:
         return "DONE";
       case State::ERROR:
@@ -2120,10 +2187,261 @@ private:
 
   ReturnTargetMode get_return_target_mode() const
   {
-    if (return_target_mode_ == "charge" || return_target_mode_ == "charging") {
-      return ReturnTargetMode::CHARGE;
-    }
     return ReturnTargetMode::START;
+  }
+
+  bool is_in_gap_or_gap_motion_state() const
+  {
+    switch (state_) {
+      case State::ENTERING_GAP:
+      case State::INVENTORYING:
+      case State::SINGLE_CABINET_ENTERING_GAP:
+      case State::SINGLE_CABINET_IN_GAP_SCAN:
+      case State::SINGLE_CABINET_STOP_AFTER_SCAN:
+      case State::SINGLE_CABINET_EXIT_GAP:
+      case State::SINGLE_CABINET_REENTER_FOR_ADJUSTED_SCAN:
+      case State::SINGLE_CABINET_ADJUSTED_SIDE_SCAN:
+      case State::SINGLE_CABINET_REENTER_NEXT_GAP:
+      case State::SINGLE_CABINET_NEXT_GAP_SCAN:
+      case State::SINGLE_CABINET_FINAL_EXIT_GAP:
+      case State::FULL_INVENTORY_ENTERING_GAP:
+      case State::FULL_INVENTORY_IN_GAP_SCAN:
+      case State::FULL_INVENTORY_EXIT_GAP:
+        return true;
+      default:
+        break;
+    }
+
+    return entry_gap_phase_ == EntryGapPhase::MOVING_TO_GRID_CENTER;
+  }
+
+  std::string pending_interrupt_request_to_string(PendingInterruptRequest request) const
+  {
+    switch (request) {
+      case PendingInterruptRequest::RETURN_HOME:
+        return "回零点";
+      case PendingInterruptRequest::AUTO_RECHARGE:
+        return "自动回充";
+      case PendingInterruptRequest::NONE:
+      default:
+        return "无";
+    }
+  }
+
+  void respond_with_pending_interrupt(
+    PendingInterruptRequest request,
+    const std::string & base_message,
+    std_srvs::srv::Trigger::Response & response)
+  {
+    const bool updated = pending_interrupt_request_ != PendingInterruptRequest::NONE;
+    const std::string previous = pending_interrupt_request_to_string(pending_interrupt_request_);
+    pending_interrupt_request_ = request;
+
+    response.success = true;
+    response.message = base_message;
+    if (updated) {
+      response.message += " 已更新待执行请求，原待执行请求为" + previous + "。";
+    }
+    publish_log(response.message);
+    publish_state_text(response.message);
+  }
+
+  Pose2D configured_home_pose() const
+  {
+    Pose2D pose;
+    pose.x = home_pose_x_;
+    pose.y = home_pose_y_;
+    pose.yaw = home_pose_yaw_;
+    pose.frame_id = sanitize_frame_id(home_pose_frame_id_);
+    pose.valid =
+      std::isfinite(pose.x) &&
+      std::isfinite(pose.y) &&
+      std::isfinite(pose.yaw) &&
+      !pose.frame_id.empty();
+    return pose;
+  }
+
+  void prepare_interrupt_mission_control(const std::string & reason)
+  {
+    RCLCPP_WARN(get_logger(), "盘库任务中断准备：%s", reason.c_str());
+    cancel_nav2_route_goal(reason);
+    cancel_nav2_return_goal(reason);
+    reset_nav_route_runtime();
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
+    reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
+    reset_single_cabinet_scan_runtime();
+    publish_gap_context();
+    clear_current_target_cabinet();
+
+    mission_active_ = false;
+    inventory_flow_active_ = false;
+    cancel_requested_ = false;
+    mission_return_home_on_finish_ = false;
+    single_cabinet_motion_active_ = false;
+    single_cabinet_gap_searching_ = false;
+    single_cabinet_target_recognized_logged_ = false;
+    single_cabinet_close_requested_ = false;
+    full_inventory_active_ = false;
+    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
+    full_inventory_waiting_return_home_for_side_switch_ = false;
+    full_inventory_waiting_return_home_for_done_ = false;
+    gap_request_queue_.clear();
+    current_gap_request_index_ = 0;
+    target_visible_ = false;
+    has_distance_ = false;
+    latest_distance_ = 0.0;
+    return_mode_ = ReturnMode::NONE;
+    nav2_return_in_progress_ = false;
+    nav2_result_ready_ = false;
+    nav2_result_success_ = false;
+    nav2_result_text_.clear();
+    nav2_goal_handle_.reset();
+    mission_error_reason_ = reason;
+    reset_single_cabinet_side_row_context();
+    reset_full_inventory_context();
+  }
+
+  bool start_return_home_interrupt(const std::string & reason, std::string & message)
+  {
+    message.clear();
+    Pose2D target_pose = configured_home_pose();
+    if (!target_pose.valid) {
+      message = "回零点目标参数无效，请检查 home_pose_frame_id/home_pose_x/home_pose_y/home_pose_yaw。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    prepare_interrupt_mission_control(reason);
+    return_mode_ = ReturnMode::CANCEL_HOME;
+
+    std::string nav2_fail_reason;
+    if (!begin_nav2_return(target_pose, nav2_fail_reason)) {
+      message = "回零点目标发送失败: " + nav2_fail_reason;
+      mission_active_ = false;
+      return_mode_ = ReturnMode::NONE;
+      set_state(State::ERROR, message);
+      return false;
+    }
+
+    mission_active_ = true;
+    message = "已收到回零点指令，当前小车不在缝隙内，正在中断盘库任务并返回零点。";
+    set_state(State::RETURNING_HOME, reason + "，返航目标=零点，方式=Nav2");
+    publish_state_text(message);
+    publish_log(message);
+    return true;
+  }
+
+  bool start_inventory_auto_recharge(const std::string & reason, std::string & message)
+  {
+    message.clear();
+    if (!inventory_auto_recharge_start_client_) {
+      message = "自动回充服务不可用，请确认 inventory_auto_recharger 节点已启动且 Nav2 保持打开。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    const auto timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(std::max(0.0, auto_recharge_service_timeout_sec_)));
+    if (!inventory_auto_recharge_start_client_->wait_for_service(timeout)) {
+      message = "自动回充服务不可用，请确认 inventory_auto_recharger 节点已启动且 Nav2 保持打开。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    prepare_interrupt_mission_control(reason);
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    (void)inventory_auto_recharge_start_client_->async_send_request(
+      request,
+      [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+        const auto response = future.get();
+        if (!response) {
+          publish_log("自动回充节点未返回有效响应。");
+          return;
+        }
+        const std::string detail =
+          std::string("自动回充节点响应: ") +
+          (response->success ? "success" : "failed") +
+          "，" + response->message;
+        if (response->success) {
+          publish_log(detail);
+        } else {
+          RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+          publish_log(detail);
+        }
+      });
+
+    message = "已收到自动充电指令，当前小车不在缝隙内，正在中断盘库任务并启动自动回充流程。";
+    set_state(State::AUTO_RECHARGING, reason + "，已通知自动回充节点开始回充");
+    publish_state_text(message);
+    publish_log(message);
+    return true;
+  }
+
+  bool consume_pending_interrupt_after_exit()
+  {
+    if (pending_interrupt_request_ == PendingInterruptRequest::NONE) {
+      return false;
+    }
+
+    const auto request = pending_interrupt_request_;
+    pending_interrupt_request_ = PendingInterruptRequest::NONE;
+    std::string message;
+    if (request == PendingInterruptRequest::RETURN_HOME) {
+      message = "已完成出缝，开始执行之前记录的回零点请求。";
+      publish_log(message);
+      publish_state_text(message);
+      std::string start_message;
+      if (!start_return_home_interrupt(message, start_message)) {
+        prepare_interrupt_mission_control(start_message);
+        mission_active_ = false;
+        inventory_flow_active_ = false;
+        set_state(State::ERROR, start_message);
+      }
+      return true;
+    }
+
+    if (request == PendingInterruptRequest::AUTO_RECHARGE) {
+      message = "已完成出缝，开始执行之前记录的自动回充请求。";
+      publish_log(message);
+      publish_state_text(message);
+      std::string start_message;
+      if (!start_inventory_auto_recharge(message, start_message)) {
+        prepare_interrupt_mission_control(start_message);
+        mission_active_ = false;
+        inventory_flow_active_ = false;
+        set_state(State::ERROR, start_message);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  void begin_final_exit_for_pending_after_stop()
+  {
+    const std::string pending_text =
+      pending_interrupt_request_to_string(pending_interrupt_request_);
+    publish_single_cabinet_log(
+      "检测到待执行中断请求(" + pending_text + ")，先复用最终出缝流程完成出缝");
+    single_cabinet_after_exit_action_ = SingleCabinetAfterExitAction::FINAL_CLOSE_AND_DONE;
+    single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
+    single_cabinet_exit_effective_timeout_sec_ = single_cabinet_exit_timeout_sec_;
+    mission_active_ = true;
+    set_single_cabinet_state(
+      State::SINGLE_CABINET_FINAL_EXIT_GAP,
+      "检测到待执行中断请求，先完成最终出缝");
   }
 
   Pose2D current_pose_2d() const
@@ -2603,7 +2921,7 @@ private:
     }
 
     // 返航阶段不再做目标识别触发，避免“返航途中重新识别目标”。
-    if (state_ == State::RETURNING) {
+    if (state_ == State::RETURNING || state_ == State::RETURNING_HOME) {
       return;
     }
 
@@ -3313,21 +3631,7 @@ private:
 
   bool resolve_return_pose(ReturnMode mode, Pose2D & target_pose, std::string & mode_text)
   {
-    ReturnTargetMode target_mode = get_return_target_mode();
-    if (mode == ReturnMode::SEARCH_TARGET) {
-      target_mode = ReturnTargetMode::START;
-    }
-
-    if (target_mode == ReturnTargetMode::CHARGE) {
-      target_pose.x = charge_pose_x_;
-      target_pose.y = charge_pose_y_;
-      target_pose.yaw = charge_pose_yaw_;
-      target_pose.frame_id = sanitize_frame_id(charge_pose_frame_id_);
-      target_pose.valid = true;
-      mode_text = "充电位";
-      return true;
-    }
-
+    (void)mode;
     if (!mission_start_pose_.valid) {
       mode_text = "起始点无效";
       return false;
@@ -3466,7 +3770,9 @@ private:
       mission_active_ = false;
       cancel_requested_ = false;
       return_mode_ = ReturnMode::NONE;
-      set_state(State::IDLE, "取消任务后已返回目标位置");
+      const std::string detail =
+        state_ == State::RETURNING_HOME ? "已返回零点，系统待机" : "取消任务后已返回目标位置";
+      set_state(State::IDLE, detail);
       return;
     }
 
@@ -4302,6 +4608,17 @@ private:
   {
     full_inventory_same_side_search_start_ = this->now();
     select_full_inventory_same_side_pose_hold_target();
+    std::string fixed_y_source = "config_fallback";
+    std::string fixed_y_pose_note = "pose hold disabled";
+    double fixed_y_start_current_y = std::numeric_limits<double>::quiet_NaN();
+    if (full_inventory_same_side_pose_hold_enabled_) {
+      Pose2D start_pose;
+      if (current_same_side_pose_hold_pose(start_pose, fixed_y_pose_note)) {
+        full_inventory_same_side_active_fixed_y_m_ = start_pose.y;
+        fixed_y_start_current_y = start_pose.y;
+        fixed_y_source = "current_pose";
+      }
+    }
     reset_target_recognition_stability();
     reset_segment_distance();
     target_visible_ = false;
@@ -4328,7 +4645,10 @@ private:
         std::to_string(full_inventory_current_target_) +
         " map_side=" + full_inventory_same_side_active_map_side_ +
         " fixed_y=" + format_fixed(full_inventory_same_side_active_fixed_y_m_, 3) +
-        " fixed_yaw=" + format_fixed(full_inventory_same_side_active_fixed_yaw_rad_, 4));
+        " fixed_yaw=" + format_fixed(full_inventory_same_side_active_fixed_yaw_rad_, 4) +
+        " fixed_y_source=" + fixed_y_source +
+        " start_current_y=" + format_fixed(fixed_y_start_current_y, 3) +
+        " pose_note=" + fixed_y_pose_note);
     }
     set_state(
       State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
@@ -5635,6 +5955,10 @@ private:
     single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
     single_cabinet_exit_effective_timeout_sec_ = single_cabinet_exit_timeout_sec_;
 
+    if (consume_pending_interrupt_after_exit()) {
+      return;
+    }
+
     if (full_inventory_active_) {
       set_state(
         State::FULL_INVENTORY_ADVANCE_NEXT_TARGET,
@@ -6400,6 +6724,12 @@ private:
     const std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Request> request,
     std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Response> response)
   {
+    if (state_ == State::AUTO_RECHARGING) {
+      response->accepted = false;
+      response->message = "自动回充流程正在运行，暂不接收盘库任务";
+      return;
+    }
+
     if (mission_active_ || inventory_flow_active_) {
       response->accepted = false;
       response->message = "任务已在运行";
@@ -6597,6 +6927,134 @@ private:
     response->message = "任务已取消，正在返回起点";
   }
 
+  void return_home_service_callback(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void)request;
+
+    if (state_ == State::AUTO_RECHARGING) {
+      response->success = false;
+      response->message = "当前正在自动回充，暂不支持切换回零点。";
+      publish_log(response->message);
+      publish_state_text(response->message);
+      return;
+    }
+
+    if (is_in_gap_or_gap_motion_state()) {
+      respond_with_pending_interrupt(
+        PendingInterruptRequest::RETURN_HOME,
+        "当前小车正在缝隙内，不能立即回零点。已记录回零点请求，小车完成出缝后将自动回零点。",
+        *response);
+      return;
+    }
+
+    std::string message;
+    response->success = start_return_home_interrupt("收到回零点指令，当前小车不在缝隙内", message);
+    response->message = response->success ?
+      "已收到回零点指令，当前小车不在缝隙内，正在中断盘库任务并返回零点。" :
+      message;
+  }
+
+  void return_to_charge_service_callback(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void)request;
+
+    if (state_ == State::AUTO_RECHARGING) {
+      response->success = true;
+      response->message = "自动回充流程已在运行中，请勿重复启动。";
+      publish_log(response->message);
+      publish_state_text(response->message);
+      return;
+    }
+
+    if (is_in_gap_or_gap_motion_state()) {
+      respond_with_pending_interrupt(
+        PendingInterruptRequest::AUTO_RECHARGE,
+        "当前小车正在缝隙内，不能立即自动充电。已记录自动充电请求，小车完成出缝后将自动启动回充电流程。",
+        *response);
+      return;
+    }
+
+    std::string message;
+    response->success =
+      start_inventory_auto_recharge("收到自动充电指令，当前小车不在缝隙内", message);
+    response->message = response->success ?
+      "已收到自动充电指令，当前小车不在缝隙内，正在中断盘库任务并启动自动回充流程。" :
+      message;
+  }
+
+  void cancel_auto_recharge_service_callback(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void)request;
+
+    if (state_ != State::AUTO_RECHARGING) {
+      response->success = true;
+      response->message = "当前未处于自动回充状态，无需取消";
+      publish_log(response->message);
+      return;
+    }
+
+    if (!inventory_auto_recharge_cancel_client_) {
+      response->success = false;
+      response->message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(response->message);
+      publish_state_text(response->message);
+      return;
+    }
+
+    const auto timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(std::max(0.0, auto_recharge_cancel_timeout_sec_)));
+    if (!inventory_auto_recharge_cancel_client_->wait_for_service(timeout)) {
+      response->success = false;
+      response->message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(response->message);
+      publish_state_text(response->message);
+      return;
+    }
+
+    auto cancel_request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    (void)inventory_auto_recharge_cancel_client_->async_send_request(
+      cancel_request,
+      [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+        try {
+          const auto cancel_response = future.get();
+          if (!cancel_response) {
+            publish_log("自动回充取消节点未返回有效响应。");
+            return;
+          }
+          const std::string detail =
+            std::string("自动回充取消节点响应: ") +
+            (cancel_response->success ? "success" : "failed") +
+            "，" + cancel_response->message;
+          if (cancel_response->success) {
+            publish_log(detail);
+          } else {
+            RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+            publish_log(detail);
+          }
+        } catch (const std::exception & ex) {
+          const std::string detail = std::string("自动回充取消响应处理异常: ") + ex.what();
+          RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+          publish_log(detail);
+        }
+      });
+
+    mission_active_ = false;
+    inventory_flow_active_ = false;
+    pending_interrupt_request_ = PendingInterruptRequest::NONE;
+    return_mode_ = ReturnMode::NONE;
+    response->success = true;
+    response->message = "已发送取消自动回充请求，系统切回待机。";
+    set_state(State::IDLE, response->message);
+    publish_state_text(response->message);
+    publish_log(response->message);
+  }
+
   void handle_returning_state()
   {
     if (nav2_return_in_progress_) {
@@ -6662,6 +7120,7 @@ private:
     straight_start_pose_ = Pose2D{};
     entry_last_traveled_ = 0.0;
     entry_turn_completed_ = false;
+    entry_turn_yaw_stable_count_ = 0;
     entry_straight_completed_ = false;
     entry_stopped_by_safety_ = false;
   }
@@ -6813,6 +7272,10 @@ private:
       reason = "entry_align_yaw_tolerance_rad 必须为正数";
       return false;
     }
+    if (entry_turn_yaw_stable_required_count_ <= 0) {
+      reason = "entry_turn_yaw_stable_required_count 必须为正整数";
+      return false;
+    }
     if (!std::isfinite(entry_turn_angular_speed_) || entry_turn_angular_speed_ <= 0.0) {
       reason = "entry_turn_angular_speed 必须为正数";
       return false;
@@ -6873,6 +7336,45 @@ private:
     return true;
   }
 
+  bool current_entering_gap_control_yaw(
+    const Pose2D & odom_pose,
+    EnteringYawControl & control)
+  {
+    control = EnteringYawControl{};
+    if (!odom_pose.valid || !std::isfinite(odom_pose.yaw)) {
+      control.pose_note = "odom pose invalid";
+      return false;
+    }
+
+    const std::string target_frame = sanitize_frame_id(nav2_goal_frame_.empty() ? "map" : nav2_goal_frame_);
+    const std::string source_frame = sanitize_frame_id("base_footprint");
+    try {
+      const auto tf_msg = tf_buffer_->lookupTransform(
+        target_frame,
+        source_frame,
+        tf2::TimePointZero,
+        tf2::durationFromSec(0.05));
+      control.yaw = yaw_from_quaternion(tf_msg.transform.rotation);
+      control.yaw_frame = target_frame;
+      control.pose_note = "tf_latest " + target_frame + "<-" + source_frame;
+      control.valid = true;
+      return true;
+    } catch (const tf2::TransformException & ex) {
+      control.yaw = odom_pose.yaw;
+      control.yaw_frame = "odom_fallback";
+      control.pose_note =
+        "tf_error=" + std::string(ex.what()) + ", odom_frame=" + odom_pose.frame_id;
+      control.valid = true;
+      RCLCPP_WARN_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "entering_gap map yaw unavailable, fallback to odom yaw: %s",
+        control.pose_note.c_str());
+      return true;
+    }
+  }
+
   void fail_entering_gap(const std::string & reason)
   {
     publish_stop();
@@ -6913,13 +7415,18 @@ private:
       fail_entering_gap("入缝前当前位姿无效");
       return;
     }
+    EnteringYawControl yaw_control;
+    if (!current_entering_gap_control_yaw(current, yaw_control)) {
+      fail_entering_gap("入缝前当前航向无效: " + yaw_control.pose_note);
+      return;
+    }
 
     reset_entry_gap_runtime();
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
-    entry_turn_start_yaw_ = current.yaw;
+    entry_turn_start_yaw_ = yaw_control.yaw;
     if (current_entry_side_ == "right") {
       target_gap_yaw_ = normalize_angle(entry_right_target_yaw_rad_);
     } else if (current_entry_side_ == "left") {
@@ -6932,23 +7439,34 @@ private:
       get_logger(),
       "[mission_manager][entering_gap] fixed map-y target yaw entry_side=%s "
       "target_gap_yaw=%.4f entry_right_target_yaw_rad=%.4f entry_left_target_yaw_rad=%.4f "
-      "target_yaw_source=fixed_map_y",
+      "target_yaw_source=fixed_map_y yaw_frame=%s current_yaw=%.4f yaw_error=%.4f pose_note=%s",
       current_entry_side_.c_str(),
       target_gap_yaw_,
       entry_right_target_yaw_rad_,
-      entry_left_target_yaw_rad_);
+      entry_left_target_yaw_rad_,
+      yaw_control.yaw_frame.c_str(),
+      yaw_control.yaw,
+      normalize_angle(target_gap_yaw_ - yaw_control.yaw),
+      yaw_control.pose_note.c_str());
     publish_motion_log(
       "[entering_gap] fixed map-y target yaw entry_side=" + current_entry_side_ +
       " target_gap_yaw=" + format_fixed(target_gap_yaw_, 4) +
       " entry_right_target_yaw_rad=" + format_fixed(entry_right_target_yaw_rad_, 4) +
       " entry_left_target_yaw_rad=" + format_fixed(entry_left_target_yaw_rad_, 4) +
-      " target_yaw_source=fixed_map_y");
+      " target_yaw_source=fixed_map_y yaw_frame=" + yaw_control.yaw_frame +
+      " current_yaw=" + format_fixed(yaw_control.yaw, 4) +
+      " yaw_error=" + format_fixed(normalize_angle(target_gap_yaw_ - yaw_control.yaw), 4) +
+      " pose_note=" + yaw_control.pose_note);
     reset_segment_distance();
     set_entry_gap_phase(
       EntryGapPhase::ENTERING_TURN,
       "entry_turn_start_yaw=" + std::to_string(entry_turn_start_yaw_) +
       " target_gap_yaw=" + std::to_string(target_gap_yaw_) +
       " target_yaw_source=fixed_map_y" +
+      " yaw_frame=" + yaw_control.yaw_frame +
+      " current_yaw=" + format_fixed(yaw_control.yaw, 4) +
+      " yaw_error=" + format_fixed(normalize_angle(target_gap_yaw_ - yaw_control.yaw), 4) +
+      " pose_note=" + yaw_control.pose_note +
       " direction=" + entry_turn_direction_text());
     const std::string state_detail =
       detail + "，开始转入缝隙 target_straight_distance=" +
@@ -7305,7 +7823,9 @@ private:
     double traveled,
     bool turn_done,
     bool straight_done,
-    const EntrySideHoldEval & side_hold)
+    const EntrySideHoldEval & side_hold,
+    const std::string & yaw_frame = "odom_fallback",
+    const std::string & pose_note = "not provided")
   {
     std::ostringstream straight_start_text;
     if (straight_start_pose_.valid) {
@@ -7324,7 +7844,8 @@ private:
       *get_clock(),
       1000,
       "entering_gap: phase=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
-      "current_yaw=%.3f yaw_error=%.3f angular.z=%.3f straight_start_pose=(%s) "
+      "yaw_frame=%s current_yaw=%.3f yaw_error=%.3f pose_note=%s "
+      "angular.z=%.3f straight_start_pose=(%s) "
       "traveled=%.3f target_straight_distance=%.3f turn_done=%d straight_done=%d "
       "entry_side=%s left_side_dist=%.3f right_side_dist=%.3f control_side_dist=%.3f "
       "side_error=%.3f yaw_hold_cmd=%.3f side_distance_cmd=%.3f final_angular_cmd=%.3f "
@@ -7333,8 +7854,10 @@ private:
       entry_gap_phase_to_string(entry_gap_phase_).c_str(),
       entry_turn_start_yaw_,
       target_gap_yaw_,
+      yaw_frame.c_str(),
       current.yaw,
       yaw_error,
+      pose_note.c_str(),
       angular_z,
       straight_start.c_str(),
       traveled,
@@ -7367,11 +7890,14 @@ private:
     double angular_z,
     double traveled,
     bool turn_done,
-    bool straight_done)
+    bool straight_done,
+    const std::string & yaw_frame = "odom_fallback",
+    const std::string & pose_note = "not provided")
   {
     EntrySideHoldEval side_hold;
     log_entering_gap_status(
-      safety, current, yaw_error, angular_z, traveled, turn_done, straight_done, side_hold);
+      safety, current, yaw_error, angular_z, traveled, turn_done, straight_done,
+      side_hold, yaw_frame, pose_note);
   }
 
   void handle_entering_gap_state()
@@ -7382,13 +7908,22 @@ private:
       return;
     }
 
-    Pose2D current = current_pose_2d();
-    if (!current.valid || !std::isfinite(current.x) || !std::isfinite(current.y) ||
-      !std::isfinite(current.yaw))
+    Pose2D odom_current = current_pose_2d();
+    if (!odom_current.valid || !std::isfinite(odom_current.x) || !std::isfinite(odom_current.y) ||
+      !std::isfinite(odom_current.yaw))
     {
       fail_entering_gap("入缝里程计位姿无效");
       return;
     }
+    EnteringYawControl yaw_control;
+    if (!current_entering_gap_control_yaw(odom_current, yaw_control) ||
+      !std::isfinite(yaw_control.yaw))
+    {
+      fail_entering_gap("入缝当前航向无效: " + yaw_control.pose_note);
+      return;
+    }
+    Pose2D yaw_log_pose = odom_current;
+    yaw_log_pose.yaw = yaw_control.yaw;
 
     if (entry_gap_phase_ == EntryGapPhase::IDLE) {
       begin_entering_gap_flow("ENTERING_GAP运行时补初始化");
@@ -7396,48 +7931,73 @@ private:
     }
 
     const auto safety = evaluate_entering_safety();
-    const double yaw_error = normalize_angle(target_gap_yaw_ - current.yaw);
-    double traveled = straight_start_pose_.valid ? entry_straight_traveled(current) : 0.0;
+    const double yaw_error = normalize_angle(target_gap_yaw_ - yaw_control.yaw);
+    double traveled = straight_start_pose_.valid ? entry_straight_traveled(odom_current) : 0.0;
     double angular_z = 0.0;
     bool turn_done = entry_turn_completed_;
     bool straight_done = entry_straight_completed_;
 
     if (safety.blocked) {
       entry_stopped_by_safety_ = true;
-      log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, turn_done, straight_done);
+      log_entering_gap_status(
+        safety, yaw_log_pose, yaw_error, angular_z, traveled, turn_done, straight_done,
+        yaw_control.yaw_frame, yaw_control.pose_note);
       fail_entering_gap("入缝被安全策略阻塞: " + safety.block_reason);
       return;
     }
 
     switch (entry_gap_phase_) {
       case EntryGapPhase::ENTERING_TURN: {
-        turn_done =
-          std::abs(normalize_angle(current.yaw - target_gap_yaw_)) <
-          entry_align_yaw_tolerance_rad_;
+        const double yaw_tolerance = std::max(0.001, std::abs(entry_align_yaw_tolerance_rad_));
+        const int required_count = std::max(1, entry_turn_yaw_stable_required_count_);
+        if (std::abs(yaw_error) <= yaw_tolerance) {
+          ++entry_turn_yaw_stable_count_;
+        } else {
+          entry_turn_yaw_stable_count_ = 0;
+        }
+        turn_done = entry_turn_yaw_stable_count_ >= required_count;
         if (turn_done) {
           entry_turn_completed_ = true;
           publish_stop();
-          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
-          set_entry_gap_phase(EntryGapPhase::ENTERING_STRAIGHT_ALIGN, "转向完成，停止持续转向");
+          log_entering_gap_status(
+            safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false,
+            yaw_control.yaw_frame, yaw_control.pose_note);
+          set_entry_gap_phase(
+            EntryGapPhase::ENTERING_STRAIGHT_ALIGN,
+            "转向完成，停止持续转向 yaw_error=" + format_fixed(yaw_error, 4) +
+            " tolerance=" + format_fixed(yaw_tolerance, 4) +
+            " stable_count=" + std::to_string(entry_turn_yaw_stable_count_) +
+            " required_count=" + std::to_string(required_count) +
+            " turn_done_reason=stable_yaw_in_tolerance" +
+            " yaw_frame=" + yaw_control.yaw_frame +
+            " current_yaw=" + format_fixed(yaw_control.yaw, 4) +
+            " pose_note=" + yaw_control.pose_note);
           return;
         }
 
         const double turn_elapsed = (this->now() - entry_gap_phase_start_).seconds();
         const double turn_timeout = entry_turn_timeout_sec();
         if (turn_elapsed > turn_timeout) {
-          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, false, false);
+          log_entering_gap_status(
+            safety, yaw_log_pose, yaw_error, angular_z, traveled, false, false,
+            yaw_control.yaw_frame, yaw_control.pose_note);
           RCLCPP_ERROR(
             get_logger(),
             "[mission_manager][ENTERING_TURN] 入缝转向超时 elapsed=%.2f timeout=%.2f "
             "current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
-            "entry_turn_angular_speed=%.3f entry_align_yaw_tolerance_rad=%.3f",
+            "entry_turn_angular_speed=%.3f entry_align_yaw_tolerance_rad=%.3f "
+            "stable_count=%d required_count=%d yaw_frame=%s pose_note=%s",
             turn_elapsed,
             turn_timeout,
-            current.yaw,
+            yaw_control.yaw,
             target_gap_yaw_,
             yaw_error,
             entry_turn_angular_speed_,
-            entry_align_yaw_tolerance_rad_);
+            entry_align_yaw_tolerance_rad_,
+            entry_turn_yaw_stable_count_,
+            required_count,
+            yaw_control.yaw_frame.c_str(),
+            yaw_control.pose_note.c_str());
           fail_entering_gap("入缝转向超时，未达到目标缝隙航向");
           return;
         }
@@ -7451,20 +8011,33 @@ private:
           std::abs(entry_turn_angular_speed_)) * safety.speed_scale;
         cmd.angular.z = angular_z;
         cmd_pub_->publish(cmd);
-        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, false, false);
+        log_entering_gap_status(
+          safety, yaw_log_pose, yaw_error, angular_z, traveled, false, false,
+          yaw_control.yaw_frame, yaw_control.pose_note);
         break;
       }
 
       case EntryGapPhase::ENTERING_STRAIGHT_ALIGN: {
+        const double yaw_tolerance = std::max(0.001, std::abs(entry_align_yaw_tolerance_rad_));
+        const int required_count = std::max(1, entry_turn_yaw_stable_required_count_);
         publish_stop();
-        straight_start_pose_ = current;
-        straight_start_pose_.yaw = current.yaw;
+        straight_start_pose_ = odom_current;
+        straight_start_pose_.yaw = yaw_control.yaw;
         entry_last_traveled_ = 0.0;
         traveled = 0.0;
-        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+        log_entering_gap_status(
+          safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false,
+          yaw_control.yaw_frame, yaw_control.pose_note);
         set_entry_gap_phase(
           EntryGapPhase::MOVING_TO_GRID_CENTER,
-          "记录 straight_start_pose，开始直行到深度格中心");
+          "记录 straight_start_pose，开始直行到深度格中心 yaw_error=" + format_fixed(yaw_error, 4) +
+          " tolerance=" + format_fixed(yaw_tolerance, 4) +
+          " stable_count=" + std::to_string(entry_turn_yaw_stable_count_) +
+          " required_count=" + std::to_string(required_count) +
+          " turn_done_reason=stable_yaw_in_tolerance" +
+          " yaw_frame=" + yaw_control.yaw_frame +
+          " current_yaw=" + format_fixed(yaw_control.yaw, 4) +
+          " pose_note=" + yaw_control.pose_note);
         break;
       }
 
@@ -7474,9 +8047,11 @@ private:
           return;
         }
 
-        traveled = entry_straight_traveled(current);
+        traveled = entry_straight_traveled(odom_current);
         if (!std::isfinite(traveled) || traveled < -0.15) {
-          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false);
+          log_entering_gap_status(
+            safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false,
+            yaw_control.yaw_frame, yaw_control.pose_note);
           fail_entering_gap("入缝直行里程异常，traveled=" + std::to_string(traveled));
           return;
         }
@@ -7504,7 +8079,9 @@ private:
 
         if (straight_elapsed > straight_timeout) {
           side_hold.final_angular_cmd = limited_angular * safety.speed_scale;
-          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false, side_hold);
+          log_entering_gap_status(
+            safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false, side_hold,
+            yaw_control.yaw_frame, yaw_control.pose_note);
           publish_stop();
           RCLCPP_ERROR(
             get_logger(),
@@ -7512,7 +8089,7 @@ private:
             "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
             "cmd.linear.x=0.000 planned_linear=%.3f speed_scale=%.2f estimated_speed=%.3f "
             "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
-            "side_distance_cmd=%.3f side_hold_status=%s",
+            "yaw_frame=%s pose_note=%s side_distance_cmd=%.3f side_hold_status=%s",
             straight_elapsed,
             straight_timeout,
             target_straight_distance_,
@@ -7521,11 +8098,13 @@ private:
             straight_linear_cmd,
             safety.speed_scale,
             estimated_speed,
-            current.x,
-            current.y,
-            current.yaw,
+            odom_current.x,
+            odom_current.y,
+            yaw_control.yaw,
             target_gap_yaw_,
             yaw_error,
+            yaw_control.yaw_frame.c_str(),
+            yaw_control.pose_note.c_str(),
             side_hold.side_distance_cmd,
             side_hold.status.c_str());
           fail_entering_gap("入缝直行超时，未到达深度格中心");
@@ -7536,7 +8115,9 @@ private:
           entry_straight_completed_ = true;
           straight_done = true;
           publish_stop();
-          log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, true);
+          log_entering_gap_status(
+            safety, yaw_log_pose, yaw_error, angular_z, traveled, true, true,
+            yaw_control.yaw_frame, yaw_control.pose_note);
           if (full_inventory_active_) {
             single_cabinet_last_entering_straight_distance_ =
               std::max(traveled, target_straight_distance_);
@@ -7574,7 +8155,9 @@ private:
         angular_z = cmd.angular.z;
         side_hold.final_angular_cmd = angular_z;
         cmd_pub_->publish(cmd);
-        log_entering_gap_status(safety, current, yaw_error, angular_z, traveled, true, false, side_hold);
+        log_entering_gap_status(
+          safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false, side_hold,
+          yaw_control.yaw_frame, yaw_control.pose_note);
         RCLCPP_INFO_THROTTLE(
           get_logger(),
           *get_clock(),
@@ -7583,7 +8166,7 @@ private:
           "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
           "cmd.linear.x=%.3f speed_scale=%.2f estimated_speed=%.3f "
           "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
-          "side_distance_cmd=%.3f side_hold_status=%s",
+          "yaw_frame=%s pose_note=%s side_distance_cmd=%.3f side_hold_status=%s",
           straight_elapsed,
           straight_timeout,
           target_straight_distance_,
@@ -7592,11 +8175,13 @@ private:
           cmd.linear.x,
           safety.speed_scale,
           estimated_speed,
-          current.x,
-          current.y,
-          current.yaw,
+          odom_current.x,
+          odom_current.y,
+          yaw_control.yaw,
           target_gap_yaw_,
           yaw_error,
+          yaw_control.yaw_frame.c_str(),
+          yaw_control.pose_note.c_str(),
           side_hold.side_distance_cmd,
           side_hold.status.c_str());
         break;
@@ -7848,6 +8433,10 @@ private:
       }
 
       case State::SINGLE_CABINET_STOP_AFTER_SCAN: {
+        if (pending_interrupt_request_ != PendingInterruptRequest::NONE) {
+          begin_final_exit_for_pending_after_stop();
+          break;
+        }
         stop_single_cabinet_motion_controls();
         mission_active_ = false;
         publish_single_cabinet_log("scan finished, stop after scan, no exit motion in current step");
@@ -7921,6 +8510,10 @@ private:
 
   void on_timer()
   {
+    if (state_ == State::AUTO_RECHARGING) {
+      return;
+    }
+
     if (!mission_active_ && !inventory_flow_active_) {
       return;
     }
@@ -8088,7 +8681,8 @@ private:
         break;
       }
 
-      case State::RETURNING: {
+      case State::RETURNING:
+      case State::RETURNING_HOME: {
         handle_returning_state();
         break;
       }
@@ -8130,6 +8724,11 @@ private:
 
   std::string start_service_name_;
   std::string cancel_service_name_;
+  std::string return_home_service_name_;
+  std::string return_to_charge_service_name_;
+  std::string inventory_auto_recharge_start_service_name_;
+  std::string inventory_auto_recharge_cancel_service_name_;
+  std::string cancel_auto_recharge_service_name_;
   std::string recognizer_trigger_service_;
 
   std::vector<std::string> target_list_param_;
@@ -8190,6 +8789,7 @@ private:
   double entry_right_target_yaw_rad_{1.5708};
   double entry_left_target_yaw_rad_{-1.5708};
   double entry_align_yaw_tolerance_rad_{0.08};
+  int entry_turn_yaw_stable_required_count_{3};
   double entry_turn_angular_speed_{0.30};
   double entry_turn_timeout_sec_{12.0};
   double entry_straight_speed_{0.08};
@@ -8243,12 +8843,14 @@ private:
 
   bool return_home_on_finish_{false};
   std::string return_target_mode_{"start"};
-  double charge_pose_x_{0.0};
-  double charge_pose_y_{0.0};
-  double charge_pose_yaw_{0.0};
-  std::string charge_pose_frame_id_{"odom_combined"};
+  std::string home_pose_frame_id_{"map"};
+  double home_pose_x_{0.0};
+  double home_pose_y_{0.0};
+  double home_pose_yaw_{0.0};
   std::string nav2_action_name_{"navigate_to_pose"};
   std::string nav2_goal_frame_{"map"};
+  double auto_recharge_service_timeout_sec_{3.0};
+  double auto_recharge_cancel_timeout_sec_{3.0};
   double nav2_server_wait_timeout_sec_{1.0};
   bool nav2_startup_wait_enabled_{true};
   double nav2_startup_wait_timeout_sec_{60.0};
@@ -8425,6 +9027,7 @@ private:
 
   State state_{State::IDLE};
   ReturnMode return_mode_{ReturnMode::NONE};
+  PendingInterruptRequest pending_interrupt_request_{PendingInterruptRequest::NONE};
 
   bool mission_active_{false};
   bool cancel_requested_{false};
@@ -8500,6 +9103,7 @@ private:
   Pose2D straight_start_pose_;
   double entry_last_traveled_{0.0};
   bool entry_turn_completed_{false};
+  int entry_turn_yaw_stable_count_{0};
   bool entry_straight_completed_{false};
   bool entry_stopped_by_safety_{false};
 
@@ -8532,7 +9136,12 @@ private:
 
   rclcpp::Service<wheeltec_inventory_system::srv::StartMission>::SharedPtr start_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_home_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_to_charge_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_auto_recharge_srv_;
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr recognizer_trigger_client_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_start_client_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_cancel_client_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
   std::shared_ptr<NavigateGoalHandle> nav2_goal_handle_;
   std::shared_ptr<NavigateGoalHandle> nav2_route_goal_handle_;

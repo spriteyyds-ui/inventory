@@ -197,6 +197,22 @@ gap_detector_node:
     csv_log_dir: /tmp/wheeltec_inventory_gap_logs                       # CSV 调试日志目录；改动会改变日志保存位置
     csv_file_prefix: gap_debug                                          # CSV 调试日志文件名前缀；改动便于区分不同实验
 
+inventory_auto_recharger:
+  ros__parameters:
+    start_service_name: /inventory/auto_recharge/start                  # 自动回充启动服务名；节点启动后只等待该 service 请求
+    cancel_service_name: /inventory/auto_recharge/cancel                # 自动回充取消服务名；取消时关闭底盘回充模式但不关闭 Nav2
+    nav2_active_wait_timeout_sec: 60.0                                  # 收到回充请求后等待 Nav2 active 的超时，单位 s；超时不关闭 Nav2
+    nav_feedback_timeout_sec: 120.0                                     # 接近充电桩但长时间未完成导航时的等待阈值，单位 s
+    nav_goal_frame: map                                                 # 自动回充导航目标坐标系
+    charger_pose_x: 0.21353509531521975                                 # 自动回充导航目标 x 坐标，单位 m
+    charger_pose_y: 0.026333288560603657                                # 自动回充导航目标 y 坐标，单位 m
+    charger_pose_z: -0.121433301285056                                  # 自动回充导航目标姿态 z
+    charger_pose_w: 0.9925995936625266                                  # 自动回充导航目标姿态 w
+    robot_BatteryCapacity: 20000                                        # 电池容量参数，保留给原自动回充判断逻辑
+    car_mode: senior_akm                                                # 底盘模式，影响红外对接标志设置
+    diff_point: 1.2                                                     # 根据充电桩检测位姿外推导航目标的距离，单位 m
+    diff_angle: -15.0                                                   # 根据充电桩检测位姿外推导航目标的角度，单位 deg
+
 mission_manager_node:
   ros__parameters:
     recognized_topic: /inventory/recognized_number                      # 货柜编号识别输入话题；改错会导致目标识别结果不可用
@@ -224,6 +240,13 @@ mission_manager_node:
 
     start_service_name: /inventory/start_mission                        # 启动盘库任务服务名；改名需同步 Web 或测试调用端
     cancel_service_name: /inventory/cancel_mission                      # 取消盘库任务服务名；改名需同步外部调用端
+    return_home_service_name: /inventory/return_home                    # 中断盘库并回零点服务名；缝隙内会记录为待执行请求
+    return_to_charge_service_name: /inventory/return_to_charge          # 中断盘库并自动回充服务名；缝隙内会记录为待执行请求
+    inventory_auto_recharge_start_service_name: /inventory/auto_recharge/start # 盘库内部自动回充节点启动服务名
+    inventory_auto_recharge_cancel_service_name: /inventory/auto_recharge/cancel # 盘库内部自动回充节点取消服务名
+    cancel_auto_recharge_service_name: /inventory/cancel_auto_recharge  # 对外取消自动回充服务名；仅 AUTO_RECHARGING 状态实际取消
+    auto_recharge_service_timeout_sec: 3.0                              # 等待自动回充启动服务可用的超时，单位 s；超时不关闭 Nav2
+    auto_recharge_cancel_timeout_sec: 3.0                               # 等待自动回充取消服务可用的超时，单位 s；超时不关闭 Nav2
     recognizer_trigger_service: /inventory/trigger_recognition          # 可选识别器触发服务名；用于手动控制识别流程
 
     target_list: ["2-3-1-2"]                                            # 默认任务目标列表；元素描述目标组合，外部未传入时使用
@@ -248,11 +271,12 @@ mission_manager_node:
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
     entry_center_offset_m: 0.0                                          # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
     entry_turn_yaw_delta_rad: 1.5708                                    # 兼容保留参数；正式入缝目标 yaw 使用固定 map +Y/-Y 参数，不再用该值计算
-    entry_right_target_yaw_rad: 1.5708                                  # 右侧进缝固定目标 yaw，单位 rad；map +Y，现场 4 号柜应向右转入缝
-    entry_left_target_yaw_rad: -1.5108                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
-    entry_align_yaw_tolerance_rad: 0.08                                 # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
+    entry_right_target_yaw_rad: 1.6608                                  # 右侧进缝固定目标 yaw，单位 rad；map +Y，现场 4 号柜应向右转入缝
+    entry_left_target_yaw_rad: -1.5008                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
+    entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
+    entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
-    entry_turn_timeout_sec: 40.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
+    entry_turn_timeout_sec: 60.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
     entry_straight_speed: 0.20                                          # 转向对齐后直行到深度网格中心的速度，单位 m/s；调大会更快但精度下降
     entry_straight_timeout_sec: 60.0                                    # MOVING_TO_GRID_CENTER 入缝直行到深度格中心的超时，单位 s；调大会允许低速入缝更久
     entry_straight_yaw_kp: 1.00                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
@@ -305,11 +329,11 @@ mission_manager_node:
     post_gap_detect_advance_timeout_sec: 40.0                           # 检测后额外前进超时，单位 s；调大会允许更慢完成对齐
 
     return_home_on_finish: false                                        # 任务结束后是否返航；开启会在完成后执行回到起点或充电点流程
-    return_target_mode: start                                           # 返航目标模式；start 回起点，charge 回充电位
-    charge_pose_x: 0.0                                                  # 充电位 x 坐标，单位 m；修改会改变 charge 模式返航目标
-    charge_pose_y: 0.0                                                  # 充电位 y 坐标，单位 m；修改会改变 charge 模式返航目标
-    charge_pose_yaw: 0.0                                                # 充电位偏航角，单位 rad；修改会改变最终朝向
-    charge_pose_frame_id: odom_combined                                 # 充电位坐标所在坐标系；需与定位源一致
+    return_target_mode: start                                           # 返航目标模式；当前仅保留 start 起点返航，自动回充由独立 service 触发
+    home_pose_frame_id: map                                             # 回零点目标坐标系；通常使用 map
+    home_pose_x: 0.0                                                    # 回零点 x 坐标，单位 m
+    home_pose_y: 0.0                                                    # 回零点 y 坐标，单位 m
+    home_pose_yaw: 0.0                                                  # 回零点偏航角，单位 rad
     nav2_action_name: navigate_to_pose                                  # Nav2 NavigateToPose 动作名；改名需与 Nav2 action server 一致
     nav2_goal_frame: map                                                # Nav2 返航目标坐标系；通常为 map，改错会导致目标解释错误
     nav2_server_wait_timeout_sec: 5.0                                   # 等待 Nav2 action server 超时，单位 s；调大会等待更久
@@ -373,7 +397,7 @@ mission_manager_node:
 
     exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
-    exit_gap_speed: 0.10                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
+    exit_gap_speed: 0.20                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
     exit_gap_extra_distance_m: 0.20                                     # 退出间隙额外距离，单位 m；调大会多退一些
     exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
     exit_gap_distance_m: 1.50                                           # 退出间隙目标距离，单位 m；调大会倒退更远
@@ -414,7 +438,7 @@ mission_manager_node:
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
     full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
-    full_inventory_same_side_recognition_delay_distance_m: 1.20         # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
+    full_inventory_same_side_recognition_delay_distance_m: 1.00         # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
