@@ -34,10 +34,13 @@ find_package(yaml-cpp REQUIRED)
 set(msg_files
   "msg/RecognizedNumber.msg"
   "msg/GapStatus.msg"
+  "msg/LiftState.msg"
 )
 
 set(srv_files
   "srv/StartMission.srv"
+  "srv/LiftMoveTimed.srv"
+  "srv/LiftMoveToHeight.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -111,7 +114,6 @@ add_library(inventory_scan_modules STATIC
   src/scan_sequence_generator.cpp
   src/scan_sequence_executor.cpp
   src/inventory_scanner.cpp
-  src/lift_controller.cpp
   src/web_api_client.cpp
 )
 
@@ -171,8 +173,10 @@ install(TARGETS
 )
 
 install(PROGRAMS
-  scripts/charge_status_gui.py
+  scripts/inventory_operation_gui.py
   scripts/inventory_auto_recharger.py
+  scripts/lift_relay_controller.py
+  scripts/lift_relay_diagnostic_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

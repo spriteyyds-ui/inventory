@@ -6,8 +6,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32, Int8, Int32, String, UInt8
 from std_srvs.srv import Trigger
-from wheeltec_inventory_system.msg import RecognizedNumber
-from wheeltec_inventory_system.srv import StartMission
+from wheeltec_inventory_system.msg import LiftState, RecognizedNumber
+from wheeltec_inventory_system.srv import LiftMoveTimed, StartMission
 
 
 class InventoryOperationGuiNode(Node):
@@ -32,6 +32,8 @@ class InventoryOperationGuiNode(Node):
             "red_flag_topic", "robot_red_flag").value
         self.recharge_flag_topic = self.declare_parameter(
             "recharge_flag_topic", "robot_recharge_flag").value
+        self.lift_state_topic = self.declare_parameter(
+            "lift_state_topic", "/lift/state").value
 
         self.start_mission_service_name = self.declare_parameter(
             "start_mission_service_name", "/inventory/start_mission").value
@@ -43,6 +45,18 @@ class InventoryOperationGuiNode(Node):
             "cancel_auto_recharge_service_name", "/inventory/cancel_auto_recharge").value
         self.auto_recharge_start_service_name = self.declare_parameter(
             "auto_recharge_start_service_name", "/inventory/auto_recharge/start").value
+        self.lift_up_service_name = self.declare_parameter(
+            "lift_up_service_name", "/lift/up").value
+        self.lift_down_service_name = self.declare_parameter(
+            "lift_down_service_name", "/lift/down").value
+        self.lift_stop_service_name = self.declare_parameter(
+            "lift_stop_service_name", "/lift/stop").value
+        self.lift_all_off_service_name = self.declare_parameter(
+            "lift_all_off_service_name", "/lift/all_off").value
+        self.lift_reset_estimated_height_service_name = self.declare_parameter(
+            "lift_reset_estimated_height_service_name", "/lift/reset_estimated_height").value
+        self.lift_manual_duration_sec = float(
+            self.declare_parameter("lift_manual_duration_sec", 2.0).value)
         self.log_history_size = int(self.declare_parameter("log_history_size", 10).value)
 
         self.values = {
@@ -54,6 +68,9 @@ class InventoryOperationGuiNode(Node):
             "charging_current": "未知",
             "red_flag": "未知",
             "recharge_flag": "未知",
+            "lift_height": "未知",
+            "lift_state": "未知",
+            "lift_error": "",
         }
         self.mission_logs = deque(maxlen=max(1, self.log_history_size))
         self.subscriptions_ = [
@@ -69,6 +86,7 @@ class InventoryOperationGuiNode(Node):
                 Float32, self.charging_current_topic, self.charging_current_callback, 10),
             self.create_subscription(UInt8, self.red_flag_topic, self.red_flag_callback, 10),
             self.create_subscription(Int8, self.recharge_flag_topic, self.recharge_flag_callback, 10),
+            self.create_subscription(LiftState, self.lift_state_topic, self.lift_state_callback, 10),
         ]
 
         self.start_mission_client = self.create_client(
@@ -81,6 +99,12 @@ class InventoryOperationGuiNode(Node):
             Trigger, self.cancel_auto_recharge_service_name)
         self.auto_recharge_start_client = self.create_client(
             Trigger, self.auto_recharge_start_service_name)
+        self.lift_up_client = self.create_client(LiftMoveTimed, self.lift_up_service_name)
+        self.lift_down_client = self.create_client(LiftMoveTimed, self.lift_down_service_name)
+        self.lift_stop_client = self.create_client(Trigger, self.lift_stop_service_name)
+        self.lift_all_off_client = self.create_client(Trigger, self.lift_all_off_service_name)
+        self.lift_reset_estimated_height_client = self.create_client(
+            Trigger, self.lift_reset_estimated_height_service_name)
 
     def mission_state_callback(self, msg):
         self.values["mission_state"] = msg.data
@@ -114,6 +138,11 @@ class InventoryOperationGuiNode(Node):
     def recharge_flag_callback(self, msg):
         self.values["recharge_flag"] = str(msg.data)
 
+    def lift_state_callback(self, msg):
+        self.values["lift_height"] = "%.0f mm" % (msg.estimated_height_m * 1000.0)
+        self.values["lift_state"] = msg.state
+        self.values["lift_error"] = msg.error_message
+
 
 class InventoryOperationGuiApp:
     def __init__(self, root, node, tk, ttk):
@@ -129,7 +158,9 @@ class InventoryOperationGuiApp:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
         self.fields = {}
-        self.target_cabinets_var = self.tk.StringVar(value="")
+        self.selected_cabinets = []
+        self.cabinet_buttons = {}
+        self.selected_cabinets_var = self.tk.StringVar(value="当前选择：无")
         self.target_gap_var = self.tk.StringVar(value="")
         self.command_status = self.tk.StringVar(value="等待操作")
         self.build_widgets()
@@ -148,10 +179,22 @@ class InventoryOperationGuiApp:
         operation_frame = self.ttk.LabelFrame(main, text="盘库操作", padding=10)
         operation_frame.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         operation_frame.columnconfigure(1, weight=1)
-        self.ttk.Label(operation_frame, text="目标柜号").grid(
-            row=0, column=0, sticky="w", padx=(0, 10), pady=3)
-        self.ttk.Entry(operation_frame, textvariable=self.target_cabinets_var).grid(
-            row=0, column=1, columnspan=2, sticky="ew", pady=3)
+        cabinet_select_frame = self.ttk.LabelFrame(operation_frame, text="目标货柜选择", padding=8)
+        cabinet_select_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        cabinet_select_frame.columnconfigure(1, weight=1)
+        self.ttk.Label(cabinet_select_frame, textvariable=self.selected_cabinets_var).grid(
+            row=0, column=0, columnspan=17, sticky="w", pady=(0, 6))
+        self.ttk.Button(
+            cabinet_select_frame, text="清空选择", command=self.clear_cabinet_selection).grid(
+            row=0, column=17, columnspan=2, sticky="e", pady=(0, 6))
+        self.ttk.Label(cabinet_select_frame, text="上排/左排").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=2)
+        self.ttk.Label(cabinet_select_frame, text="下排/右排").grid(
+            row=2, column=0, sticky="w", padx=(0, 6), pady=2)
+        for cabinet_id in range(1, 19):
+            self.add_cabinet_button(cabinet_select_frame, 1, cabinet_id)
+        for cabinet_id in range(19, 37):
+            self.add_cabinet_button(cabinet_select_frame, 2, cabinet_id)
         self.ttk.Label(operation_frame, text="目标间隙 ID").grid(
             row=1, column=0, sticky="w", padx=(0, 10), pady=3)
         self.ttk.Entry(operation_frame, textvariable=self.target_gap_var).grid(
@@ -184,8 +227,13 @@ class InventoryOperationGuiApp:
         self.log_text.grid(row=4, column=0, columnspan=2, sticky="nsew")
         self.log_text.configure(state=self.tk.DISABLED)
 
-        charge_frame = self.ttk.LabelFrame(main, text="充电状态", padding=10)
-        charge_frame.grid(row=0, column=1, rowspan=2, sticky="nsew")
+        right_frame = self.ttk.Frame(main)
+        right_frame.grid(row=0, column=1, rowspan=2, sticky="nsew")
+        right_frame.columnconfigure(0, weight=1)
+        right_frame.rowconfigure(1, weight=1)
+
+        charge_frame = self.ttk.LabelFrame(right_frame, text="充电状态", padding=10)
+        charge_frame.grid(row=0, column=0, sticky="ew")
         charge_frame.columnconfigure(1, weight=1)
         charge_rows = [
             ("电压", "voltage"),
@@ -210,6 +258,41 @@ class InventoryOperationGuiApp:
             charge_button_frame, text="取消自动回充", command=self.request_cancel_auto_recharge)
         self.cancel_auto_recharge_button.pack(side=self.tk.LEFT)
 
+        lift_frame = self.ttk.LabelFrame(right_frame, text="升降杆", padding=10)
+        lift_frame.grid(row=1, column=0, sticky="new", pady=(10, 0))
+        lift_frame.columnconfigure(1, weight=1)
+        lift_rows = [
+            ("预估高度", "lift_height"),
+            ("状态", "lift_state"),
+            ("错误", "lift_error"),
+            ("上升服务", "lift_up_service"),
+            ("下降服务", "lift_down_service"),
+            ("停止服务", "lift_stop_service"),
+            ("全关服务", "lift_all_off_service"),
+            ("置零服务", "lift_reset_estimated_height_service"),
+        ]
+        for row_index, (label, key) in enumerate(lift_rows):
+            self.add_value_row(lift_frame, row_index, label, key)
+
+        lift_button_frame = self.ttk.Frame(lift_frame)
+        lift_button_frame.grid(
+            row=len(lift_rows), column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        self.lift_up_button = self.ttk.Button(
+            lift_button_frame, text="上升", command=self.request_lift_up)
+        self.lift_up_button.pack(side=self.tk.LEFT, padx=(0, 8))
+        self.lift_down_button = self.ttk.Button(
+            lift_button_frame, text="下降", command=self.request_lift_down)
+        self.lift_down_button.pack(side=self.tk.LEFT, padx=(0, 8))
+        self.lift_stop_button = self.ttk.Button(
+            lift_button_frame, text="停止", command=self.request_lift_stop)
+        self.lift_stop_button.pack(side=self.tk.LEFT, padx=(0, 8))
+        self.lift_all_off_button = self.ttk.Button(
+            lift_button_frame, text="全关", command=self.request_lift_all_off)
+        self.lift_all_off_button.pack(side=self.tk.LEFT, padx=(0, 8))
+        self.lift_reset_estimated_height_button = self.ttk.Button(
+            lift_button_frame, text="预估高度置零", command=self.request_lift_reset_estimated_height)
+        self.lift_reset_estimated_height_button.pack(side=self.tk.LEFT)
+
         status_frame = self.ttk.Frame(main)
         status_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 0))
         status_frame.columnconfigure(1, weight=1)
@@ -226,15 +309,47 @@ class InventoryOperationGuiApp:
         self.ttk.Label(parent, textvariable=var, wraplength=520).grid(
             row=row_index, column=1, sticky="ew", pady=3)
 
+    def add_cabinet_button(self, parent, row_index, cabinet_id):
+        column_index = ((cabinet_id - 1) % 18) + 1
+        button = self.tk.Button(
+            parent,
+            text=str(cabinet_id),
+            width=3,
+            relief=self.tk.RAISED,
+            command=lambda value=cabinet_id: self.select_cabinet(value))
+        button.grid(row=row_index, column=column_index, padx=1, pady=2)
+        self.cabinet_buttons[cabinet_id] = button
+
+    def select_cabinet(self, cabinet_id):
+        if cabinet_id in self.selected_cabinets:
+            self.selected_cabinets.remove(cabinet_id)
+        else:
+            self.selected_cabinets.append(cabinet_id)
+        self.update_cabinet_selection_display()
+
+    def clear_cabinet_selection(self):
+        self.selected_cabinets.clear()
+        self.update_cabinet_selection_display()
+
+    def update_cabinet_selection_display(self):
+        if self.selected_cabinets:
+            text = "当前选择：" + ", ".join(str(cabinet_id) for cabinet_id in self.selected_cabinets)
+        else:
+            text = "当前选择：无"
+        self.selected_cabinets_var.set(text)
+        for button_id, button in self.cabinet_buttons.items():
+            if button_id in self.selected_cabinets:
+                button.configure(relief=self.tk.SUNKEN, bg="#2f6fed", fg="white")
+            else:
+                button.configure(relief=self.tk.RAISED, bg="SystemButtonFace", fg="black")
+
     def request_start_inventory(self):
-        cabinets = self.parse_target_cabinets()
-        if cabinets is None:
-            return
-        if not cabinets:
-            message = "请输入目标柜号"
+        if not self.selected_cabinets:
+            message = "请先选择目标货柜"
             self.command_status.set(message)
             self.node.get_logger().warn(message)
             return
+        cabinets = list(self.selected_cabinets)
 
         request = StartMission.Request()
         request.targets = []
@@ -271,27 +386,25 @@ class InventoryOperationGuiApp:
             self.node.cancel_auto_recharge_client,
             self.node.cancel_auto_recharge_service_name)
 
-    def parse_target_cabinets(self):
-        raw = self.target_cabinets_var.get().replace("，", ",").strip()
-        if not raw:
-            return []
+    def request_lift_up(self):
+        self.send_lift_motion_request("升降杆上升", self.node.lift_up_client, self.node.lift_up_service_name, "up")
 
-        cabinets = []
-        for item in raw.split(","):
-            text = item.strip()
-            if not text:
-                self.report_input_error("目标柜号格式非法: %s" % raw)
-                return None
-            try:
-                cabinet_id = int(text)
-            except ValueError:
-                self.report_input_error("目标柜号必须是正整数: %s" % text)
-                return None
-            if cabinet_id <= 0:
-                self.report_input_error("目标柜号必须大于 0: %s" % text)
-                return None
-            cabinets.append(cabinet_id)
-        return cabinets
+    def request_lift_down(self):
+        self.send_lift_motion_request(
+            "升降杆下降", self.node.lift_down_client, self.node.lift_down_service_name, "down")
+
+    def request_lift_stop(self):
+        self.send_trigger_request("升降杆停止", self.node.lift_stop_client, self.node.lift_stop_service_name)
+
+    def request_lift_all_off(self):
+        self.send_trigger_request(
+            "升降杆全关", self.node.lift_all_off_client, self.node.lift_all_off_service_name)
+
+    def request_lift_reset_estimated_height(self):
+        self.send_trigger_request(
+            "预估高度置零",
+            self.node.lift_reset_estimated_height_client,
+            self.node.lift_reset_estimated_height_service_name)
 
     def report_input_error(self, message):
         self.command_status.set(message)
@@ -319,6 +432,21 @@ class InventoryOperationGuiApp:
             return
 
         future = client.call_async(Trigger.Request())
+        self.pending_futures.append({"label": label, "future": future})
+        self.command_status.set("已发送%s请求，等待响应。" % label)
+        self.update_button_states()
+
+    def send_lift_motion_request(self, label, client, service_name, direction):
+        if not client.service_is_ready():
+            message = "%s 服务不可用: %s" % (label, service_name)
+            self.command_status.set(message)
+            self.node.get_logger().warn(message)
+            return
+
+        request = LiftMoveTimed.Request()
+        request.direction = direction
+        request.duration_sec = float(self.node.lift_manual_duration_sec)
+        future = client.call_async(request)
         self.pending_futures.append({"label": label, "future": future})
         self.command_status.set("已发送%s请求，等待响应。" % label)
         self.update_button_states()
@@ -385,6 +513,12 @@ class InventoryOperationGuiApp:
             self.ready_text(self.node.return_to_charge_client))
         self.fields["cancel_auto_recharge_service"].set(
             self.ready_text(self.node.cancel_auto_recharge_client))
+        self.fields["lift_up_service"].set(self.ready_text(self.node.lift_up_client))
+        self.fields["lift_down_service"].set(self.ready_text(self.node.lift_down_client))
+        self.fields["lift_stop_service"].set(self.ready_text(self.node.lift_stop_client))
+        self.fields["lift_all_off_service"].set(self.ready_text(self.node.lift_all_off_client))
+        self.fields["lift_reset_estimated_height_service"].set(
+            self.ready_text(self.node.lift_reset_estimated_height_client))
 
     def update_log_text(self):
         snapshot = tuple(self.node.mission_logs)
@@ -403,6 +537,11 @@ class InventoryOperationGuiApp:
         cancel_mission_pending = self.is_pending("停止/取消任务")
         return_to_charge_pending = self.is_pending("启动自动回充")
         cancel_auto_recharge_pending = self.is_pending("取消自动回充")
+        lift_up_pending = self.is_pending("升降杆上升")
+        lift_down_pending = self.is_pending("升降杆下降")
+        lift_stop_pending = self.is_pending("升降杆停止")
+        lift_all_off_pending = self.is_pending("升降杆全关")
+        lift_reset_estimated_height_pending = self.is_pending("预估高度置零")
 
         start_ready = self.node.start_mission_client.service_is_ready()
         cancel_ready = self.node.cancel_mission_client.service_is_ready()
@@ -421,6 +560,27 @@ class InventoryOperationGuiApp:
         self.cancel_auto_recharge_button.configure(
             state=self.tk.NORMAL
             if self.node.cancel_auto_recharge_client.service_is_ready() and not cancel_auto_recharge_pending
+            else self.tk.DISABLED)
+        self.lift_up_button.configure(
+            state=self.tk.NORMAL
+            if self.node.lift_up_client.service_is_ready() and not lift_up_pending
+            else self.tk.DISABLED)
+        self.lift_down_button.configure(
+            state=self.tk.NORMAL
+            if self.node.lift_down_client.service_is_ready() and not lift_down_pending
+            else self.tk.DISABLED)
+        self.lift_stop_button.configure(
+            state=self.tk.NORMAL
+            if self.node.lift_stop_client.service_is_ready() and not lift_stop_pending
+            else self.tk.DISABLED)
+        self.lift_all_off_button.configure(
+            state=self.tk.NORMAL
+            if self.node.lift_all_off_client.service_is_ready() and not lift_all_off_pending
+            else self.tk.DISABLED)
+        self.lift_reset_estimated_height_button.configure(
+            state=self.tk.NORMAL
+            if self.node.lift_reset_estimated_height_client.service_is_ready() and
+            not lift_reset_estimated_height_pending
             else self.tk.DISABLED)
 
     def is_pending(self, label):
