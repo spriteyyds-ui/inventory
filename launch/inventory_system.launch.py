@@ -24,6 +24,12 @@ def generate_launch_description():
         description='是否随盘库系统启动 wheeltec_nav2'
     )
 
+    enable_charge_status_gui_arg = DeclareLaunchArgument(
+        'enable_charge_status_gui',
+        default_value='true',
+        description='是否随盘库系统启动操作总控 GUI'
+    )
+
     inventory_params_file_arg = DeclareLaunchArgument(
         'inventory_params_file',
         default_value=PathJoinSubstitution([
@@ -47,6 +53,7 @@ def generate_launch_description():
     )
 
     launch_nav2 = LaunchConfiguration('launch_nav2')
+    enable_charge_status_gui = LaunchConfiguration('enable_charge_status_gui')
     inventory_params_file = LaunchConfiguration('inventory_params_file')
     c100_right_video_device = LaunchConfiguration('c100_right_video_device')
     c100_left_video_device = LaunchConfiguration('c100_left_video_device')
@@ -158,8 +165,26 @@ def generate_launch_description():
         parameters=[inventory_params_file]
     )
 
+    inventory_auto_recharger_node = Node(
+        package='wheeltec_inventory_system',
+        executable='inventory_auto_recharger.py',
+        name='inventory_auto_recharger',
+        output='screen',
+        parameters=[inventory_params_file]
+    )
+
+    inventory_operation_gui_node = Node(
+        package='wheeltec_inventory_system',
+        executable='charge_status_gui.py',
+        name='inventory_operation_gui',
+        output='screen',
+        parameters=[inventory_params_file],
+        condition=IfCondition(enable_charge_status_gui)
+    )
+
     return LaunchDescription([
         launch_nav2_arg,
+        enable_charge_status_gui_arg,
         inventory_params_file_arg,
         c100_right_video_device_arg,
         c100_left_video_device_arg,
@@ -170,5 +195,7 @@ def generate_launch_description():
         number_recognizer_node,
         distance_estimator_node,
         gap_detector_node,
+        inventory_auto_recharger_node,
+        inventory_operation_gui_node,
         mission_manager_node,
     ])

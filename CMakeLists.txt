@@ -170,6 +170,12 @@ install(TARGETS
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/charge_status_gui.py
+  scripts/inventory_auto_recharger.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 install(DIRECTORY launch config models test docs
   DESTINATION share/${PROJECT_NAME}
 )
