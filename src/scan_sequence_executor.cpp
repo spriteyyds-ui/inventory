@@ -51,12 +51,12 @@ bool ScanSequenceExecutor::execute(
 
       case ScanStepType::MOVE_LIFT_TO_LEVEL:
         std::cout << "[scan_executor] lift move level=" << step.layer_index << std::endl;
-        sleepSeconds(params_.lift_motion_duration_sec);
+        sleepSeconds(params_.lift_action_duration_sec);
         break;
 
       case ScanStepType::MOVE_LIFT_HOME:
         std::cout << "[scan_executor] lift home" << std::endl;
-        sleepSeconds(params_.lift_motion_duration_sec);
+        sleepSeconds(params_.lift_action_duration_sec);
         break;
     }
 

@@ -34,10 +34,10 @@
 #include "tf2_ros/transform_listener.h"
 #include "wheeltec_inventory_system/id_utils.hpp"
 #include "wheeltec_inventory_system/inventory_scanner.hpp"
-#include "wheeltec_inventory_system/lift_controller.hpp"
 #include "wheeltec_inventory_system/msg/gap_status.hpp"
 #include "wheeltec_inventory_system/msg/recognized_number.hpp"
 #include "wheeltec_inventory_system/scan_sequence_generator.hpp"
+#include "wheeltec_inventory_system/srv/lift_move_timed.hpp"
 #include "wheeltec_inventory_system/srv/start_mission.hpp"
 #include "wheeltec_inventory_system/web_api_client.hpp"
 #include "yaml-cpp/yaml.h"
@@ -268,10 +268,14 @@ public:
     scan_retry_count_ = declare_parameter<int>("scan_retry_count", 0);
     scan_result_timeout_sec_ = declare_parameter<double>("scan_result_timeout_sec", 2.0);
     lift_enabled_ = declare_parameter<bool>("lift_enabled", true);
-    lift_motion_duration_sec_ = declare_parameter<double>("lift_motion_duration_sec", 3.0);
-    lift_motion_timeout_sec_ = declare_parameter<double>("lift_motion_timeout_sec", 6.0);
-    lift_level_count_ = declare_parameter<int>("lift_level_count", 2);
-    lift_home_level_ = declare_parameter<int>("lift_home_level", 1);
+    lift_up_duration_sec_ = declare_parameter<double>("lift_up_duration_sec", 2.0);
+    lift_down_duration_sec_ = declare_parameter<double>("lift_down_duration_sec", 2.0);
+    lift_service_timeout_sec_ = declare_parameter<double>("lift_service_timeout_sec", 5.0);
+    lift_up_service_name_ = declare_parameter<std::string>("lift_up_service_name", "/lift/up");
+    lift_down_service_name_ = declare_parameter<std::string>("lift_down_service_name", "/lift/down");
+    lift_stop_service_name_ = declare_parameter<std::string>("lift_stop_service_name", "/lift/stop");
+    lift_all_off_service_name_ = declare_parameter<std::string>("lift_all_off_service_name", "/lift/all_off");
+    lift_home_service_name_ = declare_parameter<std::string>("lift_home_service_name", "/lift/home");
     grid_motion_duration_sec_ = declare_parameter<double>("grid_motion_duration_sec", 1.0);
     grid_motion_timeout_sec_ = declare_parameter<double>("grid_motion_timeout_sec", 10.0);
     single_cabinet_motion_enabled_ = declare_parameter<bool>("real_motion_enabled", false);
@@ -564,6 +568,14 @@ public:
       inventory_auto_recharge_start_service_name_);
     inventory_auto_recharge_cancel_client_ = create_client<std_srvs::srv::Trigger>(
       inventory_auto_recharge_cancel_service_name_);
+    lift_up_client_ = create_client<wheeltec_inventory_system::srv::LiftMoveTimed>(
+      lift_up_service_name_);
+    lift_down_client_ = create_client<wheeltec_inventory_system::srv::LiftMoveTimed>(
+      lift_down_service_name_);
+    lift_home_client_ = create_client<wheeltec_inventory_system::srv::LiftMoveTimed>(
+      lift_home_service_name_);
+    lift_stop_client_ = create_client<std_srvs::srv::Trigger>(lift_stop_service_name_);
+    lift_all_off_client_ = create_client<std_srvs::srv::Trigger>(lift_all_off_service_name_);
     nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -1363,14 +1375,9 @@ private:
     scanner_config.scan_result_timeout_sec = std::max(0.0, scan_result_timeout_sec_);
     inventory_scanner_.configure(scanner_config);
 
-    wheeltec_inventory_system::LiftControllerConfig lift_config;
-    lift_config.enabled = lift_enabled_;
-    lift_config.lift_motion_duration_sec = std::max(0.0, lift_motion_duration_sec_);
-    lift_config.lift_motion_timeout_sec =
-      std::max(lift_config.lift_motion_duration_sec, lift_motion_timeout_sec_);
-    lift_config.lift_level_count = std::max(1, lift_level_count_);
-    lift_config.lift_home_level = std::clamp(lift_home_level_, 1, lift_config.lift_level_count);
-    lift_controller_.configure(lift_config);
+    lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
+    lift_down_duration_sec_ = std::max(0.0, lift_down_duration_sec_);
+    lift_service_timeout_sec_ = std::max(0.1, lift_service_timeout_sec_);
 
     wheeltec_inventory_system::WebApiClientParams web_params;
     web_params.web_client_mode = web_client_mode_;
@@ -1461,7 +1468,7 @@ private:
       scan_layers_,
       scan_depth_count_,
       scan_duration_sec_,
-      lift_motion_duration_sec_);
+      lift_up_duration_sec_);
     RCLCPP_INFO(
       get_logger(),
       "单柜盘库配置: enabled=%s target_gap=%s target_cabinet=%d "
@@ -5454,7 +5461,7 @@ private:
     single_cabinet_grid_move_step_ = wheeltec_inventory_system::ScanStep{};
     single_cabinet_grid_move_start_pose_ = Pose2D{};
     inventory_scanner_.reset();
-    lift_controller_.reset();
+    reset_lift_runtime();
   }
 
   bool begin_single_cabinet_scan_runtime(
@@ -5475,7 +5482,7 @@ private:
     single_cabinet_scan_active_ = true;
     single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     inventory_scanner_.reset();
-    lift_controller_.reset();
+    reset_lift_runtime();
     if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
       const int initial_depth = std::max(1, current_target_depth_index_);
       single_cabinet_grid_have_previous_depth_ = true;
@@ -5536,13 +5543,13 @@ private:
       }
     } else if (step.step_type == wheeltec_inventory_system::ScanStepType::MOVE_LIFT_TO_LEVEL) {
       action_text = "move lift to level";
-      if (!lift_controller_.move_to_level(step.layer_index)) {
+      if (!start_lift_step(step, mode)) {
         fail_in_gap_scan_runtime(mode, "启动升降杆失败");
         return true;
       }
     } else if (step.step_type == wheeltec_inventory_system::ScanStepType::MOVE_LIFT_HOME) {
       action_text = "move lift home";
-      if (!lift_controller_.move_to_level(lift_home_level_)) {
+      if (!start_lift_step(step, mode)) {
         fail_in_gap_scan_runtime(mode, "启动升降杆回原点失败");
         return true;
       }
@@ -5567,6 +5574,148 @@ private:
       " depth=" + std::to_string(step.depth_index) +
       " step_index=" + std::to_string(single_cabinet_scan_step_index_));
     return false;
+  }
+
+  void reset_lift_runtime()
+  {
+    lift_step_active_ = false;
+    lift_step_future_ =
+      std::shared_future<wheeltec_inventory_system::srv::LiftMoveTimed::Response::SharedPtr>();
+    lift_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    lift_step_service_name_.clear();
+    lift_step_description_.clear();
+  }
+
+  bool start_lift_step(
+    const wheeltec_inventory_system::ScanStep & step,
+    InGapScanRuntimeMode mode)
+  {
+    (void)mode;
+    if (!lift_enabled_) {
+      reset_lift_runtime();
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][lift] disabled, skip step=%s layer=%d",
+        wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+        step.layer_index);
+      return true;
+    }
+
+    rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr client;
+    double duration_sec = lift_up_duration_sec_;
+    std::string direction = "up";
+    if (step.step_type == wheeltec_inventory_system::ScanStepType::MOVE_LIFT_HOME) {
+      client = lift_home_client_;
+      duration_sec = lift_down_duration_sec_;
+      direction = "down";
+      lift_step_service_name_ = lift_home_service_name_;
+      lift_step_description_ = "home";
+    } else {
+      client = lift_up_client_;
+      duration_sec = lift_up_duration_sec_;
+      direction = "up";
+      lift_step_service_name_ = lift_up_service_name_;
+      lift_step_description_ = "move_to_level_" + std::to_string(step.layer_index);
+    }
+
+    if (!client || !client->service_is_ready()) {
+      RCLCPP_ERROR(
+        get_logger(),
+        "[mission_manager][lift] service unavailable: %s",
+        lift_step_service_name_.c_str());
+      return false;
+    }
+
+    auto request = std::make_shared<wheeltec_inventory_system::srv::LiftMoveTimed::Request>();
+    request->direction = direction;
+    request->duration_sec = static_cast<float>(std::max(0.0, duration_sec));
+    lift_step_future_ = client->async_send_request(request).share();
+    lift_step_active_ = true;
+    lift_step_start_time_ = this->now();
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][lift] start service=%s direction=%s duration=%.2f step=%s layer=%d",
+      lift_step_service_name_.c_str(),
+      direction.c_str(),
+      duration_sec,
+      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+      step.layer_index);
+    return true;
+  }
+
+  bool check_lift_step_finished(
+    const wheeltec_inventory_system::ScanStep & step,
+    InGapScanRuntimeMode mode)
+  {
+    if (!lift_enabled_ || !lift_step_active_) {
+      return true;
+    }
+
+    if (lift_step_start_time_.nanoseconds() != 0 &&
+      (this->now() - lift_step_start_time_).seconds() > std::max(0.1, lift_service_timeout_sec_))
+    {
+      fail_lift_step(mode, "升降杆服务超时: " + lift_step_description_);
+      return false;
+    }
+
+    if (!lift_step_future_.valid()) {
+      fail_lift_step(mode, "升降杆服务 future 无效: " + lift_step_description_);
+      return false;
+    }
+
+    if (lift_step_future_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+      return false;
+    }
+
+    const auto response = lift_step_future_.get();
+    if (!response || !response->success) {
+      std::string reason = "升降杆动作失败: " + lift_step_description_;
+      if (response) {
+        reason += " message=" + response->message;
+      }
+      fail_lift_step(mode, reason);
+      return false;
+    }
+
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][lift] finished %s step=%s layer=%d height=%.3f message=%s",
+      lift_step_description_.c_str(),
+      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+      step.layer_index,
+      response->estimated_height_m,
+      response->message.c_str());
+    reset_lift_runtime();
+    return true;
+  }
+
+  void fail_lift_step(InGapScanRuntimeMode mode, const std::string & reason)
+  {
+    request_lift_safety_stop("lift failure");
+    reset_lift_runtime();
+    fail_in_gap_scan_runtime(mode, reason);
+  }
+
+  void request_lift_safety_stop(const std::string & reason)
+  {
+    if (!lift_enabled_) {
+      return;
+    }
+    if (lift_stop_client_ && lift_stop_client_->service_is_ready()) {
+      auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+      (void)lift_stop_client_->async_send_request(request);
+      RCLCPP_WARN(get_logger(), "[mission_manager][lift] requested stop: %s", reason.c_str());
+    } else {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][lift] stop service unavailable during %s",
+        reason.c_str());
+    }
+    if (lift_all_off_client_ && lift_all_off_client_->service_is_ready()) {
+      auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+      (void)lift_all_off_client_->async_send_request(request);
+      RCLCPP_WARN(get_logger(), "[mission_manager][lift] requested all_off: %s", reason.c_str());
+    }
   }
 
   bool execute_inventory_device_step(
@@ -5603,14 +5752,7 @@ private:
         return false;
       }
     } else {
-      lift_controller_.update();
-      if (!lift_controller_.is_motion_finished()) {
-        return false;
-      }
-      if (!lift_controller_.motion_success()) {
-        fail_in_gap_scan_runtime(
-          mode,
-          "升降杆动作失败: target_level=" + std::to_string(step.layer_index));
+      if (!check_lift_step_finished(step, mode)) {
         return false;
       }
     }
@@ -6575,6 +6717,7 @@ private:
 
   void stop_single_cabinet_motion_controls()
   {
+    request_lift_safety_stop("single cabinet controls stop");
     cancel_nav2_route_goal("单柜盘库停止");
     cancel_nav2_return_goal("单柜盘库停止");
     set_corridor_mode(false, false);
@@ -8882,10 +9025,14 @@ private:
   int scan_retry_count_{0};
   double scan_result_timeout_sec_{2.0};
   bool lift_enabled_{true};
-  double lift_motion_duration_sec_{3.0};
-  double lift_motion_timeout_sec_{6.0};
-  int lift_level_count_{2};
-  int lift_home_level_{1};
+  double lift_up_duration_sec_{2.0};
+  double lift_down_duration_sec_{2.0};
+  double lift_service_timeout_sec_{5.0};
+  std::string lift_up_service_name_{"/lift/up"};
+  std::string lift_down_service_name_{"/lift/down"};
+  std::string lift_stop_service_name_{"/lift/stop"};
+  std::string lift_all_off_service_name_{"/lift/all_off"};
+  std::string lift_home_service_name_{"/lift/home"};
   double grid_motion_duration_sec_{1.0};
   double grid_motion_timeout_sec_{10.0};
   bool single_cabinet_motion_enabled_{false};
@@ -9003,6 +9150,12 @@ private:
   rclcpp::Time single_cabinet_grid_move_start_time_{0, 0, RCL_ROS_TIME};
   double single_cabinet_grid_move_target_distance_{0.0};
   double single_cabinet_grid_move_cmd_speed_{0.0};
+  bool lift_step_active_{false};
+  rclcpp::Time lift_step_start_time_{0, 0, RCL_ROS_TIME};
+  std::shared_future<wheeltec_inventory_system::srv::LiftMoveTimed::Response::SharedPtr>
+  lift_step_future_;
+  std::string lift_step_service_name_;
+  std::string lift_step_description_;
   bool full_inventory_active_{false};
   std::size_t full_inventory_index_{0};
   int full_inventory_current_target_{-1};
@@ -9022,7 +9175,6 @@ private:
   rclcpp::Time full_inventory_post_gap_advance_start_{0, 0, RCL_ROS_TIME};
   wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   wheeltec_inventory_system::InventoryScanner inventory_scanner_;
-  wheeltec_inventory_system::LiftController lift_controller_;
   wheeltec_inventory_system::WebApiClient web_api_client_;
 
   State state_{State::IDLE};
@@ -9142,6 +9294,11 @@ private:
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr recognizer_trigger_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_start_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_cancel_client_;
+  rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_up_client_;
+  rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_down_client_;
+  rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_home_client_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr lift_stop_client_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr lift_all_off_client_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
   std::shared_ptr<NavigateGoalHandle> nav2_goal_handle_;
   std::shared_ptr<NavigateGoalHandle> nav2_route_goal_handle_;

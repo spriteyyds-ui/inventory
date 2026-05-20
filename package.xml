@@ -29,6 +29,7 @@
   <depend>yaml-cpp</depend>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>python3-serial</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>nav2_simple_commander</exec_depend>
   <exec_depend>turtlesim</exec_depend>

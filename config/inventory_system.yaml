@@ -190,7 +190,7 @@ gap_detector_node:
     open_ratio_threshold: 0.10                                          # 扇区开放点比例阈值；调大会更严格，调小更容易判定候选帧
     max_adjacent_angle_gap_deg: 2.0                                     # 相邻点仍视为连续的最大角度间隔，单位 deg；调大会允许稀疏点连接
     smoothing_window: 1                                                 # 帧指标平滑窗口长度，单位 帧；调大会更稳但响应更慢
-    stable_frames_required: 100                                         # 判定稳定检测到间隙所需连续候选帧数，单位 帧；调大会更保守
+    stable_frames_required: 10                                          # 判定稳定检测到间隙所需连续候选帧数，单位 帧；调大会更保守
     detect_cycle_timeout_sec: 2.5                                       # WAITING_GAP 单轮检测周期超时，单位 s；调大会等待更久，调小更快进入调整
 
     enable_csv_log: true                                                # 是否输出 CSV 调试日志；开启便于分析但会写入磁盘
@@ -317,8 +317,8 @@ mission_manager_node:
     retreat_speed: 0.10                                                 # 跟踪后后退线速度，单位 m/s；调大会后退更快但定位误差可能变大
     wait_gap_stop_settle_sec: 0.25                                      # 后退或调整动作后等待车体稳定时间，单位 s；调大会检测更稳但耗时更长
     search_gap_speed: 0.08                                              # SEARCH_GAP 朝预期间隙移动的低速速度，单位 m/s；调大会找缝更快但可能越过目标
-    search_gap_forward_timeout_sec: 10.0                                # SEARCH_GAP 前向搜索超时，单位 s；调大会搜索更远，调小更快进入微调
-    search_gap_backward_timeout_sec: 10.0                               # SEARCH_GAP 后向搜索超时，单位 s；调大会后向搜索更远
+    search_gap_forward_timeout_sec: 20.0                                # SEARCH_GAP 前向搜索超时，单位 s；调大会搜索更远，调小更快进入微调
+    search_gap_backward_timeout_sec: 20.0                               # SEARCH_GAP 后向搜索超时，单位 s；调大会后向搜索更远
     gap_detect_cycle_timeout_sec: 2.5                                   # WAITING_GAP 单轮间隙检测超时，单位 s；调大会每轮等待更久
     gap_failures_before_adjust: 3                                       # 触发一次位姿调整前允许的失败检测轮数，单位 轮；调大会减少调整频率
     gap_adjust_speed: 0.10                                              # 间隙调整序列运动速度，单位 m/s；调大会调整更快但更难精确
@@ -370,11 +370,15 @@ mission_manager_node:
     scan_retry_count: 0                                                 # 扫描失败重试次数，单位 次；调大会提高成功机会但耗时增加
     scan_result_timeout_sec: 2.0                                        # 等待扫描结果超时，单位 s；调大会更容忍结果延迟
 
-    lift_enabled: true                                                  # 是否启用升降杆动作接口；关闭会跳过升降动作
-    lift_motion_duration_sec: 3.0                                       # 单次升降动作预计持续时间，单位 s；调大会等待更久
-    lift_motion_timeout_sec: 6.0                                        # 等待升降动作完成超时，单位 s；调大会更容忍慢速升降
-    lift_level_count: 2                                                 # 升降扫描层数，单位 层；调大会扫描更多高度层
-    lift_home_level: 1                                                  # 升降杆回零或默认层号；修改会改变扫描结束后的停靠层
+    lift_enabled: true                                                  # 是否启用升降杆服务接口；关闭会跳过升降动作
+    lift_up_duration_sec: 2.0                                           # 盘库扫描层间上升动作持续时间，单位 s；本轮短时占位
+    lift_down_duration_sec: 2.0                                         # 盘库扫描层间下降动作持续时间，单位 s；本轮短时占位
+    lift_service_timeout_sec: 30.0                                      # 等待升降杆服务响应超时，单位 s；需覆盖串口等待、打开重试和动作级恢复
+    lift_up_service_name: /lift/up                                      # 升降杆上升服务名；由独立继电器控制节点提供
+    lift_down_service_name: /lift/down                                  # 升降杆下降服务名；由独立继电器控制节点提供
+    lift_stop_service_name: /lift/stop                                  # 升降杆停止服务名；任务取消或异常时优先调用
+    lift_all_off_service_name: /lift/all_off                            # 升降杆全关服务名；通信可用时用于安全断开全部继电器
+    lift_home_service_name: /lift/home                                  # 升降杆回零服务名；仅按时间估算回到底部
 
     grid_motion_duration_sec: 100.0                                     # 间隙内单次网格移动预计时长，单位 s；调大会给运动更多时间
     grid_motion_timeout_sec: 60.0                                       # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
@@ -438,7 +442,7 @@ mission_manager_node:
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
     full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
-    full_inventory_same_side_recognition_delay_distance_m: 1.00         # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
+    full_inventory_same_side_recognition_delay_distance_m: 0.6         # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
@@ -455,3 +459,39 @@ mission_manager_node:
     web_close_gap_endpoint: "/api/gap/close"                            # 关闭间隙 API 路径；改动需与 Web 后端接口一致
     web_status_endpoint: "/api/robot/status"                            # 机器人状态上报 API 路径；改动需与 Web 后端接口一致
     web_result_endpoint: "/api/inventory/result"                        # 盘库结果上报 API 路径；改动需与 Web 后端接口一致
+
+lift_relay_controller:
+  ros__parameters:
+    lift_default_port: /dev/lift_relay                                  # 升降杆继电器稳定串口名；真实设备当前映射到 CH341 USB
+    lift_baud: 38400                                                    # 继电器 Modbus RTU 波特率
+    lift_slave: 1                                                       # 继电器 Modbus 从站地址
+    lift_modbus_mode: coil05                                            # 默认使用已验证的 05 写线圈方式；register06 仅预留
+    lift_register_base_addr: 0                                          # register06 预留寄存器起始地址，默认不影响 coil05
+    lift_register_on_value: 1                                           # register06 预留开启值，默认不影响 coil05
+    lift_register_off_value: 0                                          # register06 预留关闭值，默认不影响 coil05
+    lift_speed_mps: 0.026                                               # 升降杆估算速度，单位 m/s；用于预估高度积分
+    lift_min_height_m: 0.0                                              # 升降杆预估最低高度，单位 m
+    lift_max_height_m: 1.5                                              # 升降杆预估最高高度，单位 m
+    lift_manual_duration_sec: 2.0                                       # GUI/诊断默认点动时间，单位 s
+    lift_home_duration_sec: 2.0                                         # home 默认下降时间，单位 s；不足以到底时不强制归零
+    lift_home_force_zero_when_complete: false                           # 是否允许 home 完成后强制预估高度归零
+    lift_max_run_duration_sec: 10.0                                     # 单次运动最大运行时间硬限制，单位 s
+    lift_settle_sec: 0.2                                                # Y3 断电和方向继电器切换后的等待时间，单位 s
+    lift_serial_timeout_sec: 1.0                                        # 串口读写超时，单位 s
+    lift_reconnect_attempts: 5                                          # 串口异常后的重连尝试次数
+    lift_action_recover_attempts: 5                                     # 单次升降动作中的动作级恢复尝试次数
+    lift_port_wait_timeout_sec: 5.0                                     # 打开串口前等待 /dev/lift_relay 出现的最长时间，单位 s
+    lift_port_wait_interval_sec: 0.2                                    # 等待串口设备文件时的检查间隔，单位 s
+    lift_open_retry_count: 5                                            # 打开串口失败后的重试次数
+    lift_open_retry_interval_sec: 0.5                                   # 打开串口失败后的重试间隔，单位 s
+    lift_verbose_modbus: false                                          # 是否打印 Modbus 收发帧
+    lift_state_topic: /lift/state                                       # 升降杆状态发布话题
+
+inventory_operation_gui:
+  ros__parameters:
+    lift_state_topic: /lift/state                                       # GUI 显示升降杆预估状态的话题
+    lift_up_service_name: /lift/up                                      # GUI 上升按钮调用服务
+    lift_down_service_name: /lift/down                                  # GUI 下降按钮调用服务
+    lift_stop_service_name: /lift/stop                                  # GUI 停止按钮调用服务
+    lift_all_off_service_name: /lift/all_off                            # GUI 全关按钮调用服务
+    lift_manual_duration_sec: 2.0                                       # GUI 上升/下降固定点动时间，单位 s

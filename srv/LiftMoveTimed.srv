@@ -1,0 +1,6 @@
+string direction
+float32 duration_sec
+---
+bool success
+string message
+float32 estimated_height_m

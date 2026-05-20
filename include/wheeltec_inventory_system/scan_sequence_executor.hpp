@@ -12,7 +12,7 @@ namespace wheeltec_inventory_system
 struct ScanExecutionParams
 {
   double scan_duration_sec{2.0};
-  double lift_motion_duration_sec{3.0};
+  double lift_action_duration_sec{3.0};
   double grid_motion_duration_sec{1.0};
 };
 

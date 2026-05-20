@@ -1,0 +1,5 @@
+float32 estimated_height_m
+string moving_direction
+bool is_moving
+string state
+string error_message
