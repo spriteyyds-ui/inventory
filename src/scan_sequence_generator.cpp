@@ -1,9 +1,9 @@
-#include "wheeltec_inventory_system/scan_sequence_generator.hpp"
+#include "agv_inventory_system/scan_sequence_generator.hpp"
 
 #include <iostream>
 #include <sstream>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 std::vector<ScanStep> ScanSequenceGenerator::generateCabinetSnakeSequence(
@@ -82,4 +82,4 @@ std::string ScanSequenceGenerator::formatGridLabel(const ScanStep & step)
   return oss.str();
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

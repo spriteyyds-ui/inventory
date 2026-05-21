@@ -7,7 +7,7 @@
 #include "opencv2/core.hpp"
 #include "opencv2/dnn.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 /**
@@ -92,6 +92,6 @@ private:
   bool ready_{false};
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_

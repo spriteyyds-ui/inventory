@@ -21,7 +21,7 @@
 #include "tf2/time.h"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
-#include "wheeltec_inventory_system/msg/gap_status.hpp"
+#include "agv_inventory_system/msg/gap_status.hpp"
 
 class GapDetectorNode : public rclcpp::Node
 {
@@ -87,13 +87,13 @@ public:
     detect_cycle_timeout_sec_ = declare_parameter<double>("detect_cycle_timeout_sec", 2.5);
 
     enable_csv_log_ = declare_parameter<bool>("enable_csv_log", true);
-    csv_log_dir_ = declare_parameter<std::string>("csv_log_dir", "/tmp/wheeltec_inventory_gap_logs");
+    csv_log_dir_ = declare_parameter<std::string>("csv_log_dir", "/tmp/agv_inventory_gap_logs");
     csv_file_prefix_ = declare_parameter<std::string>("csv_file_prefix", "gap_debug");
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    status_pub_ = create_publisher<wheeltec_inventory_system::msg::GapStatus>(output_topic_, 10);
+    status_pub_ = create_publisher<agv_inventory_system::msg::GapStatus>(output_topic_, 10);
 
     context_sub_ = create_subscription<std_msgs::msg::Float32MultiArray>(
       context_topic_,
@@ -598,7 +598,7 @@ private:
 
   void publish_status(const FrameEval & eval)
   {
-    wheeltec_inventory_system::msg::GapStatus out;
+    agv_inventory_system::msg::GapStatus out;
     out.gap_detected = eval.gap_detected;
     out.entry_width_ok = eval.entry_width_ok;
     out.front_left_safe = eval.front_left_safe;
@@ -826,7 +826,7 @@ private:
   rclcpp::Time detect_cycle_start_{0, 0, RCL_ROS_TIME};
 
   bool enable_csv_log_{true};
-  std::string csv_log_dir_{"/tmp/wheeltec_inventory_gap_logs"};
+  std::string csv_log_dir_{"/tmp/agv_inventory_gap_logs"};
   std::string csv_file_prefix_{"gap_debug"};
   std::ofstream csv_file_;
 
@@ -843,7 +843,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr context_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr entry_side_sub_;
-  rclcpp::Publisher<wheeltec_inventory_system::msg::GapStatus>::SharedPtr status_pub_;
+  rclcpp::Publisher<agv_inventory_system::msg::GapStatus>::SharedPtr status_pub_;
 };
 
 int main(int argc, char ** argv)

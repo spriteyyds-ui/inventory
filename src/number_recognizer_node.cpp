@@ -22,11 +22,11 @@
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_srvs/srv/set_bool.hpp"
-#include "wheeltec_inventory_system/a4_detector.hpp"
-#include "wheeltec_inventory_system/digit_classifier.hpp"
-#include "wheeltec_inventory_system/digit_segmenter.hpp"
-#include "wheeltec_inventory_system/id_utils.hpp"
-#include "wheeltec_inventory_system/msg/recognized_number.hpp"
+#include "agv_inventory_system/a4_detector.hpp"
+#include "agv_inventory_system/digit_classifier.hpp"
+#include "agv_inventory_system/digit_segmenter.hpp"
+#include "agv_inventory_system/id_utils.hpp"
+#include "agv_inventory_system/msg/recognized_number.hpp"
 #include "yaml-cpp/yaml.h"
 
 class NumberRecognizerNode : public rclcpp::Node
@@ -41,7 +41,7 @@ public:
     last_attempt_time_ = this->now() - rclcpp::Duration::from_seconds(attempt_interval_);
     latest_tracking_distance_stamp_ = this->now() - rclcpp::Duration::from_seconds(3600.0);
 
-    recog_pub_ = create_publisher<wheeltec_inventory_system::msg::RecognizedNumber>(
+    recog_pub_ = create_publisher<agv_inventory_system::msg::RecognizedNumber>(
       recognized_topic_, 10);
     debug_a4_pub_ = create_publisher<sensor_msgs::msg::Image>(debug_a4_topic_, 10);
     debug_digits_pub_ = create_publisher<sensor_msgs::msg::Image>(debug_digits_topic_, 10);
@@ -390,7 +390,7 @@ private:
       return path;
     }
     const std::string share_dir =
-      ament_index_cpp::get_package_share_directory("wheeltec_inventory_system");
+      ament_index_cpp::get_package_share_directory("agv_inventory_system");
     return std::filesystem::path(share_dir) / path;
   }
 
@@ -440,7 +440,7 @@ private:
       for (const auto map_item : map_root) {
         int cabinet_id = -1;
         const std::string cabinet_text = map_item.first.as<std::string>();
-        if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
+        if (!agv_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
           RCLCPP_ERROR(
             get_logger(),
             "cabinet_entry_side_map 货柜号非法: %s",
@@ -577,7 +577,7 @@ private:
     fs::path model_path(cls_runtime.onnx_model_path);
     if (!model_path.is_absolute()) {
       const std::string share_dir =
-        ament_index_cpp::get_package_share_directory("wheeltec_inventory_system");
+        ament_index_cpp::get_package_share_directory("agv_inventory_system");
       model_path = fs::path(share_dir) / cls_runtime.onnx_model_path;
     }
     cls_runtime.onnx_model_path = model_path.string();
@@ -870,7 +870,7 @@ private:
     float horizontal_offset,
     float estimated_distance)
   {
-    wheeltec_inventory_system::msg::RecognizedNumber out;
+    agv_inventory_system::msg::RecognizedNumber out;
     out.number = number;
     out.confidence = confidence;
     out.valid = valid;
@@ -900,7 +900,7 @@ private:
   }
 
   static cv::Mat compose_segment_debug_view(
-    const wheeltec_inventory_system::DigitSegmentationResult & seg_result,
+    const agv_inventory_system::DigitSegmentationResult & seg_result,
     const cv::Mat & union_fallback_patch = cv::Mat())
   {
     const auto ensure_bgr = [](const cv::Mat & in) -> cv::Mat {
@@ -1027,7 +1027,7 @@ private:
     return out;
   }
 
-  static cv::Rect union_digit_boxes(const std::vector<wheeltec_inventory_system::DigitCandidate> & digits)
+  static cv::Rect union_digit_boxes(const std::vector<agv_inventory_system::DigitCandidate> & digits)
   {
     if (digits.empty()) {
       return cv::Rect();
@@ -1041,7 +1041,7 @@ private:
   }
 
   void log_segmentation_candidates(
-    const wheeltec_inventory_system::DigitSegmentationResult & seg_result,
+    const agv_inventory_system::DigitSegmentationResult & seg_result,
     const std::string & context)
   {
     const rclcpp::Time now = this->now();
@@ -1169,7 +1169,7 @@ private:
 
     cv::Mat visualization = cv_ptr->image.clone();
 
-    wheeltec_inventory_system::A4DetectionResult a4_result;
+    agv_inventory_system::A4DetectionResult a4_result;
     if (!detector_.detect(cv_ptr->image, a4_result)) {
       draw_failure_text(visualization, a4_result.error_message);
       publish_recognition("", 0.0F, false, 0.0F, 0.0F);
@@ -1184,7 +1184,7 @@ private:
       return;
     }
 
-    wheeltec_inventory_system::DigitSegmentationResult seg_result;
+    agv_inventory_system::DigitSegmentationResult seg_result;
     if (!segmenter_.segment(a4_result.warped_bgr, seg_result)) {
       draw_failure_text(visualization, seg_result.error_message);
       publish_recognition("", 0.0F, false, 0.0F, 0.0F);
@@ -1275,7 +1275,7 @@ private:
     const auto push_option = [&options](
       const std::string & raw_text, float confidence, bool multi_digit, bool from_union, double area_ratio)
     {
-      const std::string normalized = wheeltec_inventory_system::normalize_cabinet_text(raw_text);
+      const std::string normalized = agv_inventory_system::normalize_cabinet_text(raw_text);
       if (normalized.empty()) {
         return;
       }
@@ -1293,7 +1293,7 @@ private:
       push_option(
         seq.number,
         seq.min_confidence,
-        wheeltec_inventory_system::normalize_cabinet_text(seq.number).size() >= 2U,
+        agv_inventory_system::normalize_cabinet_text(seq.number).size() >= 2U,
         false,
         1.0);
     }
@@ -1496,7 +1496,7 @@ private:
             const auto union_cls = classifier_.classify_digit(union_norm);
             if (union_cls.digit >= 0) {
               const std::string normalized_union =
-                wheeltec_inventory_system::normalize_cabinet_text(std::to_string(union_cls.digit));
+                agv_inventory_system::normalize_cabinet_text(std::to_string(union_cls.digit));
               if (!normalized_union.empty()) {
                 union_option.text = normalized_union;
                 union_option.confidence = std::clamp(union_cls.confidence, 0.0F, 1.0F);
@@ -1546,7 +1546,7 @@ private:
             push_option(
               union_seq.number,
               union_seq.min_confidence,
-              wheeltec_inventory_system::normalize_cabinet_text(union_seq.number).size() >= 2U,
+              agv_inventory_system::normalize_cabinet_text(union_seq.number).size() >= 2U,
               true,
               1.0);
           }
@@ -1567,7 +1567,7 @@ private:
 
     const auto option_in_range = [this](const CandidateOption & opt) -> bool {
       int id = -1;
-      if (!wheeltec_inventory_system::safe_to_int(opt.text, id)) {
+      if (!agv_inventory_system::safe_to_int(opt.text, id)) {
         return false;
       }
       return id >= cabinet_id_min_ && id <= cabinet_id_max_;
@@ -1651,7 +1651,7 @@ private:
 
     int cabinet_id = -1;
     const bool in_range =
-      wheeltec_inventory_system::safe_to_int(normalized, cabinet_id) &&
+      agv_inventory_system::safe_to_int(normalized, cabinet_id) &&
       cabinet_id >= cabinet_id_min_ &&
       cabinet_id <= cabinet_id_max_;
 
@@ -1848,13 +1848,13 @@ private:
   double known_distance_m_{1.0};
   double distance_focal_length_{600.0};
 
-  wheeltec_inventory_system::A4DetectorParams a4_params_;
-  wheeltec_inventory_system::DigitSegmenterParams seg_params_;
-  wheeltec_inventory_system::DigitClassifierParams cls_params_;
+  agv_inventory_system::A4DetectorParams a4_params_;
+  agv_inventory_system::DigitSegmenterParams seg_params_;
+  agv_inventory_system::DigitClassifierParams cls_params_;
 
-  wheeltec_inventory_system::A4Detector detector_;
-  wheeltec_inventory_system::DigitSegmenter segmenter_;
-  wheeltec_inventory_system::DigitClassifier classifier_;
+  agv_inventory_system::A4Detector detector_;
+  agv_inventory_system::DigitSegmenter segmenter_;
+  agv_inventory_system::DigitClassifier classifier_;
 
   int attempts_{0};
   rclcpp::Time last_attempt_time_{0, 0, RCL_ROS_TIME};
@@ -1866,7 +1866,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr enable_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr distance_sub_;
   rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr target_cabinet_sub_;
-  rclcpp::Publisher<wheeltec_inventory_system::msg::RecognizedNumber>::SharedPtr recog_pub_;
+  rclcpp::Publisher<agv_inventory_system::msg::RecognizedNumber>::SharedPtr recog_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_a4_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr debug_digits_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr vis_pub_;

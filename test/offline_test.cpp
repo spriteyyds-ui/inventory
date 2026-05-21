@@ -5,10 +5,10 @@
 
 #include "opencv2/imgcodecs.hpp"
 #include "opencv2/imgproc.hpp"
-#include "wheeltec_inventory_system/a4_detector.hpp"
-#include "wheeltec_inventory_system/digit_classifier.hpp"
-#include "wheeltec_inventory_system/digit_segmenter.hpp"
-#include "wheeltec_inventory_system/id_utils.hpp"
+#include "agv_inventory_system/a4_detector.hpp"
+#include "agv_inventory_system/digit_classifier.hpp"
+#include "agv_inventory_system/digit_segmenter.hpp"
+#include "agv_inventory_system/id_utils.hpp"
 
 int main(int argc, char ** argv)
 {
@@ -36,17 +36,17 @@ int main(int argc, char ** argv)
     return 4;
   }
 
-  wheeltec_inventory_system::A4Detector detector;
+  agv_inventory_system::A4Detector detector;
 
-  wheeltec_inventory_system::DigitSegmenterParams seg_params;
+  agv_inventory_system::DigitSegmenterParams seg_params;
   seg_params.digit_input_size = input_size;
-  wheeltec_inventory_system::DigitSegmenter segmenter(seg_params);
+  agv_inventory_system::DigitSegmenter segmenter(seg_params);
 
-  wheeltec_inventory_system::DigitClassifierParams cls_params;
+  agv_inventory_system::DigitClassifierParams cls_params;
   cls_params.onnx_model_path = model_path;
   cls_params.input_size = input_size;
   cls_params.min_confidence = 0.0;
-  wheeltec_inventory_system::DigitClassifier classifier(cls_params);
+  agv_inventory_system::DigitClassifier classifier(cls_params);
 
   std::string err;
   if (!classifier.load_model(err)) {
@@ -54,13 +54,13 @@ int main(int argc, char ** argv)
     return 5;
   }
 
-  wheeltec_inventory_system::A4DetectionResult a4;
+  agv_inventory_system::A4DetectionResult a4;
   if (!detector.detect(image, a4)) {
     std::cerr << "A4检测失败: " << a4.error_message << std::endl;
     return 6;
   }
 
-  wheeltec_inventory_system::DigitSegmentationResult seg;
+  agv_inventory_system::DigitSegmentationResult seg;
   if (!segmenter.segment(a4.warped_bgr, seg)) {
     std::cerr << "数字分割失败: " << seg.error_message << std::endl;
     return 7;
@@ -78,7 +78,7 @@ int main(int argc, char ** argv)
     return 8;
   }
 
-  const std::string normalized = wheeltec_inventory_system::normalize_cabinet_text(seq.number);
+  const std::string normalized = agv_inventory_system::normalize_cabinet_text(seq.number);
 
   std::cout << "raw_number=" << seq.number << std::endl;
   std::cout << "normalized=" << normalized << std::endl;

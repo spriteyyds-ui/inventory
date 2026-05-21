@@ -12,8 +12,8 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-from wheeltec_inventory_system.msg import LiftState
-from wheeltec_inventory_system.srv import LiftMoveTimed, LiftMoveToHeight
+from agv_inventory_system.msg import LiftState
+from agv_inventory_system.srv import LiftMoveTimed, LiftMoveToHeight
 
 
 FUNC_WRITE_SINGLE_COIL = 0x05

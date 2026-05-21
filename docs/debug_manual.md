@@ -1,8 +1,8 @@
-# wheeltec_inventory_system 调试手册
+# agv_inventory_system 调试手册
 
 ## 1. 当前正式入口
 
-当前正式任务入口是 `/inventory/start_mission`，由 `mission_manager_node` 创建，service 类型是 `wheeltec_inventory_system/srv/StartMission`。取消入口是 `/inventory/cancel_mission`，service 类型是 `std_srvs/srv/Trigger`。
+当前正式任务入口是 `/inventory/start_mission`，由 `mission_manager_node` 创建，service 类型是 `agv_inventory_system/srv/StartMission`。取消入口是 `/inventory/cancel_mission`，service 类型是 `std_srvs/srv/Trigger`。
 
 `/inventory/start_test_gap_scan` 已退场，不再作为运行入口使用。当前代码、配置、launch、srv 中没有正式创建该 service；如果还能看到它，优先检查旧终端、旧 install 环境或旧文档命令。
 
@@ -19,7 +19,7 @@ bool accepted
 string message
 ```
 
-字段用法以 `ros2 interface show wheeltec_inventory_system/srv/StartMission` 输出为准。按当前代码逻辑：
+字段用法以 `ros2 interface show agv_inventory_system/srv/StartMission` 输出为准。按当前代码逻辑：
 
 - 单货柜盘库：`run_full_inventory: false`，填写 `target_gap` 和单个 `scan_cabinets`。当前配置为 `real_motion_target_gap: gap_02_03_04`、`real_motion_target_cabinet: 4`。
 - 侧排盘库：`run_full_inventory: false`，`target_gap` 从 `side_row_first_gap` 开始，`scan_cabinets` 使用当前配置的侧排序列，例如 `[4, 3]` 或 `[4, 3, 2, 1]`。
@@ -32,7 +32,7 @@ string message
 
 ```bash
 cd /home/wheeltec/wheeltec_ros2
-colcon build --packages-select wheeltec_inventory_system
+colcon build --packages-select agv_inventory_system
 ```
 
 编译完成后刷新环境：
@@ -48,7 +48,7 @@ source install/setup.bash
 查看 StartMission 字段：
 
 ```bash
-ros2 interface show wheeltec_inventory_system/srv/StartMission
+ros2 interface show agv_inventory_system/srv/StartMission
 ```
 
 查看 inventory service：
@@ -70,7 +70,7 @@ ros2 service type /inventory/start_test_gap_scan
 1. 启动系统：
 
 ```bash
-ros2 launch wheeltec_inventory_system inventory_system.launch.py
+ros2 launch agv_inventory_system inventory_system.launch.py
 ```
 
 当前 launch 会启动 `corridor_follower_node`、`c100_right_camera`、`number_recognizer_node`、`distance_estimator_node`、`gap_detector_node`、`mission_manager_node`。
@@ -84,7 +84,7 @@ ros2 service list | grep inventory
 3. 调用 `/inventory/start_mission`。字段如果后续变化，以 `ros2 interface show` 输出为准：
 
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: [], return_home: false, run_full_inventory: false, target_gap: 'gap_02_03_04', scan_cabinets: [4]}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: [], return_home: false, run_full_inventory: false, target_gap: 'gap_02_03_04', scan_cabinets: [4]}"
 ```
 
 4. 观察状态和日志：
@@ -118,13 +118,13 @@ ros2 topic echo /scan --once
 调用默认全部盘库：
 
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: [], return_home: true, run_full_inventory: true, target_gap: '', scan_cabinets: []}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: [], return_home: true, run_full_inventory: true, target_gap: '', scan_cabinets: []}"
 ```
 
 调用指定序列：
 
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: [], return_home: true, run_full_inventory: true, target_gap: '', scan_cabinets: [4, 3, 8, 7]}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: [], return_home: true, run_full_inventory: true, target_gap: '', scan_cabinets: [4, 3, 8, 7]}"
 ```
 
 运行时观察当前目标、当前 gap、当前 `scan_cabinets`：
@@ -266,15 +266,15 @@ ros2 run image_tools showimage --ros-args -r image:=/inventory/debug_digits
 
 - 现象：`ros2 service call` 报字段不存在或字段类型不匹配。
 - 可能原因：修改过 `srv` 后未重新编译或当前终端未重新 source。
-- 检查命令：`ros2 interface show wheeltec_inventory_system/srv/StartMission`
-- 处理建议：重新执行 `colcon build --packages-select wheeltec_inventory_system`，然后在所有终端执行 `source install/setup.bash`。
+- 检查命令：`ros2 interface show agv_inventory_system/srv/StartMission`
+- 处理建议：重新执行 `colcon build --packages-select agv_inventory_system`，然后在所有终端执行 `source install/setup.bash`。
 
 ### 找不到 /inventory/start_mission
 
 - 现象：`ros2 service list` 中没有 `/inventory/start_mission`。
 - 可能原因：`mission_manager_node` 未启动、launch 失败、参数文件未加载。
 - 检查命令：`ros2 node list`、`ros2 service list | grep inventory`、`ros2 topic echo /inventory/mission_log`
-- 处理建议：重新启动 `ros2 launch wheeltec_inventory_system inventory_system.launch.py`，检查终端启动错误。
+- 处理建议：重新启动 `ros2 launch agv_inventory_system inventory_system.launch.py`，检查终端启动错误。
 
 ### 还能看到 /inventory/start_test_gap_scan
 
@@ -329,5 +329,5 @@ ros2 run image_tools showimage --ros-args -r image:=/inventory/debug_digits
 
 - 现象：编译成功，但调用字段仍按旧格式解析。
 - 可能原因：调用终端未 source 新 install，或同时 source 了旧工作区。
-- 检查命令：`ros2 interface show wheeltec_inventory_system/srv/StartMission`
+- 检查命令：`ros2 interface show agv_inventory_system/srv/StartMission`
 - 处理建议：关闭旧终端或重新 source 当前 `/home/wheeltec/wheeltec_ros2/install/setup.bash`，再重新调用。

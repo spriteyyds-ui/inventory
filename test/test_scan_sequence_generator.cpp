@@ -1,4 +1,4 @@
-#include "wheeltec_inventory_system/scan_sequence_generator.hpp"
+#include "agv_inventory_system/scan_sequence_generator.hpp"
 
 #include <iostream>
 #include <string>
@@ -8,12 +8,12 @@ namespace
 {
 
 std::vector<std::string> collectScanGridLabels(
-  const std::vector<wheeltec_inventory_system::ScanStep> & steps)
+  const std::vector<agv_inventory_system::ScanStep> & steps)
 {
   std::vector<std::string> labels;
   for (const auto & step : steps) {
-    if (step.step_type == wheeltec_inventory_system::ScanStepType::SCAN_GRID) {
-      labels.push_back(wheeltec_inventory_system::ScanSequenceGenerator::formatGridLabel(step));
+    if (step.step_type == agv_inventory_system::ScanStepType::SCAN_GRID) {
+      labels.push_back(agv_inventory_system::ScanSequenceGenerator::formatGridLabel(step));
     }
   }
   return labels;
@@ -48,7 +48,7 @@ bool expectSequence(
 
 int main()
 {
-  const wheeltec_inventory_system::ScanSequenceGenerator generator;
+  const agv_inventory_system::ScanSequenceGenerator generator;
   bool ok = true;
 
   ok = expectSequence(

@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 inline std::vector<std::string> split(const std::string & input, char delim)
@@ -171,6 +171,6 @@ inline bool validate_target_code(
   return true;
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__ID_UTILS_HPP_

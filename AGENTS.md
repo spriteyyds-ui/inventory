@@ -6,7 +6,7 @@ This project is the autonomous inventory robot system based on ROS2 Humble.
 
 The only package that may be modified without explicit user confirmation is:
 
-    /home/wheeltec/wheeltec_ros2/src/wheeltec_inventory_system
+    /home/wheeltec/wheeltec_ros2/src/agv_inventory_system
 
 Do not modify files outside this package unless the user explicitly confirms the exact target path.
 
@@ -24,7 +24,7 @@ Before modifying code, first locate the relevant files, symbols, parameters, and
 
 Use commands like:
 
-    cd /home/wheeltec/wheeltec_ros2/src/wheeltec_inventory_system
+    cd /home/wheeltec/wheeltec_ros2/src/agv_inventory_system
 
 When the target file, function name, parameter name, or line number is already known, prefer precise
 local reads and targeted grep first:
@@ -192,7 +192,7 @@ After modifying C++ or configuration files, run:
 
     cd /home/wheeltec/wheeltec_ros2
 
-    colcon build --packages-select wheeltec_inventory_system
+    colcon build --packages-select agv_inventory_system
 
 If the build fails, report:
 

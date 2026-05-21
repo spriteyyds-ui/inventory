@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 enum class ScanStepType
@@ -35,6 +35,6 @@ public:
   static std::string formatGridLabel(const ScanStep & step);
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_

@@ -4,9 +4,9 @@
 #include <functional>
 #include <vector>
 
-#include "wheeltec_inventory_system/scan_sequence_generator.hpp"
+#include "agv_inventory_system/scan_sequence_generator.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 struct ScanExecutionParams
@@ -35,6 +35,6 @@ private:
   ScanExecutionParams params_;
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_EXECUTOR_HPP_

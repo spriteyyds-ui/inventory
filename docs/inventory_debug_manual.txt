@@ -1,11 +1,11 @@
-wheeltec_inventory_system 操作手册（V3：Nav2巡航路线搜索 + entry_side自动切换）
+agv_inventory_system 操作手册（V3：Nav2巡航路线搜索 + entry_side自动切换）
 ========================================================================
 
 适用环境
 --------
 - Ubuntu 22.04 + ROS2 Humble
 - 工作区：`~/wheeltec_ros2`
-- 功能包：`wheeltec_inventory_system`
+- 功能包：`agv_inventory_system`
 - 本版流程：
   - 根据目标货柜号读取 `route_waypoints.yaml`
   - 选择对应侧巡航路线和 `entry_side`
@@ -35,7 +35,7 @@ wheeltec_inventory_system 操作手册（V3：Nav2巡航路线搜索 + entry_sid
 ```bash
 cd ~/wheeltec_ros2
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select wheeltec_inventory_system
+colcon build --symlink-install --packages-select agv_inventory_system
 source ~/wheeltec_ros2/install/setup.bash
 ```
 
@@ -45,7 +45,7 @@ source ~/wheeltec_ros2/install/setup.bash
 ```bash
 sudo apt update
 sudo apt install libyaml-cpp-dev
-colcon build --symlink-install --packages-select wheeltec_inventory_system
+colcon build --symlink-install --packages-select agv_inventory_system
 ```
 
 
@@ -74,11 +74,11 @@ ros2 launch turn_on_wheeltec_robot wheeltec_camera.launch.py
 cd ~/wheeltec_ros2
 source /opt/ros/humble/setup.bash
 source ~/wheeltec_ros2/install/setup.bash
-RCUTILS_COLORIZED_OUTPUT=0 ros2 launch wheeltec_inventory_system inventory_system.launch.py 2>&1 | tee "$HOME/Desktop/inventory_system_log.txt"
+RCUTILS_COLORIZED_OUTPUT=0 ros2 launch agv_inventory_system inventory_system.launch.py 2>&1 | tee "$HOME/Desktop/inventory_system_log.txt"
 ```
 
 完整盘库系统和单独数字识别节点都使用同一份参数文件：
-- `src/wheeltec_inventory_system/config/inventory_system.yaml`
+- `src/agv_inventory_system/config/inventory_system.yaml`
 - 已不再维护独立的识别参数文件
 
 预期节点：
@@ -89,7 +89,7 @@ RCUTILS_COLORIZED_OUTPUT=0 ros2 launch wheeltec_inventory_system inventory_syste
 - `mission_manager_node`
 
 
-RCUTILS_COLORIZED_OUTPUT=0 ros2 service call /inventory/start_test_gap_scan wheeltec_inventory_system/srv/StartTestGapScan "{gap_id: 'gap_02_03_04', scan_cabinets: [4,3], run_all_configured: false}"
+RCUTILS_COLORIZED_OUTPUT=0 ros2 service call /inventory/start_test_gap_scan agv_inventory_system/srv/StartTestGapScan "{gap_id: 'gap_02_03_04', scan_cabinets: [4,3], run_all_configured: false}"
 
 
 5. 启动后健康检查（T3）
@@ -206,7 +206,7 @@ sudo apt install ros-humble-image-tools
 
 识别参数只维护在：
 ```bash
-~/wheeltec_ros2/src/wheeltec_inventory_system/config/inventory_system.yaml
+~/wheeltec_ros2/src/agv_inventory_system/config/inventory_system.yaml
 ```
 
 修改 YAML 后需要重新启动 `number_recognizer_node`。单独启动识别节点和启动完整盘库系统都会加载这份 YAML。
@@ -223,7 +223,7 @@ ros2 param get /number_recognizer_node min_candidate_center_x_ratio
 -----------------------------------
 路线文件：
 ```bash
-less ~/wheeltec_ros2/src/wheeltec_inventory_system/config/route_waypoints.yaml
+less ~/wheeltec_ros2/src/agv_inventory_system/config/route_waypoints.yaml
 ```
 
 重点检查：
@@ -237,7 +237,7 @@ less ~/wheeltec_ros2/src/wheeltec_inventory_system/config/route_waypoints.yaml
 快速检查是否还有占位坐标：
 ```bash
 grep -n "{x: 0.0, y: 0.0, yaw: 0.0}" \
-  ~/wheeltec_ros2/src/wheeltec_inventory_system/config/route_waypoints.yaml
+  ~/wheeltec_ros2/src/agv_inventory_system/config/route_waypoints.yaml
 ```
 
 如果 grep 有输出，说明还未完成路线标定。可以做软件连通测试，但不要直接实车自动巡航。
@@ -256,7 +256,7 @@ ros2 topic echo /inventory/recognized_number
 
 8.2 启动任务（示例单目标）
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: true}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: true}"
 ```
 
 预期主状态大致顺序：
@@ -289,12 +289,12 @@ ros2 action info /navigate_to_pose
 
 先启动任务，让状态进入 `NAV_ROUTE`：
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: false}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: false}"
 ```
 
 目标货柜号取自示例 `2-3-1-2` 的第二段，即 `3`。连续发布目标识别结果：
 ```bash
-ros2 topic pub --rate 10 /inventory/recognized_number wheeltec_inventory_system/msg/RecognizedNumber "{number: '3', confidence: 0.95, valid: true, horizontal_offset: 0.0, attempts: 1, estimated_distance: 1.0}"
+ros2 topic pub --rate 10 /inventory/recognized_number agv_inventory_system/msg/RecognizedNumber "{number: '3', confidence: 0.95, valid: true, horizontal_offset: 0.0, attempts: 1, estimated_distance: 1.0}"
 ```
 
 预期：
@@ -522,12 +522,12 @@ ros2 param set /gap_detector_node stable_frames_required 3
 本版会在 `gap_detector_node` 每帧写 CSV。
 
 默认目录：
-- `/tmp/wheeltec_inventory_gap_logs`
+- `/tmp/agv_inventory_gap_logs`
 
 查看最新日志：
 ```bash
-ls -lt /tmp/wheeltec_inventory_gap_logs
-tail -f /tmp/wheeltec_inventory_gap_logs/$(ls -t /tmp/wheeltec_inventory_gap_logs | head -n 1)
+ls -lt /tmp/agv_inventory_gap_logs
+tail -f /tmp/agv_inventory_gap_logs/$(ls -t /tmp/agv_inventory_gap_logs | head -n 1)
 ```
 
 日志字段包含：
@@ -587,7 +587,7 @@ ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist "{linear: {x: 0.0}, angul
 
 2) 编译提示找不到 `yaml-cpp`
 - 安装 `libyaml-cpp-dev`。
-- 重新 `colcon build --packages-select wheeltec_inventory_system`。
+- 重新 `colcon build --packages-select agv_inventory_system`。
 
 3) 启动任务后提示路线配置文件不存在
 - 查 `/mission_manager_node route_waypoints_file`。

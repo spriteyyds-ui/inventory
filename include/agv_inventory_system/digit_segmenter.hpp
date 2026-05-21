@@ -6,7 +6,7 @@
 
 #include "opencv2/core.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 /**
@@ -204,6 +204,6 @@ private:
   DigitSegmenterParams params_;
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__DIGIT_SEGMENTER_HPP_

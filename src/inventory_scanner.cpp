@@ -1,11 +1,11 @@
-#include "wheeltec_inventory_system/inventory_scanner.hpp"
+#include "agv_inventory_system/inventory_scanner.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <sstream>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 void InventoryScanner::configure(const InventoryScannerConfig & config)
@@ -116,4 +116,4 @@ void InventoryScanner::reset()
   start_time_ = Clock::time_point{};
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

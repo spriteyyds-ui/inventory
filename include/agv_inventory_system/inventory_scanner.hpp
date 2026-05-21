@@ -4,7 +4,7 @@
 #include <chrono>
 #include <string>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 struct InventoryScannerConfig
@@ -44,6 +44,6 @@ private:
   Clock::time_point start_time_{};
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__INVENTORY_SCANNER_HPP_
