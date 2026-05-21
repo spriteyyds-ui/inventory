@@ -1,6 +1,20 @@
-# wheeltec_inventory_system
+# agv_inventory_system
 
 基于 ROS2 Humble 的无人车自动盘库功能包（C++）。
+
+## 目录结构
+
+- `src/`：C++ ROS2 节点和核心实现。
+- `include/agv_inventory_system/`：本包 C++ 头文件。
+- `scripts/`：运行时 Python 节点和现场 GUI，例如盘库操作 GUI、自动回充节点、升降杆控制节点。
+- `tools/`：离线工具、维护工具和人工测试工具，不作为运行时节点安装。
+- `tools/digit_recognition/`：数字识别模型的离线数据生成、训练和测试工具目录；后续可放 `generate_training_data.py`、`train_model.py`、`test_model.py`。
+- `models/`：运行时模型文件，例如 `digit_cnn.onnx`。
+- `config/`：ROS2 参数、路线点、仓库布局和间隙扫描配置。
+- `launch/`：系统启动文件。
+- `srv/` 和 `msg/`：自定义服务和消息接口。
+- `docs/`：调试手册、运行命令和项目文档。
+- `test/`：当前 CMake 使用的测试/离线 C++ 源码。
 
 ## 当前节点架构
 
@@ -56,7 +70,7 @@
 ```bash
 cd ~/wheeltec_ros2
 source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select wheeltec_inventory_system
+colcon build --symlink-install --packages-select agv_inventory_system
 source install/setup.bash
 ```
 
@@ -65,13 +79,13 @@ source install/setup.bash
 - 启动完整系统：
 
 ```bash
-ros2 launch wheeltec_inventory_system inventory_system.launch.py
+ros2 launch agv_inventory_system inventory_system.launch.py
 ```
 
 - 仅启动识别节点：
 
 ```bash
-ros2 launch wheeltec_inventory_system recognizer.launch.py
+ros2 launch agv_inventory_system recognizer.launch.py
 ```
 
 ## 任务控制
@@ -79,13 +93,13 @@ ros2 launch wheeltec_inventory_system recognizer.launch.py
 - 启动任务（单目标）：
 
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: false}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: ['2-3-1-2'], return_home: false}"
 ```
 
 - 启动任务（多目标）：
 
 ```bash
-ros2 service call /inventory/start_mission wheeltec_inventory_system/srv/StartMission "{targets: ['2-3-1-2', '2-16-2-3'], return_home: true}"
+ros2 service call /inventory/start_mission agv_inventory_system/srv/StartMission "{targets: ['2-3-1-2', '2-16-2-3'], return_home: true}"
 ```
 
 - 取消任务（立即停车并返回初始位置）：

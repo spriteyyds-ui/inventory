@@ -5,11 +5,11 @@
 #include <vector>
 
 #include "opencv2/core.hpp"
-#include "wheeltec_inventory_system/a4_detector.hpp"
-#include "wheeltec_inventory_system/digit_classifier.hpp"
-#include "wheeltec_inventory_system/digit_segmenter.hpp"
+#include "agv_inventory_system/a4_detector.hpp"
+#include "agv_inventory_system/digit_classifier.hpp"
+#include "agv_inventory_system/digit_segmenter.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 /**
@@ -49,6 +49,6 @@ struct NumberRecognizerResult
   cv::Mat visualization;
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__NUMBER_RECOGNIZER_HPP_

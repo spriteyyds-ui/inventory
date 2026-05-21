@@ -1,8 +1,8 @@
-#include "wheeltec_inventory_system/web_api_client.hpp"
+#include "agv_inventory_system/web_api_client.hpp"
 
 #include <iostream>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 WebApiClient::WebApiClient(const WebApiClientParams & params)
@@ -79,4 +79,4 @@ bool WebApiClient::warnRealHttpNotImplemented(const std::string & action) const
   return false;
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

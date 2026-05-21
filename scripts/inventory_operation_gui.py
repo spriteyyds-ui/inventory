@@ -7,8 +7,8 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, Float32, Int8, Int32, String, UInt8
 from std_srvs.srv import Trigger
-from wheeltec_inventory_system.msg import LiftState, RecognizedNumber
-from wheeltec_inventory_system.srv import LiftMoveTimed, StartMission
+from agv_inventory_system.msg import LiftState, RecognizedNumber
+from agv_inventory_system.srv import LiftMoveTimed, StartMission
 
 
 REFRESH_PERIOD_MS = 200

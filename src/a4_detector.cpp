@@ -1,4 +1,4 @@
-#include "wheeltec_inventory_system/a4_detector.hpp"
+#include "agv_inventory_system/a4_detector.hpp"
 
 #include <algorithm>
 #include <array>
@@ -9,7 +9,7 @@
 
 #include "opencv2/imgproc.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 A4Detector::A4Detector(const A4DetectorParams & params)
@@ -226,4 +226,4 @@ double A4Detector::point_distance(const cv::Point2f & a, const cv::Point2f & b)
   return std::sqrt(dx * dx + dy * dy);
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

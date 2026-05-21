@@ -3,7 +3,7 @@
 
 #include <string>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 struct WebApiClientParams
@@ -40,6 +40,6 @@ private:
   WebApiClientParams params_;
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__WEB_API_CLIENT_HPP_

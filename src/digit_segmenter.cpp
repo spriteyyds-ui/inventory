@@ -1,4 +1,4 @@
-#include "wheeltec_inventory_system/digit_segmenter.hpp"
+#include "agv_inventory_system/digit_segmenter.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,7 @@
 
 #include "opencv2/imgproc.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 namespace
 {
@@ -1039,4 +1039,4 @@ cv::Mat DigitSegmenter::normalize_digit_to_canvas(const cv::Mat & binary_digit, 
   return canvas;
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

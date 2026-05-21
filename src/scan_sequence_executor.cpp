@@ -1,10 +1,10 @@
-#include "wheeltec_inventory_system/scan_sequence_executor.hpp"
+#include "agv_inventory_system/scan_sequence_executor.hpp"
 
 #include <chrono>
 #include <iostream>
 #include <thread>
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 ScanSequenceExecutor::ScanSequenceExecutor(const ScanExecutionParams & params)
@@ -78,4 +78,4 @@ void ScanSequenceExecutor::sleepSeconds(double seconds)
   std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

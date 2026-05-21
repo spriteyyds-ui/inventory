@@ -194,7 +194,7 @@ gap_detector_node:
     detect_cycle_timeout_sec: 2.5                                       # WAITING_GAP 单轮检测周期超时，单位 s；调大会等待更久，调小更快进入调整
 
     enable_csv_log: true                                                # 是否输出 CSV 调试日志；开启便于分析但会写入磁盘
-    csv_log_dir: /tmp/wheeltec_inventory_gap_logs                       # CSV 调试日志目录；改动会改变日志保存位置
+    csv_log_dir: /tmp/agv_inventory_gap_logs                       # CSV 调试日志目录；改动会改变日志保存位置
     csv_file_prefix: gap_debug                                          # CSV 调试日志文件名前缀；改动便于区分不同实验
 
 inventory_auto_recharger:

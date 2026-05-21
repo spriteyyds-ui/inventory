@@ -7,7 +7,7 @@
 
 #include "opencv2/core.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 /**
@@ -84,6 +84,6 @@ private:
   A4DetectorParams params_;
 };
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system
 
 #endif  // WHEELTEC_INVENTORY_SYSTEM__A4_DETECTOR_HPP_

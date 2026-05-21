@@ -1,4 +1,4 @@
-#include "wheeltec_inventory_system/digit_classifier.hpp"
+#include "agv_inventory_system/digit_classifier.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,7 @@
 
 #include "opencv2/imgproc.hpp"
 
-namespace wheeltec_inventory_system
+namespace agv_inventory_system
 {
 
 DigitClassifier::DigitClassifier(const DigitClassifierParams & params)
@@ -228,4 +228,4 @@ std::vector<float> DigitClassifier::to_probabilities(const cv::Mat & output)
   return values;
 }
 
-}  // namespace wheeltec_inventory_system
+}  // namespace agv_inventory_system

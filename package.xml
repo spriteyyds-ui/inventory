@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>wheeltec_inventory_system</name>
+  <name>agv_inventory_system</name>
   <version>0.0.2</version>
   <description>ROS2 无人车自动盘库系统功能包（走廊跟随、数字识别、距离估算、间隙检测、任务管理）</description>
 
-  <maintainer email="wheeltec@todo.todo">wheeltec</maintainer>
+  <maintainer email="agv_inventory@todo.todo">AGV Inventory Team</maintainer>
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>

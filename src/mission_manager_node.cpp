@@ -34,14 +34,14 @@
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2_ros/buffer.h"
 #include "tf2_ros/transform_listener.h"
-#include "wheeltec_inventory_system/id_utils.hpp"
-#include "wheeltec_inventory_system/inventory_scanner.hpp"
-#include "wheeltec_inventory_system/msg/gap_status.hpp"
-#include "wheeltec_inventory_system/msg/recognized_number.hpp"
-#include "wheeltec_inventory_system/scan_sequence_generator.hpp"
-#include "wheeltec_inventory_system/srv/lift_move_timed.hpp"
-#include "wheeltec_inventory_system/srv/start_mission.hpp"
-#include "wheeltec_inventory_system/web_api_client.hpp"
+#include "agv_inventory_system/id_utils.hpp"
+#include "agv_inventory_system/inventory_scanner.hpp"
+#include "agv_inventory_system/msg/gap_status.hpp"
+#include "agv_inventory_system/msg/recognized_number.hpp"
+#include "agv_inventory_system/scan_sequence_generator.hpp"
+#include "agv_inventory_system/srv/lift_move_timed.hpp"
+#include "agv_inventory_system/srv/start_mission.hpp"
+#include "agv_inventory_system/web_api_client.hpp"
 #include "yaml-cpp/yaml.h"
 
 class MissionManagerNode : public rclcpp::Node
@@ -462,10 +462,10 @@ public:
     web_result_endpoint_ =
       declare_parameter<std::string>("web_result_endpoint", "/api/inventory/result");
 
-    recognized_sub_ = create_subscription<wheeltec_inventory_system::msg::RecognizedNumber>(
+    recognized_sub_ = create_subscription<agv_inventory_system::msg::RecognizedNumber>(
       recognized_topic_,
       10,
-      [this](const wheeltec_inventory_system::msg::RecognizedNumber::SharedPtr msg) {
+      [this](const agv_inventory_system::msg::RecognizedNumber::SharedPtr msg) {
         recognized_callback(msg);
       });
 
@@ -477,10 +477,10 @@ public:
         has_distance_ = std::isfinite(latest_distance_) && latest_distance_ > 0.0;
       });
 
-    gap_sub_ = create_subscription<wheeltec_inventory_system::msg::GapStatus>(
+    gap_sub_ = create_subscription<agv_inventory_system::msg::GapStatus>(
       gap_topic_,
       10,
-      [this](const wheeltec_inventory_system::msg::GapStatus::SharedPtr msg) {
+      [this](const agv_inventory_system::msg::GapStatus::SharedPtr msg) {
         latest_gap_ = *msg;
       });
 
@@ -488,7 +488,7 @@ public:
       auto_recharge_status_topic_,
       10,
       [this](const std_msgs::msg::String::SharedPtr msg) {
-        latest_auto_recharge_status_ = wheeltec_inventory_system::trim(msg->data);
+        latest_auto_recharge_status_ = agv_inventory_system::trim(msg->data);
         latest_auto_recharge_status_time_ = this->now();
       });
 
@@ -579,11 +579,11 @@ public:
     distance_estimator_enable_pub_ =
       create_publisher<std_msgs::msg::Bool>(distance_estimator_enable_topic_, control_qos);
 
-    start_srv_ = create_service<wheeltec_inventory_system::srv::StartMission>(
+    start_srv_ = create_service<agv_inventory_system::srv::StartMission>(
       start_service_name_,
       [this](
-        const std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Request> request,
-        std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Response> response) {
+        const std::shared_ptr<agv_inventory_system::srv::StartMission::Request> request,
+        std::shared_ptr<agv_inventory_system::srv::StartMission::Response> response) {
         start_service_callback(request, response);
       });
 
@@ -641,11 +641,11 @@ public:
       inventory_auto_recharge_start_service_name_);
     inventory_auto_recharge_cancel_client_ = create_client<std_srvs::srv::Trigger>(
       inventory_auto_recharge_cancel_service_name_);
-    lift_up_client_ = create_client<wheeltec_inventory_system::srv::LiftMoveTimed>(
+    lift_up_client_ = create_client<agv_inventory_system::srv::LiftMoveTimed>(
       lift_up_service_name_);
-    lift_down_client_ = create_client<wheeltec_inventory_system::srv::LiftMoveTimed>(
+    lift_down_client_ = create_client<agv_inventory_system::srv::LiftMoveTimed>(
       lift_down_service_name_);
-    lift_home_client_ = create_client<wheeltec_inventory_system::srv::LiftMoveTimed>(
+    lift_home_client_ = create_client<agv_inventory_system::srv::LiftMoveTimed>(
       lift_home_service_name_);
     lift_stop_client_ = create_client<std_srvs::srv::Trigger>(lift_stop_service_name_);
     lift_all_off_client_ = create_client<std_srvs::srv::Trigger>(lift_all_off_service_name_);
@@ -1080,7 +1080,7 @@ private:
 
   static bool try_normalize_entry_side(std::string side, std::string & normalized)
   {
-    side = wheeltec_inventory_system::trim(side);
+    side = agv_inventory_system::trim(side);
     std::transform(side.begin(), side.end(), side.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
     });
@@ -1107,7 +1107,7 @@ private:
 
   static std::string normalize_finish_return_mode(std::string mode)
   {
-    mode = wheeltec_inventory_system::trim(mode);
+    mode = agv_inventory_system::trim(mode);
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
     });
@@ -1129,7 +1129,7 @@ private:
 
   static bool try_parse_search_direction(std::string direction, SearchDirection & parsed)
   {
-    direction = wheeltec_inventory_system::trim(direction);
+    direction = agv_inventory_system::trim(direction);
     std::transform(direction.begin(), direction.end(), direction.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
     });
@@ -1437,7 +1437,7 @@ private:
 
     try {
       const auto share_dir =
-        std::filesystem::path(ament_index_cpp::get_package_share_directory("wheeltec_inventory_system"));
+        std::filesystem::path(ament_index_cpp::get_package_share_directory("agv_inventory_system"));
       const auto share_candidate = share_dir / path;
       if (std::filesystem::exists(share_candidate)) {
         return share_candidate;
@@ -1451,7 +1451,7 @@ private:
       return cwd_candidate;
     }
     const auto source_candidate =
-      std::filesystem::current_path() / "src" / "wheeltec_inventory_system" / path;
+      std::filesystem::current_path() / "src" / "agv_inventory_system" / path;
     if (std::filesystem::exists(source_candidate)) {
       return source_candidate;
     }
@@ -1460,7 +1460,7 @@ private:
 
   void apply_inventory_runtime_params()
   {
-    wheeltec_inventory_system::InventoryScannerConfig scanner_config;
+    agv_inventory_system::InventoryScannerConfig scanner_config;
     scanner_config.enabled = scanner_enabled_;
     scanner_config.scan_duration_sec = std::max(0.0, scan_duration_sec_);
     scanner_config.scan_timeout_sec = std::max(scanner_config.scan_duration_sec, scan_timeout_sec_);
@@ -1472,7 +1472,7 @@ private:
     lift_down_duration_sec_ = std::max(0.0, lift_down_duration_sec_);
     lift_service_timeout_sec_ = std::max(0.1, lift_service_timeout_sec_);
 
-    wheeltec_inventory_system::WebApiClientParams web_params;
+    agv_inventory_system::WebApiClientParams web_params;
     web_params.web_client_mode = web_client_mode_;
     web_params.web_base_url = web_base_url_;
     web_params.web_open_gap_endpoint = web_open_gap_endpoint_;
@@ -1753,7 +1753,7 @@ private:
           for (const auto map_item : map_root) {
             int cabinet_id = -1;
             const std::string cabinet_text = map_item.first.as<std::string>();
-            if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
+            if (!agv_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
               reason = map_name + " 货柜号非法: " + cabinet_text;
               return false;
             }
@@ -1814,7 +1814,7 @@ private:
         for (const auto map_item : cabinet_gap_search_direction_root) {
           int cabinet_id = -1;
           const std::string cabinet_text = map_item.first.as<std::string>();
-          if (!wheeltec_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
+          if (!agv_inventory_system::safe_to_int(cabinet_text, cabinet_id)) {
             reason = "cabinet_gap_search_direction_map 货柜号非法: " + cabinet_text;
             return false;
           }
@@ -2864,7 +2864,7 @@ private:
 
   bool auto_recharge_status_active_for_depart() const
   {
-    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    const std::string status = agv_inventory_system::trim(latest_auto_recharge_status_);
     return status == "STARTING" ||
       status == "NAVIGATING" ||
       status == "DOCKING" ||
@@ -2874,7 +2874,7 @@ private:
 
   bool auto_recharge_status_released_for_depart() const
   {
-    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    const std::string status = agv_inventory_system::trim(latest_auto_recharge_status_);
     return status.empty() || status == "CANCELED" || status == "IDLE";
   }
 
@@ -3215,15 +3215,15 @@ private:
     target = TargetMetadata{};
     reason.clear();
 
-    const std::string cleaned = wheeltec_inventory_system::trim(code);
+    const std::string cleaned = agv_inventory_system::trim(code);
     if (cleaned.empty()) {
       reason = "目标编号为空";
       return false;
     }
 
-    const auto items = wheeltec_inventory_system::split(cleaned, '-');
+    const auto items = agv_inventory_system::split(cleaned, '-');
     if (items.size() == 1U) {
-      if (!wheeltec_inventory_system::safe_to_int(items[0], target.cabinet_id)) {
+      if (!agv_inventory_system::safe_to_int(items[0], target.cabinet_id)) {
         reason = "目标编号格式非法: " + code;
         return false;
       }
@@ -3239,16 +3239,16 @@ private:
 
     if (items.size() == 3U || items.size() == 4U) {
       int warehouse_id = 0;
-      if (!wheeltec_inventory_system::safe_to_int(items[0], warehouse_id) ||
-        !wheeltec_inventory_system::safe_to_int(items[1], target.cabinet_id) ||
-        !wheeltec_inventory_system::safe_to_int(items[2], target.level_index))
+      if (!agv_inventory_system::safe_to_int(items[0], warehouse_id) ||
+        !agv_inventory_system::safe_to_int(items[1], target.cabinet_id) ||
+        !agv_inventory_system::safe_to_int(items[2], target.level_index))
       {
         reason = "目标编号格式非法: " + code;
         return false;
       }
 
       if (items.size() == 4U) {
-        if (!wheeltec_inventory_system::safe_to_int(items[3], target.depth_index)) {
+        if (!agv_inventory_system::safe_to_int(items[3], target.depth_index)) {
           reason = "目标 depth_index 非法: " + code;
           return false;
         }
@@ -3573,7 +3573,7 @@ private:
   }
 
   void recognized_callback(
-    const wheeltec_inventory_system::msg::RecognizedNumber::SharedPtr msg)
+    const agv_inventory_system::msg::RecognizedNumber::SharedPtr msg)
   {
     latest_recognition_ = msg;
     latest_recognition_time_ = this->now();
@@ -3602,7 +3602,7 @@ private:
     }
 
     int rec_id = -1;
-    if (!wheeltec_inventory_system::safe_to_int(msg->number, rec_id)) {
+    if (!agv_inventory_system::safe_to_int(msg->number, rec_id)) {
       return;
     }
 
@@ -4704,7 +4704,7 @@ private:
   bool validate_inventory_gap_plan(const InventoryGapPlan & plan, std::string & reason) const
   {
     reason.clear();
-    if (wheeltec_inventory_system::trim(plan.gap_id).empty()) {
+    if (agv_inventory_system::trim(plan.gap_id).empty()) {
       reason = "gap_id 为空";
       return false;
     }
@@ -4881,7 +4881,7 @@ private:
   }
 
   std::vector<int> full_inventory_sequence_from_request(
-    const wheeltec_inventory_system::srv::StartMission::Request & request) const
+    const agv_inventory_system::srv::StartMission::Request & request) const
   {
     std::vector<int> sequence;
     for (const auto cabinet_id : request.scan_cabinets) {
@@ -4903,7 +4903,7 @@ private:
   }
 
   bool should_start_full_inventory(
-    const wheeltec_inventory_system::srv::StartMission::Request & request) const
+    const agv_inventory_system::srv::StartMission::Request & request) const
   {
     if (!full_inventory_enabled_) {
       return false;
@@ -4911,7 +4911,7 @@ private:
     if (request.run_full_inventory) {
       return true;
     }
-    const bool gap_empty = wheeltec_inventory_system::trim(request.target_gap).empty();
+    const bool gap_empty = agv_inventory_system::trim(request.target_gap).empty();
     return gap_empty && (request.scan_cabinets.size() > 1U || request.targets.size() > 1U);
   }
 
@@ -5830,13 +5830,13 @@ private:
 
   bool auto_recharge_status_is_ready() const
   {
-    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    const std::string status = agv_inventory_system::trim(latest_auto_recharge_status_);
     return status == "CHARGING" || status == "COMPLETE";
   }
 
   bool auto_recharge_status_is_failure() const
   {
-    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    const std::string status = agv_inventory_system::trim(latest_auto_recharge_status_);
     return status == "FAILED" || status == "CANCELED";
   }
 
@@ -6142,7 +6142,7 @@ private:
     if (!single_cabinet_side_row_enabled_ || run_full_inventory) {
       return false;
     }
-    if (wheeltec_inventory_system::trim(gap_id) != single_cabinet_side_row_first_gap_) {
+    if (agv_inventory_system::trim(gap_id) != single_cabinet_side_row_first_gap_) {
       return false;
     }
     return is_side_row_sequence_request(scan_cabinets);
@@ -6195,7 +6195,7 @@ private:
     if (run_full_inventory) {
       return false;
     }
-    if (wheeltec_inventory_system::trim(gap_id) != single_cabinet_motion_target_gap_) {
+    if (agv_inventory_system::trim(gap_id) != single_cabinet_motion_target_gap_) {
       return false;
     }
     if (scan_cabinets.size() != 1U) {
@@ -6290,7 +6290,7 @@ private:
     single_cabinet_grid_move_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     single_cabinet_grid_move_target_distance_ = 0.0;
     single_cabinet_grid_move_cmd_speed_ = 0.0;
-    single_cabinet_grid_move_step_ = wheeltec_inventory_system::ScanStep{};
+    single_cabinet_grid_move_step_ = agv_inventory_system::ScanStep{};
     single_cabinet_grid_move_start_pose_ = Pose2D{};
     inventory_scanner_.reset();
     reset_lift_runtime();
@@ -6351,7 +6351,7 @@ private:
   }
 
   bool inventory_device_step_started(
-    const wheeltec_inventory_system::ScanStep & step,
+    const agv_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode)
   {
     if (single_cabinet_scan_step_start_time_.nanoseconds() != 0) {
@@ -6360,9 +6360,9 @@ private:
 
     single_cabinet_scan_step_start_time_ = this->now();
     const std::string step_type =
-      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type);
+      agv_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type);
     std::string action_text = "device action";
-    if (step.step_type == wheeltec_inventory_system::ScanStepType::SCAN_GRID) {
+    if (step.step_type == agv_inventory_system::ScanStepType::SCAN_GRID) {
       action_text = "scan grid";
       if (!inventory_scanner_.start_grid_scan(
           step.cabinet_id,
@@ -6373,13 +6373,13 @@ private:
         fail_in_gap_scan_runtime(mode, "启动扫描失败");
         return true;
       }
-    } else if (step.step_type == wheeltec_inventory_system::ScanStepType::MOVE_LIFT_TO_LEVEL) {
+    } else if (step.step_type == agv_inventory_system::ScanStepType::MOVE_LIFT_TO_LEVEL) {
       action_text = "move lift to level";
       if (!start_lift_step(step, mode)) {
         fail_in_gap_scan_runtime(mode, "启动升降杆失败");
         return true;
       }
-    } else if (step.step_type == wheeltec_inventory_system::ScanStepType::MOVE_LIFT_HOME) {
+    } else if (step.step_type == agv_inventory_system::ScanStepType::MOVE_LIFT_HOME) {
       action_text = "move lift home";
       if (!start_lift_step(step, mode)) {
         fail_in_gap_scan_runtime(mode, "启动升降杆回原点失败");
@@ -6412,14 +6412,14 @@ private:
   {
     lift_step_active_ = false;
     lift_step_future_ =
-      std::shared_future<wheeltec_inventory_system::srv::LiftMoveTimed::Response::SharedPtr>();
+      std::shared_future<agv_inventory_system::srv::LiftMoveTimed::Response::SharedPtr>();
     lift_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     lift_step_service_name_.clear();
     lift_step_description_.clear();
   }
 
   bool start_lift_step(
-    const wheeltec_inventory_system::ScanStep & step,
+    const agv_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode)
   {
     (void)mode;
@@ -6428,15 +6428,15 @@ private:
       RCLCPP_INFO(
         get_logger(),
         "[mission_manager][lift] disabled, skip step=%s layer=%d",
-        wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+        agv_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
         step.layer_index);
       return true;
     }
 
-    rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr client;
+    rclcpp::Client<agv_inventory_system::srv::LiftMoveTimed>::SharedPtr client;
     double duration_sec = lift_up_duration_sec_;
     std::string direction = "up";
-    if (step.step_type == wheeltec_inventory_system::ScanStepType::MOVE_LIFT_HOME) {
+    if (step.step_type == agv_inventory_system::ScanStepType::MOVE_LIFT_HOME) {
       client = lift_home_client_;
       duration_sec = lift_down_duration_sec_;
       direction = "down";
@@ -6458,7 +6458,7 @@ private:
       return false;
     }
 
-    auto request = std::make_shared<wheeltec_inventory_system::srv::LiftMoveTimed::Request>();
+    auto request = std::make_shared<agv_inventory_system::srv::LiftMoveTimed::Request>();
     request->direction = direction;
     request->duration_sec = static_cast<float>(std::max(0.0, duration_sec));
     lift_step_future_ = client->async_send_request(request).share();
@@ -6470,13 +6470,13 @@ private:
       lift_step_service_name_.c_str(),
       direction.c_str(),
       duration_sec,
-      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+      agv_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
       step.layer_index);
     return true;
   }
 
   bool check_lift_step_finished(
-    const wheeltec_inventory_system::ScanStep & step,
+    const agv_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode)
   {
     if (!lift_enabled_ || !lift_step_active_) {
@@ -6513,7 +6513,7 @@ private:
       get_logger(),
       "[mission_manager][lift] finished %s step=%s layer=%d height=%.3f message=%s",
       lift_step_description_.c_str(),
-      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
+      agv_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str(),
       step.layer_index,
       response->estimated_height_m,
       response->message.c_str());
@@ -6551,13 +6551,13 @@ private:
   }
 
   bool execute_inventory_device_step(
-    const wheeltec_inventory_system::ScanStep & step,
+    const agv_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
     const bool already_started = inventory_device_step_started(step, mode);
     (void)already_started;
 
-    if (step.step_type == wheeltec_inventory_system::ScanStepType::SCAN_GRID) {
+    if (step.step_type == agv_inventory_system::ScanStepType::SCAN_GRID) {
       inventory_scanner_.update();
       if (!inventory_scanner_.is_scan_finished()) {
         return false;
@@ -6599,12 +6599,12 @@ private:
       step.cabinet_id,
       step.layer_index,
       step.depth_index,
-      wheeltec_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str());
+      agv_inventory_system::ScanSequenceGenerator::stepTypeToString(step.step_type).c_str());
     single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     return true;
   }
 
-  bool single_cabinet_grid_move_step_matches(const wheeltec_inventory_system::ScanStep & step) const
+  bool single_cabinet_grid_move_step_matches(const agv_inventory_system::ScanStep & step) const
   {
     return
       single_cabinet_grid_move_step_.cabinet_id == step.cabinet_id &&
@@ -6614,7 +6614,7 @@ private:
   }
 
   bool execute_single_cabinet_grid_move_step(
-    const wheeltec_inventory_system::ScanStep & step,
+    const agv_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
     if (!single_cabinet_grid_motion_enabled_) {
@@ -6893,14 +6893,14 @@ private:
     const auto & step = single_cabinet_scan_steps_[single_cabinet_scan_step_index_];
     bool step_done = false;
     switch (step.step_type) {
-      case wheeltec_inventory_system::ScanStepType::MOVE_TO_GRID:
+      case agv_inventory_system::ScanStepType::MOVE_TO_GRID:
         step_done = execute_single_cabinet_grid_move_step(step, mode);
         break;
-      case wheeltec_inventory_system::ScanStepType::SCAN_GRID:
+      case agv_inventory_system::ScanStepType::SCAN_GRID:
         step_done = execute_inventory_device_step(step, mode);
         break;
-      case wheeltec_inventory_system::ScanStepType::MOVE_LIFT_TO_LEVEL:
-      case wheeltec_inventory_system::ScanStepType::MOVE_LIFT_HOME:
+      case agv_inventory_system::ScanStepType::MOVE_LIFT_TO_LEVEL:
+      case agv_inventory_system::ScanStepType::MOVE_LIFT_HOME:
         step_done = execute_inventory_device_step(step, mode);
         break;
     }
@@ -7591,7 +7591,7 @@ private:
   }
 
   std::vector<int> scan_cabinets_from_request(
-    const wheeltec_inventory_system::srv::StartMission::Request & request) const
+    const agv_inventory_system::srv::StartMission::Request & request) const
   {
     std::vector<int> cabinets;
     for (const auto cabinet_id : request.scan_cabinets) {
@@ -7613,15 +7613,15 @@ private:
   }
 
   bool request_contains_formal_inventory_fields(
-    const wheeltec_inventory_system::srv::StartMission::Request & request) const
+    const agv_inventory_system::srv::StartMission::Request & request) const
   {
     return request.run_full_inventory ||
-      !wheeltec_inventory_system::trim(request.target_gap).empty() ||
+      !agv_inventory_system::trim(request.target_gap).empty() ||
       !request.scan_cabinets.empty();
   }
 
   bool start_single_cabinet_inventory_from_request(
-    const wheeltec_inventory_system::srv::StartMission::Request & request,
+    const agv_inventory_system::srv::StartMission::Request & request,
     std::string & message)
   {
     message.clear();
@@ -7630,7 +7630,7 @@ private:
       return false;
     }
 
-    std::string gap_id = wheeltec_inventory_system::trim(request.target_gap);
+    std::string gap_id = agv_inventory_system::trim(request.target_gap);
     std::vector<int> scan_cabinets = scan_cabinets_from_request(request);
     if (scan_cabinets.empty() && request.targets.size() == 1U) {
       int cabinet_id = -1;
@@ -7716,8 +7716,8 @@ private:
   }
 
   void start_service_callback(
-    const std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Request> request,
-    std::shared_ptr<wheeltec_inventory_system::srv::StartMission::Response> response)
+    const std::shared_ptr<agv_inventory_system::srv::StartMission::Request> request,
+    std::shared_ptr<agv_inventory_system::srv::StartMission::Response> response)
   {
     if (state_ == State::AUTO_RECHARGING) {
       response->accepted = false;
@@ -8186,7 +8186,7 @@ private:
       return;
     }
 
-    latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
+    latest_gap_ = agv_inventory_system::msg::GapStatus{};
     search_gap_start_ = this->now();
     reset_segment_distance();
     publish_entry_side();
@@ -8215,7 +8215,7 @@ private:
 
   void begin_waiting_gap_confirmation_flow(const std::string & detail)
   {
-    latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
+    latest_gap_ = agv_inventory_system::msg::GapStatus{};
     set_wait_gap_phase(WaitGapPhase::STOP_BEFORE_DETECT);
     publish_entry_side();
     if (full_inventory_active_) {
@@ -8235,7 +8235,7 @@ private:
   {
     wait_gap_motion_target_distance_ = std::abs(post_track_retreat_distance_);
     wait_gap_motion_direction_ = post_track_retreat_distance_ >= 0.0 ? -1.0 : 1.0;
-    latest_gap_ = wheeltec_inventory_system::msg::GapStatus{};
+    latest_gap_ = agv_inventory_system::msg::GapStatus{};
     reset_segment_distance();
     set_wait_gap_phase(WaitGapPhase::RETREATING);
     publish_entry_side();
@@ -10021,7 +10021,7 @@ private:
   rclcpp::Time single_cabinet_exit_start_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time single_cabinet_exit_phase_start_time_{0, 0, RCL_ROS_TIME};
   SingleCabinetExitPhase single_cabinet_exit_phase_{SingleCabinetExitPhase::STRAIGHT_REVERSE};
-  std::vector<wheeltec_inventory_system::ScanStep> single_cabinet_scan_steps_;
+  std::vector<agv_inventory_system::ScanStep> single_cabinet_scan_steps_;
   std::size_t single_cabinet_scan_step_index_{0};
   int single_cabinet_scan_cabinet_{-1};
   bool single_cabinet_scan_active_{false};
@@ -10031,14 +10031,14 @@ private:
   int single_cabinet_grid_previous_layer_{-1};
   int single_cabinet_grid_previous_depth_{-1};
   bool single_cabinet_grid_move_active_{false};
-  wheeltec_inventory_system::ScanStep single_cabinet_grid_move_step_;
+  agv_inventory_system::ScanStep single_cabinet_grid_move_step_;
   Pose2D single_cabinet_grid_move_start_pose_;
   rclcpp::Time single_cabinet_grid_move_start_time_{0, 0, RCL_ROS_TIME};
   double single_cabinet_grid_move_target_distance_{0.0};
   double single_cabinet_grid_move_cmd_speed_{0.0};
   bool lift_step_active_{false};
   rclcpp::Time lift_step_start_time_{0, 0, RCL_ROS_TIME};
-  std::shared_future<wheeltec_inventory_system::srv::LiftMoveTimed::Response::SharedPtr>
+  std::shared_future<agv_inventory_system::srv::LiftMoveTimed::Response::SharedPtr>
   lift_step_future_;
   std::string lift_step_service_name_;
   std::string lift_step_description_;
@@ -10066,9 +10066,9 @@ private:
     FullInventoryRecognitionFallbackPhase::IDLE};
   std::size_t full_inventory_recognition_fallback_index_{0};
   rclcpp::Time full_inventory_post_gap_advance_start_{0, 0, RCL_ROS_TIME};
-  wheeltec_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
-  wheeltec_inventory_system::InventoryScanner inventory_scanner_;
-  wheeltec_inventory_system::WebApiClient web_api_client_;
+  agv_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
+  agv_inventory_system::InventoryScanner inventory_scanner_;
+  agv_inventory_system::WebApiClient web_api_client_;
 
   State state_{State::IDLE};
   ReturnMode return_mode_{ReturnMode::NONE};
@@ -10127,8 +10127,8 @@ private:
   rclcpp::Time target_recognition_first_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time target_recognition_last_time_{0, 0, RCL_ROS_TIME};
 
-  wheeltec_inventory_system::msg::GapStatus latest_gap_;
-  wheeltec_inventory_system::msg::RecognizedNumber::SharedPtr latest_recognition_;
+  agv_inventory_system::msg::GapStatus latest_gap_;
+  agv_inventory_system::msg::RecognizedNumber::SharedPtr latest_recognition_;
   rclcpp::Time latest_recognition_time_{0, 0, RCL_ROS_TIME};
   nav_msgs::msg::Odometry::SharedPtr latest_odom_;
   sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
@@ -10176,9 +10176,9 @@ private:
   std::vector<double> ultrasonic_ranges_;
   std::vector<rclcpp::Time> ultrasonic_stamps_;
 
-  rclcpp::Subscription<wheeltec_inventory_system::msg::RecognizedNumber>::SharedPtr recognized_sub_;
+  rclcpp::Subscription<agv_inventory_system::msg::RecognizedNumber>::SharedPtr recognized_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr distance_sub_;
-  rclcpp::Subscription<wheeltec_inventory_system::msg::GapStatus>::SharedPtr gap_sub_;
+  rclcpp::Subscription<agv_inventory_system::msg::GapStatus>::SharedPtr gap_sub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr auto_recharge_status_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr auto_recharge_charging_flag_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr auto_recharge_recharge_flag_sub_;
@@ -10200,7 +10200,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr gap_detector_enable_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr distance_estimator_enable_pub_;
 
-  rclcpp::Service<wheeltec_inventory_system::srv::StartMission>::SharedPtr start_srv_;
+  rclcpp::Service<agv_inventory_system::srv::StartMission>::SharedPtr start_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_home_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_to_charge_srv_;
@@ -10210,9 +10210,9 @@ private:
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr recognizer_trigger_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_start_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_cancel_client_;
-  rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_up_client_;
-  rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_down_client_;
-  rclcpp::Client<wheeltec_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_home_client_;
+  rclcpp::Client<agv_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_up_client_;
+  rclcpp::Client<agv_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_down_client_;
+  rclcpp::Client<agv_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_home_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr lift_stop_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr lift_all_off_client_;
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;

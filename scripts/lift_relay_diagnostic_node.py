@@ -6,8 +6,8 @@ import time
 import rclpy
 from rclpy.node import Node
 from std_srvs.srv import Trigger
-from wheeltec_inventory_system.msg import LiftState
-from wheeltec_inventory_system.srv import LiftMoveTimed
+from agv_inventory_system.msg import LiftState
+from agv_inventory_system.srv import LiftMoveTimed
 
 
 class LiftRelayDiagnosticNode(Node):

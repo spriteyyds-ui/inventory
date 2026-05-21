@@ -12,6 +12,12 @@ Makefile
 # Python
 __pycache__/
 *.pyc
+*.pth
+dataset/
+test_results/
+error_samples/
+training_curve.png
+best_model.pth
 
 # Runtime logs
 *.log

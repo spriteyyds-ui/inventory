@@ -33,7 +33,7 @@ def generate_launch_description():
     inventory_params_file_arg = DeclareLaunchArgument(
         'inventory_params_file',
         default_value=PathJoinSubstitution([
-            FindPackageShare('wheeltec_inventory_system'),
+            FindPackageShare('agv_inventory_system'),
             'config',
             'inventory_system.yaml'
         ]),
@@ -69,7 +69,7 @@ def generate_launch_description():
     )
 
     corridor_follower_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='corridor_follower_node',
         name='corridor_follower_node',
         output='screen',
@@ -126,7 +126,7 @@ def generate_launch_description():
     )
 
     number_recognizer_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='number_recognizer_node',
         name='number_recognizer_node',
         output='screen',
@@ -142,7 +142,7 @@ def generate_launch_description():
     )
 
     distance_estimator_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='distance_estimator_node',
         name='distance_estimator_node',
         output='screen',
@@ -150,7 +150,7 @@ def generate_launch_description():
     )
 
     gap_detector_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='gap_detector_node',
         name='gap_detector_node',
         output='screen',
@@ -158,7 +158,7 @@ def generate_launch_description():
     )
 
     mission_manager_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='mission_manager_node',
         name='mission_manager_node',
         output='screen',
@@ -166,7 +166,7 @@ def generate_launch_description():
     )
 
     inventory_auto_recharger_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='inventory_auto_recharger.py',
         name='inventory_auto_recharger',
         output='screen',
@@ -174,7 +174,7 @@ def generate_launch_description():
     )
 
     lift_relay_controller_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='lift_relay_controller.py',
         name='lift_relay_controller',
         output='screen',
@@ -182,7 +182,7 @@ def generate_launch_description():
     )
 
     inventory_operation_gui_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='inventory_operation_gui.py',
         name='inventory_operation_gui',
         output='screen',

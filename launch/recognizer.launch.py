@@ -17,7 +17,7 @@ def generate_launch_description():
     params_file_arg = DeclareLaunchArgument(
         'params_file',
         default_value=PathJoinSubstitution([
-            FindPackageShare('wheeltec_inventory_system'),
+            FindPackageShare('agv_inventory_system'),
             'config',
             'inventory_system.yaml'
         ]),
@@ -84,7 +84,7 @@ def generate_launch_description():
     )
 
     recognizer_node = Node(
-        package='wheeltec_inventory_system',
+        package='agv_inventory_system',
         executable='number_recognizer_node',
         name='number_recognizer_node',
         output='screen',
