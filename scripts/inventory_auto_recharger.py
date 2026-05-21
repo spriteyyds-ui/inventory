@@ -17,6 +17,7 @@ from nav_msgs.msg import Odometry
 from std_msgs.msg import Bool
 from std_msgs.msg import Float32
 from std_msgs.msg import Int8
+from std_msgs.msg import String
 from std_msgs.msg import UInt8
 from std_srvs.srv import Trigger
 from turtlesim.srv import Spawn
@@ -35,6 +36,8 @@ class InventoryAutoRecharger(Node):
             "start_service_name", "/inventory/auto_recharge/start").value
         self.cancel_service_name = self.declare_parameter(
             "cancel_service_name", "/inventory/auto_recharge/cancel").value
+        self.status_topic = self.declare_parameter(
+            "status_topic", "/inventory/auto_recharge/status").value
         self.nav2_active_wait_timeout_sec = float(self.declare_parameter(
             "nav2_active_wait_timeout_sec", 60.0).value)
         self.nav_feedback_timeout_sec = float(self.declare_parameter(
@@ -59,6 +62,7 @@ class InventoryAutoRecharger(Node):
         self.charger_marker_pub = self.create_publisher(MarkerArray, "/goal_marker", 10)
         self.recharger_flag_pub = self.create_publisher(Int8, "robot_recharge_flag", 5)
         self.cmd_vel_pub = self.create_publisher(Twist, "/cmd_vel", 5)
+        self.status_pub = self.create_publisher(String, self.status_topic, 10)
 
         self.create_subscription(Float32, "PowerVoltage", self.voltage_callback, 10)
         self.create_subscription(Bool, "robot_charging_flag", self.charging_flag_callback, 10)
@@ -77,6 +81,7 @@ class InventoryAutoRecharger(Node):
         self.recharge_thread = None
         self.stop_requested = False
         self.cancel_requested = False
+        self.status = "IDLE"
         self.nav_lock = threading.RLock()
         self.charge_control_lock = threading.RLock()
 
@@ -87,6 +92,7 @@ class InventoryAutoRecharger(Node):
         sec.data = 1
         self.robot_security_off_pub.publish(sec)
         self.cmd_vel_pub.publish(Twist())
+        self.publish_status()
         self.get_logger().info("盘库自动回充节点已启动，等待 /inventory/auto_recharge/start 请求。")
 
     robot = {
@@ -122,13 +128,20 @@ class InventoryAutoRecharger(Node):
             self.start_requested = True
             response.success = True
             response.message = "已收到自动回充请求，开始执行自动回充流程。"
+        self.set_status("STARTING")
         self.get_logger().info(response.message)
         return response
 
     def cancel_callback(self, request, response):
         del request
         with self.state_lock:
-            active = self.recharge_running or self.start_requested
+            cleanup_statuses = ("DOCKING", "CHARGING", "COMPLETE")
+            active = (
+                self.recharge_running or
+                self.start_requested or
+                self.status in cleanup_statuses or
+                self.chargeflag != 0 or
+                self.robot["Charging"] == 1)
             was_running = self.recharge_running
             if not active:
                 response.success = True
@@ -139,16 +152,20 @@ class InventoryAutoRecharger(Node):
             self.cancel_requested = True
             if self.start_requested and not self.recharge_running:
                 self.start_requested = False
+            self.status = "CANCELED"
 
-        self.shutdown_chassis_recharge_mode("取消自动回充")
+        cleanup_ok = self.shutdown_chassis_recharge_mode("取消自动回充")
+        self.publish_status()
 
         if not was_running:
             with self.state_lock:
                 self.stop_requested = False
                 self.cancel_requested = False
 
-        response.success = True
-        response.message = "已取消自动回充流程"
+        response.success = cleanup_ok
+        response.message = (
+            "已取消自动回充流程" if cleanup_ok else
+            "已请求取消自动回充，但关闭底盘回充模式失败，请现场确认。")
         self.get_logger().info(response.message)
         return response
 
@@ -156,6 +173,7 @@ class InventoryAutoRecharger(Node):
         now = time.monotonic()
         if now - self.last_marker_time >= 1.0:
             self.publish_charger_marker()
+            self.publish_status()
             self.last_marker_time = now
 
         start_thread = False
@@ -172,12 +190,25 @@ class InventoryAutoRecharger(Node):
             self.recharge_thread = threading.Thread(target=self.run_recharge_flow, daemon=True)
             self.recharge_thread.start()
 
+    def publish_status(self):
+        msg = String()
+        msg.data = self.status
+        self.status_pub.publish(msg)
+
+    def set_status(self, status):
+        if self.status != status:
+            self.status = status
+            self.get_logger().info("自动回充状态: %s" % status)
+        self.publish_status()
+
     def voltage_callback(self, topic):
         self.robot["Voltage"] = topic.data
 
     def charging_flag_callback(self, topic):
         if self.robot["Charging"] == 0 and topic.data:
             self.get_logger().info("Charging started! 已检测到开始充电。")
+            if self.recharge_running:
+                self.set_status("CHARGING")
         if self.robot["Charging"] == 1 and not topic.data:
             self.get_logger().warn("Charging disconnected! 充电连接已断开。")
         self.robot["Charging"] = 1 if topic.data else 0
@@ -407,6 +438,7 @@ class InventoryAutoRecharger(Node):
             self.get_logger().info(
                 "%s，开始底盘自动贴桩/回充：car_mode=%s，RED=%d，chargeflag=%d，/set_charge=%d。" %
                 (reason, self.robot["car_mode"], self.robot["RED"], self.chargeflag, self.chargeflag))
+            self.set_status("DOCKING")
             self.publish_recharger_flag(1)
 
     def battery_percent(self):
@@ -503,15 +535,18 @@ class InventoryAutoRecharger(Node):
             self.charge_complete = 0
             self.last_charge_complete = 0
             self.get_logger().info("已检测到充电完成，自动回充流程结束。")
+            self.set_status("COMPLETE")
             self.stop_charge()
             return True
         self.last_charge_complete = self.charge_complete
         return False
 
     def run_recharge_flow(self):
+        final_status = None
         try:
             self.log_recharge_start_context()
             if not self.wait_for_nav2_ready():
+                final_status = "FAILED"
                 return
 
             self.publish_zero_velocity()
@@ -521,8 +556,10 @@ class InventoryAutoRecharger(Node):
                 self.start_docking_by_red_signal("高强度红外直接对接")
             else:
                 self.get_logger().info("开始导航到充电桩位置。")
+                self.set_status("NAVIGATING")
                 if not self.publish_charger_position():
                     self.get_logger().error("Nav2 拒绝自动回充目标，自动回充流程终止。")
+                    final_status = "FAILED"
                     return
 
                 while rclpy.ok() and not self.should_stop_recharge():
@@ -540,6 +577,7 @@ class InventoryAutoRecharger(Node):
                                 self.start_docking_by_red_signal("已到达充电桩预停点并发现红外信号")
                             else:
                                 self.get_logger().warn("未发现红外信号，开始自转寻找。")
+                                self.set_status("DOCKING")
                                 self.nav_end_z = self.robot["Rotation_Z"]
                                 self.start_turn = 1
                                 cmd = Twist()
@@ -547,9 +585,11 @@ class InventoryAutoRecharger(Node):
                                 self.cmd_vel_pub.publish(cmd)
                         elif result == TaskResult.CANCELED:
                             self.get_logger().warn("自动回充导航任务取消：Nav2 目标被取消。")
+                            final_status = "CANCELED"
                             return
                         else:
                             self.get_logger().error("自动回充导航任务失败：Nav2 目标未成功完成。")
+                            final_status = "FAILED"
                             return
                         break
 
@@ -564,6 +604,7 @@ class InventoryAutoRecharger(Node):
                             if self.robot["RED"] == 1:
                                 self.start_docking_by_red_signal("Nav2 接近超时但已发现红外信号")
                             else:
+                                final_status = "FAILED"
                                 return
                     time.sleep(0.2)
 
@@ -582,10 +623,13 @@ class InventoryAutoRecharger(Node):
                     self.start_turn = 0
                     self.stop_charge()
                     self.get_logger().error("自转已完成，无法找到充电桩位置，已停止自动回充。")
+                    final_status = "FAILED"
                     return
 
                 if self.robot["Charging"] == 1:
+                    self.set_status("CHARGING")
                     if self.monitor_charging_complete():
+                        final_status = "COMPLETE"
                         return
                     if now - last_charge_log > 10.0:
                         last_charge_log = now
@@ -604,11 +648,16 @@ class InventoryAutoRecharger(Node):
                 self.get_logger().error("自动回充流程 ValueError 异常: %s" % exc)
             self.cancel_nav_goal()
             self.publish_zero_velocity()
+            final_status = "FAILED"
         except Exception as exc:
             self.get_logger().error("自动回充流程异常: %s，已尝试取消自动回充 Nav2 goal。" % exc)
             self.cancel_nav_goal()
             self.publish_zero_velocity()
+            final_status = "FAILED"
         finally:
+            if final_status is None:
+                final_status = "CANCELED" if self.should_stop_recharge() else "IDLE"
+            self.set_status(final_status)
             with self.state_lock:
                 self.recharge_running = False
                 self.start_requested = False
