@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <iterator>
 #include <limits>
@@ -25,6 +26,7 @@
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/float32_multi_array.hpp"
+#include "std_msgs/msg/int8.hpp"
 #include "std_msgs/msg/int32.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/set_bool.hpp"
@@ -88,6 +90,11 @@ public:
       declare_parameter<std::string>("return_home_service_name", "/inventory/return_home");
     return_to_charge_service_name_ =
       declare_parameter<std::string>("return_to_charge_service_name", "/inventory/return_to_charge");
+    safe_exit_gap_service_name_ =
+      declare_parameter<std::string>("safe_exit_gap_service_name", "/inventory/safe_exit_gap");
+    stop_auto_charge_and_depart_service_name_ =
+      declare_parameter<std::string>(
+      "stop_auto_charge_and_depart_service_name", "/inventory/stop_auto_charge_and_depart");
     inventory_auto_recharge_start_service_name_ =
       declare_parameter<std::string>(
       "inventory_auto_recharge_start_service_name", "/inventory/auto_recharge/start");
@@ -97,10 +104,36 @@ public:
     cancel_auto_recharge_service_name_ =
       declare_parameter<std::string>(
       "cancel_auto_recharge_service_name", "/inventory/cancel_auto_recharge");
+    auto_recharge_status_topic_ =
+      declare_parameter<std::string>("auto_recharge_status_topic", "/inventory/auto_recharge/status");
+    auto_recharge_charging_flag_topic_ =
+      declare_parameter<std::string>("auto_recharge_charging_flag_topic", "robot_charging_flag");
+    auto_recharge_recharge_flag_topic_ =
+      declare_parameter<std::string>("auto_recharge_recharge_flag_topic", "robot_recharge_flag");
     auto_recharge_service_timeout_sec_ =
       declare_parameter<double>("auto_recharge_service_timeout_sec", 3.0);
     auto_recharge_cancel_timeout_sec_ =
       declare_parameter<double>("auto_recharge_cancel_timeout_sec", 3.0);
+    safe_exit_gap_enabled_ = declare_parameter<bool>("safe_exit_gap_enabled", true);
+    safe_exit_gap_speed_mps_ = declare_parameter<double>("safe_exit_gap_speed_mps", 0.05);
+    safe_exit_gap_yaw_kp_ = declare_parameter<double>("safe_exit_gap_yaw_kp", 0.6);
+    safe_exit_gap_max_angular_z_ = declare_parameter<double>("safe_exit_gap_max_angular_z", 0.15);
+    safe_exit_gap_extra_clearance_m_ = declare_parameter<double>("safe_exit_gap_extra_clearance_m", 0.30);
+    safe_exit_gap_timeout_sec_ = declare_parameter<double>("safe_exit_gap_timeout_sec", 30.0);
+    stop_auto_charge_depart_distance_m_ =
+      declare_parameter<double>("stop_auto_charge_depart_distance_m", 0.5);
+    stop_auto_charge_depart_speed_mps_ =
+      declare_parameter<double>("stop_auto_charge_depart_speed_mps", 0.05);
+    stop_auto_charge_depart_yaw_kp_ =
+      declare_parameter<double>("stop_auto_charge_depart_yaw_kp", 0.6);
+    stop_auto_charge_depart_max_angular_z_ =
+      declare_parameter<double>("stop_auto_charge_depart_max_angular_z", 0.15);
+    stop_auto_charge_depart_timeout_sec_ =
+      declare_parameter<double>("stop_auto_charge_depart_timeout_sec", 20.0);
+    stop_auto_charge_depart_stop_before_sec_ =
+      declare_parameter<double>("stop_auto_charge_depart_stop_before_sec", 0.5);
+    stop_auto_charge_depart_stop_after_sec_ =
+      declare_parameter<double>("stop_auto_charge_depart_stop_after_sec", 0.5);
     recognizer_trigger_service_ =
       declare_parameter<std::string>("recognizer_trigger_service", "/inventory/trigger_recognition");
 
@@ -215,8 +248,12 @@ public:
       "gap_adjust_sequence",
       std::vector<double>{-0.10, 0.10, -0.20});
 
-    return_home_on_finish_ = declare_parameter<bool>("return_home_on_finish", false);
-    return_target_mode_ = declare_parameter<std::string>("return_target_mode", "start");
+    finish_return_mode_ = normalize_finish_return_mode(
+      declare_parameter<std::string>("finish_return_mode", "auto_charge"));
+    between_side_auto_charge_wait_sec_ =
+      declare_parameter<double>("between_side_auto_charge_wait_sec", 10.0);
+    between_side_auto_charge_runtime_sec_ =
+      declare_parameter<double>("between_side_auto_charge_runtime_sec", 120.0);
     home_pose_frame_id_ = declare_parameter<std::string>("home_pose_frame_id", "map");
     home_pose_x_ = declare_parameter<double>("home_pose_x", 0.0);
     home_pose_y_ = declare_parameter<double>("home_pose_y", 0.0);
@@ -356,10 +393,6 @@ public:
       declare_parameter<std::string>("inventory_left_route", "left_route");
     full_inventory_right_route_ =
       declare_parameter<std::string>("inventory_right_route", "right_route");
-    full_inventory_return_home_between_sides_ =
-      declare_parameter<bool>("return_home_between_sides", true);
-    full_inventory_return_home_after_done_ =
-      declare_parameter<bool>("return_home_after_full_inventory", true);
     recognize_in_idle_ = declare_parameter<bool>("recognize_in_idle", true);
     full_inventory_recognize_during_nav_ =
       declare_parameter<bool>("recognize_during_nav", false);
@@ -449,6 +482,30 @@ public:
       10,
       [this](const wheeltec_inventory_system::msg::GapStatus::SharedPtr msg) {
         latest_gap_ = *msg;
+      });
+
+    auto_recharge_status_sub_ = create_subscription<std_msgs::msg::String>(
+      auto_recharge_status_topic_,
+      10,
+      [this](const std_msgs::msg::String::SharedPtr msg) {
+        latest_auto_recharge_status_ = wheeltec_inventory_system::trim(msg->data);
+        latest_auto_recharge_status_time_ = this->now();
+      });
+
+    auto_recharge_charging_flag_sub_ = create_subscription<std_msgs::msg::Bool>(
+      auto_recharge_charging_flag_topic_,
+      10,
+      [this](const std_msgs::msg::Bool::SharedPtr msg) {
+        latest_auto_recharge_charging_ = msg->data;
+        latest_auto_recharge_charging_time_ = this->now();
+      });
+
+    auto_recharge_recharge_flag_sub_ = create_subscription<std_msgs::msg::Int8>(
+      auto_recharge_recharge_flag_topic_,
+      10,
+      [this](const std_msgs::msg::Int8::SharedPtr msg) {
+        latest_auto_recharge_recharge_flag_ = msg->data;
+        latest_auto_recharge_recharge_flag_time_ = this->now();
       });
 
     odom_sub_primary_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -562,6 +619,22 @@ public:
         cancel_auto_recharge_service_callback(request, response);
       });
 
+    safe_exit_gap_srv_ = create_service<std_srvs::srv::Trigger>(
+      safe_exit_gap_service_name_,
+      [this](
+        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        safe_exit_gap_service_callback(request, response);
+      });
+
+    stop_auto_charge_and_depart_srv_ = create_service<std_srvs::srv::Trigger>(
+      stop_auto_charge_and_depart_service_name_,
+      [this](
+        const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+        std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+        stop_auto_charge_and_depart_service_callback(request, response);
+      });
+
     recognizer_trigger_client_ = create_client<std_srvs::srv::SetBool>(
       recognizer_trigger_service_);
     inventory_auto_recharge_start_client_ = create_client<std_srvs::srv::Trigger>(
@@ -604,10 +677,10 @@ public:
     set_state(State::IDLE, "系统待机");
     RCLCPP_INFO(
       get_logger(),
-      "任务管理节点已启动，odom主话题=%s，备用odom=%s，return_mode=%s，nav2_action=%s",
+      "任务管理节点已启动，odom主话题=%s，备用odom=%s，finish_return_mode=%s，nav2_action=%s",
       odom_topic_.c_str(),
       odom_fallback_topic_.c_str(),
-      return_target_mode_.c_str(),
+      finish_return_mode_.c_str(),
       nav2_action_name_.c_str());
   }
 
@@ -631,6 +704,8 @@ private:
     RETURNING,
     RETURNING_HOME,
     AUTO_RECHARGING,
+    SAFE_EXIT_GAP,
+    STOP_AUTO_CHARGE_AND_DEPART,
     DONE,
     ERROR,
     SINGLE_CABINET_PREPARE_NAV,
@@ -661,7 +736,7 @@ private:
     FULL_INVENTORY_EXIT_GAP,
     FULL_INVENTORY_ADVANCE_NEXT_TARGET,
     FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
-    FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES,
+    FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
     FULL_INVENTORY_COMPLETE,
   };
 
@@ -678,11 +753,6 @@ private:
     SEARCH_TARGET,
     CANCEL_HOME,
     FINISH_HOME,
-  };
-
-  enum class ReturnTargetMode
-  {
-    START,
   };
 
   enum class PendingInterruptRequest
@@ -733,19 +803,21 @@ private:
     FULL_INVENTORY,
   };
 
-  enum class FullInventoryReturnReason
-  {
-    NONE,
-    BETWEEN_SIDES,
-    FINAL_DONE,
-  };
-
   enum class EntryGapPhase
   {
     IDLE,
     ENTERING_TURN,
     ENTERING_STRAIGHT_ALIGN,
     MOVING_TO_GRID_CENTER,
+  };
+
+  enum class StopAutoChargeDepartPhase
+  {
+    IDLE,
+    CANCELING,
+    STOP_BEFORE,
+    DEPARTING,
+    STOP_AFTER,
   };
 
   enum class SearchDirection
@@ -871,6 +943,10 @@ private:
         return "RETURNING_HOME";
       case State::AUTO_RECHARGING:
         return "AUTO_RECHARGING";
+      case State::SAFE_EXIT_GAP:
+        return "SAFE_EXIT_GAP";
+      case State::STOP_AUTO_CHARGE_AND_DEPART:
+        return "STOP_AUTO_CHARGE_AND_DEPART";
       case State::DONE:
         return "DONE";
       case State::ERROR:
@@ -931,8 +1007,8 @@ private:
         return "FULL_INVENTORY_ADVANCE_NEXT_TARGET";
       case State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
         return "FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH";
-      case State::FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES:
-        return "FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES";
+      case State::FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES:
+        return "FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES";
       case State::FULL_INVENTORY_COMPLETE:
         return "FULL_INVENTORY_COMPLETE";
       default:
@@ -1027,6 +1103,23 @@ private:
       return normalized;
     }
     return "left";
+  }
+
+  static std::string normalize_finish_return_mode(std::string mode)
+  {
+    mode = wheeltec_inventory_system::trim(mode);
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (mode == "map_origin" || mode == "auto_charge") {
+      return mode;
+    }
+    return "auto_charge";
+  }
+
+  bool finish_return_mode_is_map_origin() const
+  {
+    return normalize_finish_return_mode(finish_return_mode_) == "map_origin";
   }
 
   static std::string search_direction_to_string(SearchDirection direction)
@@ -1462,13 +1555,14 @@ private:
     RCLCPP_INFO(
       get_logger(),
       "已加载盘库运行配置: mode=%s gap_count=%zu layers=%d depth_count=%d "
-      "scanner_duration=%.2f lift_duration=%.2f",
+      "scanner_duration=%.2f lift_duration=%.2f finish_return_mode=%s",
       web_client_mode_.c_str(),
       configured_gap_inventory_plan_.size(),
       scan_layers_,
       scan_depth_count_,
       scan_duration_sec_,
-      lift_up_duration_sec_);
+      lift_up_duration_sec_,
+      finish_return_mode_.c_str());
     RCLCPP_INFO(
       get_logger(),
       "单柜盘库配置: enabled=%s target_gap=%s target_cabinet=%d "
@@ -1507,7 +1601,8 @@ private:
     RCLCPP_INFO(
       get_logger(),
       "全部盘库配置: enabled=%s sequence=%s left_route=%s right_route=%s "
-      "return_between_sides=%s return_after_done=%s recognize_during_nav=%s "
+      "between_side_auto_charge_wait=%.2f between_side_auto_charge_runtime=%.2f "
+      "recognize_during_nav=%s "
       "same_side_search=%s speed=%.3f timeout=%.2f pose_hold=%s "
       "left_fixed_y=%.3f left_fixed_yaw=%.4f right_fixed_y=%.3f right_fixed_yaw=%.4f "
       "yaw_kp=%.3f yaw_deadband=%.3f y_kp=%.3f y_deadband=%.3f "
@@ -1519,8 +1614,8 @@ private:
       cabinet_unit_to_string(full_inventory_sequence_).c_str(),
       full_inventory_left_route_.c_str(),
       full_inventory_right_route_.c_str(),
-      full_inventory_return_home_between_sides_ ? "true" : "false",
-      full_inventory_return_home_after_done_ ? "true" : "false",
+      between_side_auto_charge_wait_sec_,
+      between_side_auto_charge_runtime_sec_,
       full_inventory_recognize_during_nav_ ? "true" : "false",
       full_inventory_same_side_next_search_enabled_ ? "true" : "false",
       full_inventory_same_side_search_speed_,
@@ -2188,13 +2283,14 @@ private:
         recognizer_enabled ? "enabled" : "disabled");
     }
     state_ = s;
+    if (s == State::ENTERING_GAP ||
+      s == State::SINGLE_CABINET_ENTERING_GAP ||
+      s == State::FULL_INVENTORY_ENTERING_GAP)
+    {
+      robot_inside_gap_ = true;
+    }
     publish_state_text(state_to_string(state_));
     publish_log("[" + state_to_string(state_) + "] " + detail);
-  }
-
-  ReturnTargetMode get_return_target_mode() const
-  {
-    return ReturnTargetMode::START;
   }
 
   bool is_in_gap_or_gap_motion_state() const
@@ -2214,12 +2310,13 @@ private:
       case State::FULL_INVENTORY_ENTERING_GAP:
       case State::FULL_INVENTORY_IN_GAP_SCAN:
       case State::FULL_INVENTORY_EXIT_GAP:
+      case State::SAFE_EXIT_GAP:
         return true;
       default:
         break;
     }
 
-    return entry_gap_phase_ == EntryGapPhase::MOVING_TO_GRID_CENTER;
+    return robot_inside_gap_ || entry_gap_phase_ == EntryGapPhase::MOVING_TO_GRID_CENTER;
   }
 
   std::string pending_interrupt_request_to_string(PendingInterruptRequest request) const
@@ -2289,15 +2386,13 @@ private:
     mission_active_ = false;
     inventory_flow_active_ = false;
     cancel_requested_ = false;
-    mission_return_home_on_finish_ = false;
+    mission_force_map_origin_on_finish_ = false;
     single_cabinet_motion_active_ = false;
     single_cabinet_gap_searching_ = false;
     single_cabinet_target_recognized_logged_ = false;
     single_cabinet_close_requested_ = false;
     full_inventory_active_ = false;
-    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
-    full_inventory_waiting_return_home_for_side_switch_ = false;
-    full_inventory_waiting_return_home_for_done_ = false;
+    reset_between_side_auto_charge_runtime();
     gap_request_queue_.clear();
     current_gap_request_index_ = 0;
     target_visible_ = false;
@@ -2348,6 +2443,21 @@ private:
   bool start_inventory_auto_recharge(const std::string & reason, std::string & message)
   {
     message.clear();
+    prepare_interrupt_mission_control(reason);
+    if (!send_auto_recharge_start_request(reason, message)) {
+      return false;
+    }
+
+    message = "已收到自动充电指令，当前小车不在缝隙内，正在中断盘库任务并启动自动回充流程。";
+    set_state(State::AUTO_RECHARGING, reason + "，已通知自动回充节点开始回充");
+    publish_state_text(message);
+    publish_log(message);
+    return true;
+  }
+
+  bool send_auto_recharge_start_request(const std::string & reason, std::string & message)
+  {
+    message.clear();
     if (!inventory_auto_recharge_start_client_) {
       message = "自动回充服务不可用，请确认 inventory_auto_recharger 节点已启动且 Nav2 保持打开。";
       publish_log(message);
@@ -2363,8 +2473,6 @@ private:
       publish_state_text(message);
       return false;
     }
-
-    prepare_interrupt_mission_control(reason);
 
     auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
     (void)inventory_auto_recharge_start_client_->async_send_request(
@@ -2387,11 +2495,155 @@ private:
         }
       });
 
-    message = "已收到自动充电指令，当前小车不在缝隙内，正在中断盘库任务并启动自动回充流程。";
-    set_state(State::AUTO_RECHARGING, reason + "，已通知自动回充节点开始回充");
-    publish_state_text(message);
+    message = reason + "，已通知自动回充节点开始回充。";
     publish_log(message);
     return true;
+  }
+
+  bool send_auto_recharge_cancel_request(const std::string & reason, std::string & message)
+  {
+    message.clear();
+    if (!inventory_auto_recharge_cancel_client_) {
+      message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    const auto timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(std::max(0.0, auto_recharge_cancel_timeout_sec_)));
+    if (!inventory_auto_recharge_cancel_client_->wait_for_service(timeout)) {
+      message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    (void)inventory_auto_recharge_cancel_client_->async_send_request(
+      request,
+      [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+        try {
+          const auto response = future.get();
+          if (!response) {
+            publish_log("自动回充取消节点未返回有效响应。");
+            return;
+          }
+          const std::string detail =
+            std::string("自动回充取消节点响应: ") +
+            (response->success ? "success" : "failed") +
+            "，" + response->message;
+          if (response->success) {
+            publish_log(detail);
+          } else {
+            RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+            publish_log(detail);
+          }
+        } catch (const std::exception & ex) {
+          const std::string detail = std::string("自动回充取消响应处理异常: ") + ex.what();
+          RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+          publish_log(detail);
+        }
+      });
+
+    message = reason + "，已发送取消自动回充请求。";
+    publish_log(message);
+    return true;
+  }
+
+  bool send_auto_recharge_cancel_request_with_callback(
+    const std::string & reason,
+    std::function<void(bool, const std::string &)> callback,
+    std::string & message)
+  {
+    message.clear();
+    if (!inventory_auto_recharge_cancel_client_) {
+      message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    const auto timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(std::max(0.0, auto_recharge_cancel_timeout_sec_)));
+    if (!inventory_auto_recharge_cancel_client_->wait_for_service(timeout)) {
+      message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    (void)inventory_auto_recharge_cancel_client_->async_send_request(
+      request,
+      [this, callback](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+        try {
+          const auto response = future.get();
+          if (!response) {
+            callback(false, "自动回充取消节点未返回有效响应。");
+            return;
+          }
+          callback(response->success, response->message);
+        } catch (const std::exception & ex) {
+          callback(false, std::string("自动回充取消响应处理异常: ") + ex.what());
+        }
+      });
+
+    message = reason + "，已发送取消自动回充请求。";
+    publish_log(message);
+    return true;
+  }
+
+  bool start_final_map_origin_return(const std::string & reason)
+  {
+    Pose2D target_pose = configured_home_pose();
+    if (!target_pose.valid) {
+      mission_active_ = false;
+      set_state(State::ERROR, "回零点目标参数无效，请检查 home_pose_frame_id/home_pose_x/home_pose_y/home_pose_yaw。");
+      return false;
+    }
+
+    set_corridor_mode(false, false);
+    publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
+    reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
+    publish_gap_context();
+
+    return_mode_ = ReturnMode::FINISH_HOME;
+    std::string nav2_fail_reason;
+    if (!begin_nav2_return(target_pose, nav2_fail_reason)) {
+      fail_nav2_return("Nav2 回零点目标发送失败: " + nav2_fail_reason);
+      return false;
+    }
+
+    mission_active_ = true;
+    set_state(State::RETURNING_HOME, reason + "，返航目标=map_origin，方式=Nav2");
+    return true;
+  }
+
+  bool start_final_auto_charge(const std::string & reason)
+  {
+    std::string message;
+    if (!start_inventory_auto_recharge(reason, message)) {
+      prepare_interrupt_mission_control(message);
+      mission_active_ = false;
+      inventory_flow_active_ = false;
+      set_state(State::ERROR, message);
+      return false;
+    }
+    return true;
+  }
+
+  bool start_finish_action(const std::string & reason, bool force_map_origin)
+  {
+    if (force_map_origin || finish_return_mode_is_map_origin()) {
+      return start_final_map_origin_return(reason);
+    }
+    return start_final_auto_charge(reason);
   }
 
   bool consume_pending_interrupt_after_exit()
@@ -2451,6 +2703,410 @@ private:
       "检测到待执行中断请求，先完成最终出缝");
   }
 
+  void reset_safe_exit_gap_runtime()
+  {
+    safe_exit_gap_start_distance_ = 0.0;
+    safe_exit_gap_target_distance_ = 0.0;
+    safe_exit_gap_target_yaw_ = 0.0;
+    safe_exit_gap_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+  }
+
+  double safe_exit_gap_distance() const
+  {
+    const double measured = std::isfinite(single_cabinet_last_entering_straight_distance_) ?
+      single_cabinet_last_entering_straight_distance_ : 0.0;
+    const double fallback = std::isfinite(single_cabinet_exit_distance_m_) ?
+      single_cabinet_exit_distance_m_ : 1.20;
+    const double base = measured > 0.05 ? measured : fallback;
+    const double extra = std::isfinite(safe_exit_gap_extra_clearance_m_) ?
+      std::max(0.0, safe_exit_gap_extra_clearance_m_) : 0.30;
+    return std::max(0.05, base + extra);
+  }
+
+  bool begin_safe_exit_gap_flow(std::string & message)
+  {
+    message.clear();
+    if (!safe_exit_gap_enabled_) {
+      message = "安全出缝功能未启用。";
+      return false;
+    }
+    std::string odom_reason;
+    if (!current_odom_ready_for_entry(odom_reason)) {
+      message = "安全出缝无法执行，里程计不可用: " + odom_reason;
+      publish_stop();
+      publish_log(message);
+      return false;
+    }
+    const Pose2D current = current_pose_2d();
+    if (!current.valid || !std::isfinite(current.yaw)) {
+      message = "安全出缝无法执行，当前位姿/yaw 无效。";
+      publish_stop();
+      publish_log(message);
+      return false;
+    }
+
+    const double target_distance = safe_exit_gap_distance();
+    const double target_yaw =
+      std::isfinite(target_gap_yaw_) ? normalize_angle(target_gap_yaw_) : normalize_angle(current.yaw);
+    stop_all_inventory_controls_for_safe_action("安全出缝准备");
+    safe_exit_gap_start_distance_ = odom_cumulative_distance_;
+    safe_exit_gap_target_distance_ = target_distance;
+    safe_exit_gap_target_yaw_ = target_yaw;
+    safe_exit_gap_start_time_ = this->now();
+    mission_active_ = true;
+    inventory_flow_active_ = false;
+    single_cabinet_motion_active_ = false;
+    full_inventory_active_ = false;
+    pending_interrupt_request_ = PendingInterruptRequest::NONE;
+    set_state(State::SAFE_EXIT_GAP, "开始安全出缝");
+    message = "已停止盘库相关动作，开始低速倒退安全出缝。";
+    publish_state_text(message);
+    publish_log(message);
+    return true;
+  }
+
+  void finish_safe_exit_gap_success()
+  {
+    publish_stop();
+    robot_inside_gap_ = false;
+    reset_safe_exit_gap_runtime();
+    mission_active_ = false;
+    inventory_flow_active_ = false;
+    single_cabinet_motion_active_ = false;
+    full_inventory_active_ = false;
+    pending_interrupt_request_ = PendingInterruptRequest::NONE;
+    set_state(State::IDLE, "SAFE_IN_CORRIDOR，安全出缝完成，系统待机");
+    publish_state_text("安全出缝完成，当前已在通道安全位置。");
+  }
+
+  void fail_safe_exit_gap(const std::string & reason)
+  {
+    publish_stop();
+    reset_safe_exit_gap_runtime();
+    mission_active_ = false;
+    inventory_flow_active_ = false;
+    mission_error_reason_ = reason;
+    set_state(State::ERROR, "安全出缝失败: " + reason);
+  }
+
+  void handle_safe_exit_gap_state()
+  {
+    if (safe_exit_gap_start_time_.nanoseconds() == 0) {
+      std::string message;
+      if (!begin_safe_exit_gap_flow(message)) {
+        fail_safe_exit_gap(message);
+      }
+      return;
+    }
+
+    std::string odom_reason;
+    if (!current_odom_ready_for_entry(odom_reason)) {
+      fail_safe_exit_gap("里程计异常: " + odom_reason);
+      return;
+    }
+    const Pose2D current = current_pose_2d();
+    if (!current.valid || !std::isfinite(current.yaw)) {
+      fail_safe_exit_gap("当前位姿/yaw 无效");
+      return;
+    }
+
+    const double elapsed = (this->now() - safe_exit_gap_start_time_).seconds();
+    const double timeout = std::isfinite(safe_exit_gap_timeout_sec_) ?
+      std::max(0.1, safe_exit_gap_timeout_sec_) : 30.0;
+    if (elapsed > timeout) {
+      fail_safe_exit_gap("安全出缝超时");
+      return;
+    }
+
+    const double traveled = distance_since(safe_exit_gap_start_distance_);
+    if (traveled >= safe_exit_gap_target_distance_) {
+      finish_safe_exit_gap_success();
+      return;
+    }
+
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = -std::clamp(std::abs(safe_exit_gap_speed_mps_), 0.0, 0.20);
+    if (cmd.linear.x > -1e-4) {
+      fail_safe_exit_gap("安全出缝速度非法");
+      return;
+    }
+    cmd.angular.z = yaw_hold_command(
+      safe_exit_gap_target_yaw_,
+      current.yaw,
+      safe_exit_gap_yaw_kp_,
+      safe_exit_gap_max_angular_z_);
+    cmd_pub_->publish(cmd);
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "[mission_manager][SAFE_EXIT_GAP] traveled=%.2f target=%.2f current_yaw=%.3f "
+      "target_yaw=%.3f cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
+      traveled,
+      safe_exit_gap_target_distance_,
+      current.yaw,
+      safe_exit_gap_target_yaw_,
+      cmd.linear.x,
+      cmd.angular.z,
+      elapsed);
+  }
+
+  void reset_stop_auto_charge_depart_runtime()
+  {
+    stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::IDLE;
+    stop_auto_charge_depart_start_distance_ = 0.0;
+    stop_auto_charge_depart_target_yaw_ = 0.0;
+    stop_auto_charge_depart_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    stop_auto_charge_cancel_response_ready_ = false;
+    stop_auto_charge_cancel_response_success_ = false;
+    stop_auto_charge_cancel_response_message_.clear();
+  }
+
+  bool auto_recharge_status_active_for_depart() const
+  {
+    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    return status == "STARTING" ||
+      status == "NAVIGATING" ||
+      status == "DOCKING" ||
+      status == "CHARGING" ||
+      status == "COMPLETE";
+  }
+
+  bool auto_recharge_status_released_for_depart() const
+  {
+    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    return status.empty() || status == "CANCELED" || status == "IDLE";
+  }
+
+  bool auto_recharge_control_active_for_depart() const
+  {
+    return state_ == State::AUTO_RECHARGING ||
+      auto_recharge_status_active_for_depart() ||
+      latest_auto_recharge_charging_ ||
+      latest_auto_recharge_recharge_flag_ != 0;
+  }
+
+  bool auto_recharge_control_released_for_depart() const
+  {
+    return auto_recharge_status_released_for_depart() || latest_auto_recharge_recharge_flag_ == 0;
+  }
+
+  bool start_stop_auto_charge_and_depart_flow(std::string & message)
+  {
+    message.clear();
+    if (robot_inside_gap_ || is_in_gap_or_gap_motion_state()) {
+      message = "当前小车可能在缝隙内，请先执行停止并退出缝隙。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+    if (state_ == State::SAFE_EXIT_GAP || state_ == State::STOP_AUTO_CHARGE_AND_DEPART) {
+      message = "安全动作正在执行，请勿重复操作。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+    if (!auto_recharge_control_active_for_depart()) {
+      message = "当前未处于自动回充/充电状态，禁止离桩前进。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+    std::string odom_reason;
+    if (!current_odom_ready_for_entry(odom_reason)) {
+      message = "停止自动充电后离桩需要 odom，但当前不可用: " + odom_reason;
+      publish_stop();
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+    const Pose2D current = current_pose_2d();
+    if (!current.valid || !std::isfinite(current.yaw)) {
+      message = "停止自动充电后离桩需要当前 yaw，但当前位姿无效。";
+      publish_stop();
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    stop_all_inventory_controls_for_safe_action("停止自动充电并离桩准备");
+    reset_stop_auto_charge_depart_runtime();
+    mission_active_ = true;
+    inventory_flow_active_ = false;
+    single_cabinet_motion_active_ = false;
+    full_inventory_active_ = false;
+    return_mode_ = ReturnMode::NONE;
+    pending_interrupt_request_ = PendingInterruptRequest::NONE;
+    stop_auto_charge_depart_target_yaw_ = normalize_angle(current.yaw);
+    stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::CANCELING;
+    stop_auto_charge_depart_phase_start_time_ = this->now();
+
+    std::string cancel_message;
+    if (!send_auto_recharge_cancel_request_with_callback(
+        "停止自动充电并离桩",
+        [this](bool success, const std::string & response_message) {
+          stop_auto_charge_cancel_response_ready_ = true;
+          stop_auto_charge_cancel_response_success_ = success;
+          stop_auto_charge_cancel_response_message_ = response_message;
+        },
+        cancel_message))
+    {
+      reset_stop_auto_charge_depart_runtime();
+      publish_stop();
+      message = cancel_message;
+      return false;
+    }
+
+    set_state(State::STOP_AUTO_CHARGE_AND_DEPART, "停止自动充电并离桩：等待自动回充取消");
+    message = "已发送停止自动充电请求，等待回充控制释放后离桩前进。";
+    publish_state_text(message);
+    publish_log(message);
+    return true;
+  }
+
+  void fail_stop_auto_charge_and_depart(const std::string & reason)
+  {
+    publish_stop();
+    reset_stop_auto_charge_depart_runtime();
+    mission_active_ = false;
+    inventory_flow_active_ = false;
+    return_mode_ = ReturnMode::NONE;
+    mission_error_reason_ = reason;
+    set_state(State::ERROR, "停止自动充电并离桩失败: " + reason);
+  }
+
+  void finish_stop_auto_charge_and_depart_success()
+  {
+    publish_stop();
+    reset_stop_auto_charge_depart_runtime();
+    mission_active_ = false;
+    inventory_flow_active_ = false;
+    return_mode_ = ReturnMode::NONE;
+    set_state(State::IDLE, "SAFE_IN_CORRIDOR，停止自动充电并离桩完成");
+    publish_state_text("停止自动充电完成，已离开充电桩。");
+  }
+
+  void handle_stop_auto_charge_and_depart_state()
+  {
+    const double phase_elapsed =
+      stop_auto_charge_depart_phase_start_time_.nanoseconds() == 0 ?
+      0.0 : (this->now() - stop_auto_charge_depart_phase_start_time_).seconds();
+    const double timeout = std::isfinite(stop_auto_charge_depart_timeout_sec_) ?
+      std::max(0.1, stop_auto_charge_depart_timeout_sec_) : 20.0;
+    if (phase_elapsed > timeout) {
+      fail_stop_auto_charge_and_depart(
+        "阶段 " + stop_auto_charge_depart_phase_to_string(stop_auto_charge_depart_phase_) + " 超时");
+      return;
+    }
+
+    switch (stop_auto_charge_depart_phase_) {
+      case StopAutoChargeDepartPhase::CANCELING: {
+        publish_stop();
+        if (!stop_auto_charge_cancel_response_ready_) {
+          return;
+        }
+        if (!stop_auto_charge_cancel_response_success_) {
+          fail_stop_auto_charge_and_depart(
+            "取消自动回充失败: " + stop_auto_charge_cancel_response_message_);
+          return;
+        }
+        if (!auto_recharge_control_released_for_depart()) {
+          return;
+        }
+        stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::STOP_BEFORE;
+        stop_auto_charge_depart_phase_start_time_ = this->now();
+        publish_log("自动回充控制已释放，离桩前先停车等待。");
+        return;
+      }
+      case StopAutoChargeDepartPhase::STOP_BEFORE: {
+        publish_stop();
+        const double wait_sec = std::isfinite(stop_auto_charge_depart_stop_before_sec_) ?
+          std::max(0.0, stop_auto_charge_depart_stop_before_sec_) : 0.5;
+        if (phase_elapsed < wait_sec) {
+          return;
+        }
+        std::string odom_reason;
+        if (!current_odom_ready_for_entry(odom_reason)) {
+          fail_stop_auto_charge_and_depart("离桩前里程计不可用: " + odom_reason);
+          return;
+        }
+        const Pose2D current = current_pose_2d();
+        if (!current.valid || !std::isfinite(current.yaw)) {
+          fail_stop_auto_charge_and_depart("离桩前当前 yaw 无效");
+          return;
+        }
+        stop_auto_charge_depart_start_distance_ = odom_cumulative_distance_;
+        stop_auto_charge_depart_target_yaw_ = normalize_angle(current.yaw);
+        stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::DEPARTING;
+        stop_auto_charge_depart_phase_start_time_ = this->now();
+        publish_log("开始沿机器人自身 x 正方向低速离桩。");
+        return;
+      }
+      case StopAutoChargeDepartPhase::DEPARTING: {
+        std::string odom_reason;
+        if (!current_odom_ready_for_entry(odom_reason)) {
+          fail_stop_auto_charge_and_depart("离桩中里程计不可用: " + odom_reason);
+          return;
+        }
+        const Pose2D current = current_pose_2d();
+        if (!current.valid || !std::isfinite(current.yaw)) {
+          fail_stop_auto_charge_and_depart("离桩中当前 yaw 无效");
+          return;
+        }
+        const double traveled = distance_since(stop_auto_charge_depart_start_distance_);
+        const double target_distance = std::max(
+          0.01,
+          std::isfinite(stop_auto_charge_depart_distance_m_) ?
+          stop_auto_charge_depart_distance_m_ : 0.5);
+        if (traveled >= target_distance) {
+          publish_stop();
+          stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::STOP_AFTER;
+          stop_auto_charge_depart_phase_start_time_ = this->now();
+          publish_log("离桩距离已达到目标，停车等待。");
+          return;
+        }
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = std::clamp(std::abs(stop_auto_charge_depart_speed_mps_), 0.0, 0.20);
+        if (cmd.linear.x <= 1e-4) {
+          fail_stop_auto_charge_and_depart("离桩前进速度非法");
+          return;
+        }
+        cmd.angular.z = yaw_hold_command(
+          stop_auto_charge_depart_target_yaw_,
+          current.yaw,
+          stop_auto_charge_depart_yaw_kp_,
+          stop_auto_charge_depart_max_angular_z_);
+        cmd_pub_->publish(cmd);
+        RCLCPP_INFO_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          1000,
+          "[mission_manager][STOP_AUTO_CHARGE_AND_DEPART] traveled=%.2f target=%.2f "
+          "cmd.linear.x=%.3f cmd.angular.z=%.3f current_yaw=%.3f target_yaw=%.3f",
+          traveled,
+          target_distance,
+          cmd.linear.x,
+          cmd.angular.z,
+          current.yaw,
+          stop_auto_charge_depart_target_yaw_);
+        return;
+      }
+      case StopAutoChargeDepartPhase::STOP_AFTER: {
+        publish_stop();
+        const double wait_sec = std::isfinite(stop_auto_charge_depart_stop_after_sec_) ?
+          std::max(0.0, stop_auto_charge_depart_stop_after_sec_) : 0.5;
+        if (phase_elapsed >= wait_sec) {
+          finish_stop_auto_charge_and_depart_success();
+        }
+        return;
+      }
+      case StopAutoChargeDepartPhase::IDLE:
+      default:
+        fail_stop_auto_charge_and_depart("内部 phase 未初始化");
+        return;
+    }
+  }
+
   Pose2D current_pose_2d() const
   {
     Pose2D pose;
@@ -2492,6 +3148,44 @@ private:
   double segment_distance() const
   {
     return std::max(0.0, odom_cumulative_distance_ - segment_start_distance_);
+  }
+
+  double distance_since(double start_distance) const
+  {
+    if (!std::isfinite(start_distance)) {
+      return 0.0;
+    }
+    return std::max(0.0, odom_cumulative_distance_ - start_distance);
+  }
+
+  double yaw_hold_command(double target_yaw, double current_yaw, double kp, double max_angular) const
+  {
+    if (!std::isfinite(target_yaw) || !std::isfinite(current_yaw) ||
+      !std::isfinite(kp) || !std::isfinite(max_angular))
+    {
+      return 0.0;
+    }
+    const double yaw_error = normalize_angle(target_yaw - current_yaw);
+    const double limit = std::max(0.0, std::abs(max_angular));
+    return std::clamp(kp * yaw_error, -limit, limit);
+  }
+
+  std::string stop_auto_charge_depart_phase_to_string(StopAutoChargeDepartPhase phase) const
+  {
+    switch (phase) {
+      case StopAutoChargeDepartPhase::IDLE:
+        return "IDLE";
+      case StopAutoChargeDepartPhase::CANCELING:
+        return "CANCELING";
+      case StopAutoChargeDepartPhase::STOP_BEFORE:
+        return "STOP_BEFORE";
+      case StopAutoChargeDepartPhase::DEPARTING:
+        return "DEPARTING";
+      case StopAutoChargeDepartPhase::STOP_AFTER:
+        return "STOP_AFTER";
+      default:
+        return "UNKNOWN";
+    }
   }
 
   double full_inventory_same_side_recognition_delay_distance() const
@@ -3768,11 +4462,6 @@ private:
     reset_entry_gap_runtime();
     publish_gap_context();
 
-    if (full_inventory_active_ && full_inventory_return_reason_ != FullInventoryReturnReason::NONE) {
-      on_return_home_finished_continue_full_inventory();
-      return;
-    }
-
     if (return_mode_ == ReturnMode::CANCEL_HOME) {
       mission_active_ = false;
       cancel_requested_ = false;
@@ -3967,16 +4656,7 @@ private:
     }
 
     if (success) {
-      if (mission_return_home_on_finish_) {
-        request_recognizer_enable(false);
-        switch_to_returning(ReturnMode::FINISH_HOME, "全部目标完成，开始返回起点");
-      } else {
-        mission_active_ = false;
-        request_recognizer_enable(false);
-        set_corridor_mode(false, false);
-        publish_stop();
-        set_state(State::DONE, "全部目标处理完成");
-      }
+      (void)start_finish_action("全部目标完成，执行完成后返航模式", mission_force_map_origin_on_finish_);
     } else {
       mission_active_ = false;
       request_recognizer_enable(false);
@@ -4071,9 +4751,7 @@ private:
     full_inventory_next_target_ = -1;
     full_inventory_current_side_.clear();
     full_inventory_current_route_.clear();
-    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
-    full_inventory_waiting_return_home_for_side_switch_ = false;
-    full_inventory_waiting_return_home_for_done_ = false;
+    reset_between_side_auto_charge_runtime();
     full_inventory_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     full_inventory_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -4087,17 +4765,18 @@ private:
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
-  std::string full_inventory_return_reason_to_string(FullInventoryReturnReason reason) const
+  void reset_between_side_auto_charge_runtime()
   {
-    switch (reason) {
-      case FullInventoryReturnReason::BETWEEN_SIDES:
-        return "BETWEEN_SIDES";
-      case FullInventoryReturnReason::FINAL_DONE:
-        return "FINAL_DONE";
-      case FullInventoryReturnReason::NONE:
-      default:
-        return "NONE";
-    }
+    between_side_auto_charge_active_ = false;
+    between_side_auto_charge_cancel_sent_ = false;
+    between_side_auto_charge_cancel_response_ready_ = false;
+    between_side_auto_charge_cancel_response_success_ = false;
+    between_side_auto_charge_cancel_response_message_.clear();
+    between_side_auto_charge_fallback_used_ = false;
+    between_side_auto_charge_target_index_ = 0;
+    between_side_auto_charge_target_ = -1;
+    between_side_auto_charge_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    between_side_auto_charge_ready_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
   bool apply_full_inventory_route_overrides(std::string & reason)
@@ -4332,7 +5011,6 @@ private:
   {
     mission_active_ = true;
     cancel_requested_ = false;
-    mission_return_home_on_finish_ = false;
     target_visible_ = false;
     has_distance_ = false;
     latest_distance_ = 0.0;
@@ -4371,6 +5049,7 @@ private:
 
   bool start_full_inventory_sequence(
     const std::vector<int> & sequence,
+    bool force_map_origin_on_finish,
     std::string & reason)
   {
     reason.clear();
@@ -4384,9 +5063,8 @@ private:
     full_inventory_current_target_ = -1;
     full_inventory_next_target_ =
       full_inventory_sequence_.size() > 1U ? full_inventory_sequence_[1] : -1;
-    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
-    full_inventory_waiting_return_home_for_side_switch_ = false;
-    full_inventory_waiting_return_home_for_done_ = false;
+    mission_force_map_origin_on_finish_ = force_map_origin_on_finish;
+    reset_between_side_auto_charge_runtime();
     full_inventory_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     full_inventory_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -4446,6 +5124,7 @@ private:
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     reset_single_cabinet_scan_runtime();
+    reset_between_side_auto_charge_runtime();
     mission_error_reason_ = reason;
     set_flow_state(State::ERROR, "[FULL_INVENTORY] " + reason);
   }
@@ -5133,7 +5812,7 @@ private:
       std::to_string(cabinet_id));
   }
 
-  bool should_return_home_between_targets(
+  bool should_auto_charge_between_targets(
     int current_target,
     int next_target,
     std::string & current_side,
@@ -5146,76 +5825,231 @@ private:
     if (!get_cabinet_side(next_target, next_side, reason)) {
       return false;
     }
-    return full_inventory_return_home_between_sides_ && current_side != next_side;
+    return current_side != next_side;
   }
 
-  void start_existing_return_home_for_full_inventory(FullInventoryReturnReason reason)
+  bool auto_recharge_status_is_ready() const
   {
-    full_inventory_return_reason_ = reason;
-    full_inventory_waiting_return_home_for_side_switch_ =
-      reason == FullInventoryReturnReason::BETWEEN_SIDES;
-    full_inventory_waiting_return_home_for_done_ =
-      reason == FullInventoryReturnReason::FINAL_DONE;
-    const std::string reason_text = full_inventory_return_reason_to_string(reason);
-    publish_full_inventory_log("start existing return home reason=" + reason_text);
-    set_flow_state(
-      State::FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES,
-      "[FULL_INVENTORY] start return home reason=" + reason_text);
-    switch_to_returning(ReturnMode::FINISH_HOME, "[FULL_INVENTORY] return home reason=" + reason_text);
+    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    return status == "CHARGING" || status == "COMPLETE";
   }
 
-  void finish_full_inventory_done_after_return()
+  bool auto_recharge_status_is_failure() const
   {
-    publish_full_inventory_log("DONE");
-    mission_active_ = false;
-    inventory_flow_active_ = false;
-    single_cabinet_motion_active_ = false;
-    single_cabinet_gap_searching_ = false;
-    single_cabinet_target_recognized_logged_ = false;
-    single_cabinet_close_requested_ = false;
-    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
-    full_inventory_waiting_return_home_for_side_switch_ = false;
-    full_inventory_waiting_return_home_for_done_ = false;
-    set_state(State::FULL_INVENTORY_COMPLETE, "[FULL_INVENTORY] done");
-    reset_full_inventory_context();
-    gap_request_queue_.clear();
-    current_gap_request_index_ = 0;
+    const std::string status = wheeltec_inventory_system::trim(latest_auto_recharge_status_);
+    return status == "FAILED" || status == "CANCELED";
   }
 
-  void on_return_home_finished_continue_full_inventory()
+  bool auto_recharge_charging_flag_ready() const
   {
-    const auto reason = full_inventory_return_reason_;
-    return_mode_ = ReturnMode::NONE;
-    full_inventory_return_reason_ = FullInventoryReturnReason::NONE;
-    full_inventory_waiting_return_home_for_side_switch_ = false;
-    full_inventory_waiting_return_home_for_done_ = false;
+    return latest_auto_recharge_charging_;
+  }
 
-    if (reason == FullInventoryReturnReason::FINAL_DONE) {
-      finish_full_inventory_done_after_return();
+  bool send_between_side_auto_recharge_cancel_request(std::string & message)
+  {
+    message.clear();
+    if (!inventory_auto_recharge_cancel_client_) {
+      message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    const auto timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(std::max(0.0, auto_recharge_cancel_timeout_sec_)));
+    if (!inventory_auto_recharge_cancel_client_->wait_for_service(timeout)) {
+      message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
+      publish_log(message);
+      publish_state_text(message);
+      return false;
+    }
+
+    between_side_auto_charge_cancel_response_ready_ = false;
+    between_side_auto_charge_cancel_response_success_ = false;
+    between_side_auto_charge_cancel_response_message_.clear();
+
+    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
+    (void)inventory_auto_recharge_cancel_client_->async_send_request(
+      request,
+      [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
+        try {
+          const auto response = future.get();
+          if (!response) {
+            between_side_auto_charge_cancel_response_ready_ = true;
+            between_side_auto_charge_cancel_response_success_ = false;
+            between_side_auto_charge_cancel_response_message_ = "自动回充取消节点未返回有效响应";
+            publish_log(between_side_auto_charge_cancel_response_message_);
+            return;
+          }
+          between_side_auto_charge_cancel_response_ready_ = true;
+          between_side_auto_charge_cancel_response_success_ = response->success;
+          between_side_auto_charge_cancel_response_message_ = response->message;
+          const std::string detail =
+            std::string("跨侧自动回充取消节点响应: ") +
+            (response->success ? "success" : "failed") +
+            "，" + response->message;
+          if (response->success) {
+            publish_log(detail);
+          } else {
+            RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+            publish_log(detail);
+          }
+        } catch (const std::exception & ex) {
+          between_side_auto_charge_cancel_response_ready_ = true;
+          between_side_auto_charge_cancel_response_success_ = false;
+          between_side_auto_charge_cancel_response_message_ =
+            std::string("自动回充取消响应处理异常: ") + ex.what();
+          RCLCPP_ERROR(get_logger(), "%s", between_side_auto_charge_cancel_response_message_.c_str());
+          publish_log(between_side_auto_charge_cancel_response_message_);
+        }
+      });
+
+    message = "[FULL_INVENTORY] between-side auto charge finished，已发送取消自动回充请求。";
+    publish_log(message);
+    return true;
+  }
+
+  void start_between_side_auto_charge(int next_target)
+  {
+    reset_between_side_auto_charge_runtime();
+    between_side_auto_charge_active_ = true;
+    between_side_auto_charge_target_index_ = full_inventory_index_;
+    between_side_auto_charge_target_ = next_target;
+    between_side_auto_charge_start_time_ = this->now();
+    latest_auto_recharge_status_.clear();
+    latest_auto_recharge_charging_ = false;
+
+    std::string message;
+    if (!send_auto_recharge_start_request("[FULL_INVENTORY] side changed, start auto charge before next side", message)) {
+      fail_full_inventory("跨侧自动回充启动失败: " + message);
       return;
     }
 
-    if (reason != FullInventoryReturnReason::BETWEEN_SIDES) {
-      fail_full_inventory("未知全部盘库返航目的");
+    publish_full_inventory_log(
+      "side changed, auto charge before next side target=" + std::to_string(next_target) +
+      " wait_after_ready=" + format_seconds(between_side_auto_charge_wait_sec_) +
+      " fallback_runtime=" + format_seconds(between_side_auto_charge_runtime_sec_));
+    set_state(
+      State::FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
+      "[FULL_INVENTORY] auto charge between sides target=" + std::to_string(next_target));
+  }
+
+  void continue_full_inventory_after_between_side_auto_charge()
+  {
+    if (between_side_auto_charge_target_index_ >= full_inventory_sequence_.size()) {
+      fail_full_inventory("跨侧自动回充后 full_inventory_index 越界");
       return;
     }
 
-    if (full_inventory_index_ >= full_inventory_sequence_.size()) {
-      fail_full_inventory("换侧返航后 full_inventory_index 越界");
+    const int target = full_inventory_sequence_[between_side_auto_charge_target_index_];
+    if (target != between_side_auto_charge_target_) {
+      fail_full_inventory(
+        "跨侧自动回充后目标不一致 expected=" +
+        std::to_string(between_side_auto_charge_target_) +
+        " actual=" + std::to_string(target));
       return;
     }
 
-    const int target = full_inventory_sequence_[full_inventory_index_];
+    reset_between_side_auto_charge_runtime();
     std::string prepare_reason;
     if (!prepare_full_inventory_target(target, prepare_reason)) {
-      fail_full_inventory("换侧返航后准备目标失败: " + prepare_reason);
+      fail_full_inventory("跨侧自动回充后准备目标失败: " + prepare_reason);
       return;
     }
     publish_full_inventory_log(
-      "return home finished, switch to side=" + full_inventory_current_side_ +
+      "between-side auto charge finished, switch to side=" + full_inventory_current_side_ +
       " route=" + full_inventory_current_route_ +
       " target=" + std::to_string(target));
-    (void)start_full_inventory_target_route("return home finished, switch side");
+    (void)start_full_inventory_target_route("between-side auto charge finished, switch side");
+  }
+
+  void handle_full_inventory_auto_charge_between_sides_state()
+  {
+    publish_stop();
+    if (!between_side_auto_charge_active_) {
+      fail_full_inventory("跨侧自动回充状态未初始化");
+      return;
+    }
+
+    const double elapsed =
+      (this->now() - between_side_auto_charge_start_time_).seconds();
+    const bool ready = auto_recharge_status_is_ready() || auto_recharge_charging_flag_ready();
+
+    if (auto_recharge_status_is_failure() && !ready) {
+      fail_full_inventory("跨侧自动回充失败，status=" + latest_auto_recharge_status_);
+      return;
+    }
+
+    if (ready && between_side_auto_charge_ready_time_.nanoseconds() == 0) {
+      between_side_auto_charge_ready_time_ = this->now();
+      publish_full_inventory_log(
+        "between-side auto charge ready status=" + latest_auto_recharge_status_ +
+        " charging_flag=" + std::string(latest_auto_recharge_charging_ ? "true" : "false") +
+        ", wait " + format_seconds(between_side_auto_charge_wait_sec_) + " before cancel");
+    }
+
+    bool should_cancel = false;
+    if (between_side_auto_charge_ready_time_.nanoseconds() != 0) {
+      const double ready_elapsed =
+        (this->now() - between_side_auto_charge_ready_time_).seconds();
+      should_cancel = ready_elapsed >= std::max(0.0, between_side_auto_charge_wait_sec_);
+    } else if (elapsed >= std::max(0.1, between_side_auto_charge_runtime_sec_)) {
+      between_side_auto_charge_fallback_used_ = true;
+      should_cancel = true;
+      publish_full_inventory_log(
+        "between-side auto charge fallback runtime reached, no readable ready state; runtime=" +
+        format_seconds(elapsed) +
+        " configured=" + format_seconds(between_side_auto_charge_runtime_sec_));
+    }
+
+    if (!should_cancel) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][FULL_INVENTORY] between-side auto charge waiting target=%d "
+        "status=%s charging=%s elapsed=%.2f runtime=%.2f ready=%s",
+        between_side_auto_charge_target_,
+        latest_auto_recharge_status_.c_str(),
+        latest_auto_recharge_charging_ ? "true" : "false",
+        elapsed,
+        between_side_auto_charge_runtime_sec_,
+        ready ? "true" : "false");
+      return;
+    }
+
+    if (!between_side_auto_charge_cancel_sent_) {
+      std::string message;
+      if (!send_between_side_auto_recharge_cancel_request(message)) {
+        fail_full_inventory("跨侧自动回充取消失败: " + message);
+        return;
+      }
+      between_side_auto_charge_cancel_sent_ = true;
+      publish_full_inventory_log(
+        "between-side auto charge cancel sent, waiting response; fallback=" +
+        std::string(between_side_auto_charge_fallback_used_ ? "true" : "false"));
+      return;
+    }
+
+    if (!between_side_auto_charge_cancel_response_ready_) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[mission_manager][FULL_INVENTORY] waiting between-side auto charge cancel response");
+      return;
+    }
+
+    if (!between_side_auto_charge_cancel_response_success_) {
+      fail_full_inventory(
+        "跨侧自动回充取消失败: " + between_side_auto_charge_cancel_response_message_);
+      return;
+    }
+
+    publish_full_inventory_log(
+      "between-side auto charge cancel confirmed, continue next side; fallback=" +
+      std::string(between_side_auto_charge_fallback_used_ ? "true" : "false"));
+    continue_full_inventory_after_between_side_auto_charge();
   }
 
   void advance_full_inventory_sequence()
@@ -5235,12 +6069,10 @@ private:
       publish_full_inventory_log(
         "exit gap done target=" + std::to_string(finished_target) +
         " next_target=-1 same_side=false");
-      publish_full_inventory_log("all targets completed, final return home");
-      if (full_inventory_return_home_after_done_) {
-        start_existing_return_home_for_full_inventory(FullInventoryReturnReason::FINAL_DONE);
-      } else {
-        finish_full_inventory_done_after_return();
-      }
+      publish_full_inventory_log("all targets completed, execute finish_return_mode=" + finish_return_mode_);
+      (void)start_finish_action(
+        "[FULL_INVENTORY] all targets completed, execute finish_return_mode",
+        mission_force_map_origin_on_finish_);
       return;
     }
 
@@ -5248,8 +6080,8 @@ private:
     std::string current_side;
     std::string next_side;
     std::string side_reason;
-    const bool return_between =
-      should_return_home_between_targets(finished_target, next_target, current_side, next_side, side_reason);
+    const bool auto_charge_between =
+      should_auto_charge_between_targets(finished_target, next_target, current_side, next_side, side_reason);
     if (!side_reason.empty()) {
       fail_full_inventory("判断目标侧失败: " + side_reason);
       return;
@@ -5265,12 +6097,12 @@ private:
       full_inventory_index_ + 1U < full_inventory_sequence_.size() ?
       full_inventory_sequence_[full_inventory_index_ + 1U] : -1;
 
-    if (return_between) {
+    if (auto_charge_between) {
       publish_full_inventory_log(
         "next_target=" + std::to_string(next_target) +
         " side changed " + current_side + " -> " + next_side +
-        ", return home first");
-      start_existing_return_home_for_full_inventory(FullInventoryReturnReason::BETWEEN_SIDES);
+        ", auto charge first");
+      start_between_side_auto_charge(next_target);
       return;
     }
 
@@ -6092,6 +6924,7 @@ private:
   void finish_single_cabinet_exit_gap()
   {
     publish_stop();
+    robot_inside_gap_ = false;
     single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     single_cabinet_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
@@ -6728,6 +7561,25 @@ private:
     set_gap_detector_enabled(false);
   }
 
+  void stop_all_inventory_controls_for_safe_action(const std::string & reason)
+  {
+    request_lift_safety_stop(reason);
+    cancel_nav2_route_goal(reason);
+    cancel_nav2_return_goal(reason);
+    reset_nav_route_runtime();
+    reset_wait_gap_runtime();
+    reset_entry_gap_runtime();
+    reset_single_cabinet_scan_runtime();
+    set_corridor_mode(false, false);
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
+    clear_current_target_cabinet();
+    publish_gap_context();
+    publish_stop();
+  }
+
   void fail_single_cabinet_motion(const std::string & reason)
   {
     publish_single_cabinet_log("failed: " + reason);
@@ -6905,12 +7757,10 @@ private:
           }
         }
       }
-      if (request->return_home) {
-        full_inventory_return_home_after_done_ = true;
-      }
+      const bool force_map_origin = request->return_home;
       const auto sequence = full_inventory_sequence_from_request(*request);
       std::string full_inventory_reason;
-      if (!start_full_inventory_sequence(sequence, full_inventory_reason)) {
+      if (!start_full_inventory_sequence(sequence, force_map_origin, full_inventory_reason)) {
         response->accepted = false;
         response->message = full_inventory_reason;
         publish_full_inventory_log(response->message);
@@ -6966,7 +7816,7 @@ private:
 
     mission_active_ = true;
     cancel_requested_ = false;
-    mission_return_home_on_finish_ = request->return_home || return_home_on_finish_;
+    mission_force_map_origin_on_finish_ = request->return_home;
 
     target_visible_ = false;
     has_distance_ = false;
@@ -7142,50 +7992,12 @@ private:
       return;
     }
 
-    if (!inventory_auto_recharge_cancel_client_) {
+    std::string cancel_message;
+    if (!send_auto_recharge_cancel_request("收到取消自动回充指令", cancel_message)) {
       response->success = false;
-      response->message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
-      publish_log(response->message);
-      publish_state_text(response->message);
+      response->message = cancel_message;
       return;
     }
-
-    const auto timeout = std::chrono::duration_cast<std::chrono::nanoseconds>(
-      std::chrono::duration<double>(std::max(0.0, auto_recharge_cancel_timeout_sec_)));
-    if (!inventory_auto_recharge_cancel_client_->wait_for_service(timeout)) {
-      response->success = false;
-      response->message = "自动回充取消服务不可用，请确认 inventory_auto_recharger 节点已启动。";
-      publish_log(response->message);
-      publish_state_text(response->message);
-      return;
-    }
-
-    auto cancel_request = std::make_shared<std_srvs::srv::Trigger::Request>();
-    (void)inventory_auto_recharge_cancel_client_->async_send_request(
-      cancel_request,
-      [this](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
-        try {
-          const auto cancel_response = future.get();
-          if (!cancel_response) {
-            publish_log("自动回充取消节点未返回有效响应。");
-            return;
-          }
-          const std::string detail =
-            std::string("自动回充取消节点响应: ") +
-            (cancel_response->success ? "success" : "failed") +
-            "，" + cancel_response->message;
-          if (cancel_response->success) {
-            publish_log(detail);
-          } else {
-            RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
-            publish_log(detail);
-          }
-        } catch (const std::exception & ex) {
-          const std::string detail = std::string("自动回充取消响应处理异常: ") + ex.what();
-          RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
-          publish_log(detail);
-        }
-      });
 
     mission_active_ = false;
     inventory_flow_active_ = false;
@@ -7196,6 +8008,50 @@ private:
     set_state(State::IDLE, response->message);
     publish_state_text(response->message);
     publish_log(response->message);
+  }
+
+  void safe_exit_gap_service_callback(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void)request;
+
+    if (state_ == State::AUTO_RECHARGING ||
+      state_ == State::STOP_AUTO_CHARGE_AND_DEPART)
+    {
+      response->success = false;
+      response->message = "当前自动回充/离桩流程正在控制底盘，不能执行安全出缝。";
+      publish_log(response->message);
+      publish_state_text(response->message);
+      return;
+    }
+
+    if (!robot_inside_gap_ && !is_in_gap_or_gap_motion_state()) {
+      stop_all_inventory_controls_for_safe_action("收到安全出缝指令但当前不在缝隙内");
+      mission_active_ = false;
+      inventory_flow_active_ = false;
+      pending_interrupt_request_ = PendingInterruptRequest::NONE;
+      set_state(State::IDLE, "当前不在缝隙内，已停车并停止任务");
+      response->success = true;
+      response->message = "当前不在缝隙内，已停车并停止任务。";
+      return;
+    }
+
+    std::string message;
+    response->success = begin_safe_exit_gap_flow(message);
+    response->message = response->success ? "已开始安全退出缝隙。" : message;
+  }
+
+  void stop_auto_charge_and_depart_service_callback(
+    const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+    std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void)request;
+
+    std::string message;
+    response->success = start_stop_auto_charge_and_depart_flow(message);
+    response->message = response->success ?
+      "已开始停止自动充电并离桩流程。" : message;
   }
 
   void handle_returning_state()
@@ -8499,7 +9355,6 @@ private:
 
         mission_active_ = true;
         cancel_requested_ = false;
-        mission_return_home_on_finish_ = false;
         target_visible_ = false;
         has_distance_ = false;
         latest_distance_ = 0.0;
@@ -8653,6 +9508,16 @@ private:
 
   void on_timer()
   {
+    if (state_ == State::SAFE_EXIT_GAP) {
+      handle_safe_exit_gap_state();
+      return;
+    }
+
+    if (state_ == State::STOP_AUTO_CHARGE_AND_DEPART) {
+      handle_stop_auto_charge_and_depart_state();
+      return;
+    }
+
     if (state_ == State::AUTO_RECHARGING) {
       return;
     }
@@ -8742,9 +9607,13 @@ private:
       }
 
       case State::FULL_INVENTORY_ADVANCE_NEXT_TARGET:
-      case State::FULL_INVENTORY_RETURN_HOME_BETWEEN_SIDES:
       case State::FULL_INVENTORY_COMPLETE: {
         publish_stop();
+        break;
+      }
+
+      case State::FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES: {
+        handle_full_inventory_auto_charge_between_sides_state();
         break;
       }
 
@@ -8869,9 +9738,14 @@ private:
   std::string cancel_service_name_;
   std::string return_home_service_name_;
   std::string return_to_charge_service_name_;
+  std::string safe_exit_gap_service_name_;
+  std::string stop_auto_charge_and_depart_service_name_;
   std::string inventory_auto_recharge_start_service_name_;
   std::string inventory_auto_recharge_cancel_service_name_;
   std::string cancel_auto_recharge_service_name_;
+  std::string auto_recharge_status_topic_;
+  std::string auto_recharge_charging_flag_topic_;
+  std::string auto_recharge_recharge_flag_topic_;
   std::string recognizer_trigger_service_;
 
   std::vector<std::string> target_list_param_;
@@ -8984,8 +9858,9 @@ private:
   double gap_adjust_speed_{0.08};
   std::vector<double> gap_adjust_sequence_{-0.10, 0.10, -0.20};
 
-  bool return_home_on_finish_{false};
-  std::string return_target_mode_{"start"};
+  std::string finish_return_mode_{"auto_charge"};
+  double between_side_auto_charge_wait_sec_{10.0};
+  double between_side_auto_charge_runtime_sec_{120.0};
   std::string home_pose_frame_id_{"map"};
   double home_pose_x_{0.0};
   double home_pose_y_{0.0};
@@ -8994,6 +9869,19 @@ private:
   std::string nav2_goal_frame_{"map"};
   double auto_recharge_service_timeout_sec_{3.0};
   double auto_recharge_cancel_timeout_sec_{3.0};
+  bool safe_exit_gap_enabled_{true};
+  double safe_exit_gap_speed_mps_{0.05};
+  double safe_exit_gap_yaw_kp_{0.6};
+  double safe_exit_gap_max_angular_z_{0.15};
+  double safe_exit_gap_extra_clearance_m_{0.30};
+  double safe_exit_gap_timeout_sec_{30.0};
+  double stop_auto_charge_depart_distance_m_{0.5};
+  double stop_auto_charge_depart_speed_mps_{0.05};
+  double stop_auto_charge_depart_yaw_kp_{0.6};
+  double stop_auto_charge_depart_max_angular_z_{0.15};
+  double stop_auto_charge_depart_timeout_sec_{20.0};
+  double stop_auto_charge_depart_stop_before_sec_{0.5};
+  double stop_auto_charge_depart_stop_after_sec_{0.5};
   double nav2_server_wait_timeout_sec_{1.0};
   bool nav2_startup_wait_enabled_{true};
   double nav2_startup_wait_timeout_sec_{60.0};
@@ -9070,8 +9958,6 @@ private:
   std::vector<int> full_inventory_sequence_{4, 3, 8, 7};
   std::string full_inventory_left_route_{"left_route"};
   std::string full_inventory_right_route_{"right_route"};
-  bool full_inventory_return_home_between_sides_{true};
-  bool full_inventory_return_home_after_done_{true};
   bool recognize_in_idle_{true};
   bool full_inventory_recognize_during_nav_{false};
   bool full_inventory_same_side_next_search_enabled_{true};
@@ -9162,9 +10048,16 @@ private:
   int full_inventory_next_target_{-1};
   std::string full_inventory_current_side_;
   std::string full_inventory_current_route_;
-  FullInventoryReturnReason full_inventory_return_reason_{FullInventoryReturnReason::NONE};
-  bool full_inventory_waiting_return_home_for_side_switch_{false};
-  bool full_inventory_waiting_return_home_for_done_{false};
+  bool between_side_auto_charge_active_{false};
+  bool between_side_auto_charge_cancel_sent_{false};
+  bool between_side_auto_charge_cancel_response_ready_{false};
+  bool between_side_auto_charge_cancel_response_success_{false};
+  std::string between_side_auto_charge_cancel_response_message_;
+  bool between_side_auto_charge_fallback_used_{false};
+  std::size_t between_side_auto_charge_target_index_{0};
+  int between_side_auto_charge_target_{-1};
+  rclcpp::Time between_side_auto_charge_start_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time between_side_auto_charge_ready_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time full_inventory_same_side_search_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time full_inventory_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time full_inventory_recognition_fallback_start_{0, 0, RCL_ROS_TIME};
@@ -9183,7 +10076,25 @@ private:
 
   bool mission_active_{false};
   bool cancel_requested_{false};
-  bool mission_return_home_on_finish_{false};
+  bool mission_force_map_origin_on_finish_{false};
+  std::string latest_auto_recharge_status_;
+  rclcpp::Time latest_auto_recharge_status_time_{0, 0, RCL_ROS_TIME};
+  bool latest_auto_recharge_charging_{false};
+  rclcpp::Time latest_auto_recharge_charging_time_{0, 0, RCL_ROS_TIME};
+  int latest_auto_recharge_recharge_flag_{0};
+  rclcpp::Time latest_auto_recharge_recharge_flag_time_{0, 0, RCL_ROS_TIME};
+  bool robot_inside_gap_{false};
+  double safe_exit_gap_start_distance_{0.0};
+  double safe_exit_gap_target_distance_{0.0};
+  double safe_exit_gap_target_yaw_{0.0};
+  rclcpp::Time safe_exit_gap_start_time_{0, 0, RCL_ROS_TIME};
+  StopAutoChargeDepartPhase stop_auto_charge_depart_phase_{StopAutoChargeDepartPhase::IDLE};
+  double stop_auto_charge_depart_start_distance_{0.0};
+  double stop_auto_charge_depart_target_yaw_{0.0};
+  rclcpp::Time stop_auto_charge_depart_phase_start_time_{0, 0, RCL_ROS_TIME};
+  bool stop_auto_charge_cancel_response_ready_{false};
+  bool stop_auto_charge_cancel_response_success_{false};
+  std::string stop_auto_charge_cancel_response_message_;
   bool recognizer_enabled_{false};
   bool recognizer_enabled_cmd_{false};
   bool recognizer_enable_initialized_{false};
@@ -9268,6 +10179,9 @@ private:
   rclcpp::Subscription<wheeltec_inventory_system::msg::RecognizedNumber>::SharedPtr recognized_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr distance_sub_;
   rclcpp::Subscription<wheeltec_inventory_system::msg::GapStatus>::SharedPtr gap_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr auto_recharge_status_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr auto_recharge_charging_flag_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr auto_recharge_recharge_flag_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_primary_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_fallback_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
@@ -9291,6 +10205,8 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_home_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr return_to_charge_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr cancel_auto_recharge_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr safe_exit_gap_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_auto_charge_and_depart_srv_;
   rclcpp::Client<std_srvs::srv::SetBool>::SharedPtr recognizer_trigger_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_start_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr inventory_auto_recharge_cancel_client_;
