@@ -38,8 +38,6 @@ public:
     active_side_ = normalize_entry_side(declare_parameter<std::string>("entry_side", "left"));
     base_link_frame_ = declare_parameter<std::string>("base_link_frame", "base_link");
 
-    left_gap_sector_start_deg_ = declare_parameter<double>("gap_sector_start_deg", 40.0);
-    left_gap_sector_end_deg_ = declare_parameter<double>("gap_sector_end_deg", 140.0);
     left_front_veto_sector_start_deg_ = declare_parameter<double>(
       "front_left_veto_sector_start_deg", 10.0);
     left_front_veto_sector_end_deg_ = declare_parameter<double>(
