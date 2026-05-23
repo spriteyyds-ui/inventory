@@ -151,30 +151,24 @@ public:
     warehouse_length_ = declare_parameter<double>("warehouse_length", 12.0);
     corridor_speed_ = declare_parameter<double>("corridor_speed", 0.20);
     tracking_speed_ = declare_parameter<double>("tracking_speed", 0.15);
-    entry_speed_ = declare_parameter<double>("entry_speed", 0.08);
     entry_distance_ = declare_parameter<double>("entry_distance", 0.70);
     turn_speed_ = declare_parameter<double>("turn_speed", 0.40);
-    enter_linear_speed_ = declare_parameter<double>("enter_linear_speed", 0.08);
-    enter_angular_speed_ = declare_parameter<double>("enter_angular_speed", 0.30);
-    enter_left_angular_multiplier_ = declare_parameter<double>("enter_left_angular_multiplier", 1.0);
-    enter_right_angular_multiplier_ = declare_parameter<double>("enter_right_angular_multiplier", -1.0);
     enable_grid_center_entry_ = declare_parameter<bool>("enable_grid_center_entry", true);
     grid_depth_m_ = declare_parameter<double>("grid_depth_m", 2.4);
     left_max_depth_index_ = declare_parameter<int>("left_max_depth_index", 4);
     right_max_depth_index_ = declare_parameter<int>("right_max_depth_index", 3);
     entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
-    entry_turn_yaw_delta_rad_ = declare_parameter<double>("entry_turn_yaw_delta_rad", 1.57079632679);
     entry_right_target_yaw_rad_ = declare_parameter<double>("entry_right_target_yaw_rad", 1.5708);
     entry_left_target_yaw_rad_ = declare_parameter<double>("entry_left_target_yaw_rad", -1.5708);
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
     entry_turn_yaw_stable_required_count_ =
       declare_parameter<int>("entry_turn_yaw_stable_required_count", 3);
-    entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", enter_angular_speed_);
+    entry_turn_angular_speed_ = declare_parameter<double>("entry_turn_angular_speed", 0.30);
     entry_turn_timeout_sec_ = declare_parameter<double>("entry_turn_timeout_sec", 12.0);
     entry_turn_timeout_sec_ = std::isfinite(entry_turn_timeout_sec_) ?
       std::max(0.1, entry_turn_timeout_sec_) : 12.0;
-    entry_straight_speed_ = declare_parameter<double>("entry_straight_speed", enter_linear_speed_);
+    entry_straight_speed_ = declare_parameter<double>("entry_straight_speed", 0.08);
     entry_straight_timeout_sec_ = declare_parameter<double>("entry_straight_timeout_sec", 60.0);
     entry_straight_timeout_sec_ = std::isfinite(entry_straight_timeout_sec_) ?
       std::max(0.1, entry_straight_timeout_sec_) : 60.0;
@@ -276,8 +270,6 @@ public:
     control_rate_hz_ = declare_parameter<double>("control_rate_hz", 10.0);
 
     use_scan_safety_ = declare_parameter<bool>("use_scan_safety", true);
-    entry_front_window_deg_ = declare_parameter<double>("entry_front_window_deg", 22.0);
-    entry_front_stop_distance_ = declare_parameter<double>("entry_front_stop_distance", 0.30);
     max_scan_age_sec_ = declare_parameter<double>("max_scan_age_sec", 0.8);
 
     use_ultrasonic_safety_ = declare_parameter<bool>("use_ultrasonic_safety", true);
@@ -293,9 +285,6 @@ public:
     entry_ultrasonic_stop_distance_ =
       declare_parameter<double>("entry_ultrasonic_stop_distance", 0.25);
     max_ultrasonic_age_sec_ = declare_parameter<double>("max_ultrasonic_age_sec", 0.8);
-    entry_left_align_distance_ = declare_parameter<double>("entry_left_align_distance", 0.22);
-    entry_left_turn_angular_ = declare_parameter<double>("entry_left_turn_angular", 0.35);
-
     web_client_mode_ = declare_parameter<std::string>("web_client_mode", "local");
     open_gap_wait_sec_ = declare_parameter<double>("open_gap_wait_sec", 5.0);
     close_gap_wait_sec_ = declare_parameter<double>("close_gap_wait_sec", 3.0);
@@ -8259,10 +8248,6 @@ private:
       reason = "入缝深度规划尚未生成";
       return false;
     }
-    if (!std::isfinite(entry_turn_yaw_delta_rad_)) {
-      reason = "entry_turn_yaw_delta_rad 必须为有限值";
-      return false;
-    }
     if (!std::isfinite(entry_right_target_yaw_rad_) || !std::isfinite(entry_left_target_yaw_rad_)) {
       reason = "entry_right_target_yaw_rad / entry_left_target_yaw_rad 必须为有限值";
       return false;
@@ -9787,13 +9772,8 @@ private:
   double warehouse_length_{12.0};
   double corridor_speed_{0.20};
   double tracking_speed_{0.15};
-  double entry_speed_{0.08};
   double entry_distance_{0.70};
   double turn_speed_{0.40};  // 兼容保留
-  double enter_linear_speed_{0.08};
-  double enter_angular_speed_{0.30};
-  double enter_left_angular_multiplier_{1.0};
-  double enter_right_angular_multiplier_{-1.0};
   bool enable_grid_center_entry_{true};
   double grid_depth_m_{2.4};
   int left_max_depth_index_{4};
@@ -9802,7 +9782,6 @@ private:
   double target_depth_center_m_{1.2};
   double target_straight_distance_{1.2};
   bool current_entry_profile_valid_{false};
-  double entry_turn_yaw_delta_rad_{1.57079632679};
   double entry_right_target_yaw_rad_{1.5708};
   double entry_left_target_yaw_rad_{-1.5708};
   double entry_align_yaw_tolerance_rad_{0.08};
@@ -9893,17 +9872,12 @@ private:
   double control_rate_hz_{10.0};
 
   bool use_scan_safety_{true};
-  double entry_front_window_deg_{22.0};
-  double entry_front_stop_distance_{0.30};
   double max_scan_age_sec_{0.8};
 
   bool use_ultrasonic_safety_{true};
   std::vector<std::string> ultrasonic_topics_;
   double entry_ultrasonic_stop_distance_{0.25};
   double max_ultrasonic_age_sec_{0.8};
-  double entry_left_align_distance_{0.22};
-  double entry_left_turn_angular_{0.35};
-
   std::string web_client_mode_{"local"};
   double open_gap_wait_sec_{5.0};
   double close_gap_wait_sec_{3.0};

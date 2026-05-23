@@ -161,8 +161,6 @@ gap_detector_node:
     entry_side: left                                                    # 未收到进入侧指令前默认侧；改动影响初始检测方向
     enable_on_start: true                                               # 启动后是否默认使能间隙检测；设为 false 可完全交由状态机控制
     base_link_frame: base_link                                          # 检测解释和日志使用的机器人坐标系名；改错会影响调试含义
-    gap_sector_start_deg: 60.0                                          # 兼容用左侧主检测扇区起始角，单位 deg；调大会缩小靠前侧范围
-    gap_sector_end_deg: 120.0                                           # 兼容用左侧主检测扇区结束角，单位 deg；调大会扩大靠后侧范围
     left_gap_sector_start_deg: 60.0                                     # 左侧主间隙检测扇区起始角，单位 deg；调大会缩小前向采样
     left_gap_sector_end_deg: 120.0                                      # 左侧主间隙检测扇区结束角，单位 deg；调大会扩大后向采样
     right_gap_sector_start_deg: -120.0                                  # 右侧主间隙检测扇区起始角，单位 deg；调小会扩大后向采样
@@ -277,19 +275,13 @@ mission_manager_node:
     warehouse_length: 12.0                                              # 仓库纵向参考长度，单位 m；影响返程方向和距离判断
     corridor_speed: 0.20                                                # 走廊搜索线速度，单位 m/s；调大会搜索更快但识别窗口更短
     tracking_speed: 0.20                                                # 跟踪目标货柜时线速度上限，单位 m/s；调大会更快但更难稳定识别
-    entry_speed: 0.20                                                   # 兼容用进缝线速度，单位 m/s；关闭网格中心进入时作为固定进入速度参考
     entry_distance: 1.2                                                 # 兼容用固定进缝距离，单位 m；关闭网格中心进入时使用
     turn_speed: 0.40                                                    # 通用转向角速度，单位 rad/s；调大会转向更快但过冲风险更高
-    enter_linear_speed: 0.20                                            # 兼容用反应式进缝线速度，单位 m/s；调大会进缝更快但安全余量变小
-    enter_angular_speed: 0.30                                           # 兼容用反应式进缝角速度，单位 rad/s；调大会转向更快
-    enter_left_angular_multiplier: 1.0                                  # 左侧进缝角速度倍率；正值对应 /cmd_vel 左转，调大会左转更强
-    enter_right_angular_multiplier: -1.0                                # 右侧进缝角速度倍率；负值对应 /cmd_vel 右转，绝对值越大转向越强
     enable_grid_center_entry: true                                      # 是否优先按目标深度网格中心计算进缝直行距离；关闭后回退固定 entry_distance
     grid_depth_m: 1.0                                                   # 单个货柜深度网格长度，单位 m；调大会增加按深度索引计算的进缝距离
     left_max_depth_index: 4                                             # 左/上排货柜允许的最大深度索引，单位 层；调大允许更深目标
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
     entry_center_offset_m: 0.0                                          # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
-    entry_turn_yaw_delta_rad: 1.5708                                    # 兼容保留参数；正式入缝目标 yaw 使用固定 map +Y/-Y 参数，不再用该值计算
     entry_right_target_yaw_rad: 1.6608                                  # 右侧进缝固定目标 yaw，单位 rad；map +Y，现场 4 号柜应向右转入缝
     entry_left_target_yaw_rad: -1.5008                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
     entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久

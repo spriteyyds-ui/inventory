@@ -12,6 +12,20 @@ from agv_inventory_system.srv import LiftMoveTimed, StartMission
 
 
 REFRESH_PERIOD_MS = 200
+WINDOW_WIDTH = 1180
+WINDOW_HEIGHT = 780
+STATUS_BAR_HEIGHT = 92
+LOG_FRAME_HEIGHT = 205
+SAFETY_FRAME_HEIGHT = 150
+STATUS_TILE_WIDTH = 214
+STATUS_TILE_HEIGHT = 82
+STATUS_MAIN_MAX_CHARS = 18
+STATUS_DETAIL_MAX_CHARS = 32
+VALUE_MAX_CHARS = 48
+WIDE_VALUE_MAX_CHARS = 72
+COMMAND_MAX_CHARS = 96
+ERROR_MAX_CHARS = 96
+SELECTED_CABINETS_MAX_CHARS = 78
 
 ACTION_START_INVENTORY = "开始盘库"
 ACTION_FULL_INVENTORY = "全量盘库"
@@ -26,7 +40,7 @@ AUTO_RECHARGE_STATUS_TEXT = {
     "IDLE": "空闲",
     "STARTING": "启动中",
     "NAVIGATING": "导航中",
-    "DOCKING": "贴桩中",
+    "DOCKING": "对接中",
     "CHARGING": "充电中",
     "COMPLETE": "已完成",
     "FAILED": "失败",
@@ -37,8 +51,8 @@ MISSION_STATE_TEXT = {
     "IDLE": "空闲",
     "CORRIDOR_NAV": "通道导航中",
     "TARGET_TRACKING": "目标识别中",
-    "SEARCH_GAP": "正在找缝",
-    "WAITING_GAP": "等待目标间隙",
+    "SEARCH_GAP": "搜索缝隙",
+    "WAITING_GAP": "等待缝隙",
     "ENTERING_GAP": "正在入缝",
     "INVENTORYING": "盘库中",
     "EXIT_GAP": "正在出缝",
@@ -48,13 +62,16 @@ MISSION_STATE_TEXT = {
     "AUTO_RECHARGING": "自动回充中",
     "SAFE_EXIT_GAP": "安全出缝中",
     "STOP_AUTO_CHARGE_AND_DEPART": "停止充电并离桩",
+    "FULL_INVENTORY_NAV_TO_OBSERVE": "全量盘库｜前往观察位",
+    "FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT": "全量盘库｜到点识别",
     "FULL_INVENTORY_CORRIDOR_NAV": "全量盘库｜通道导航中",
     "FULL_INVENTORY_TARGET_TRACKING": "全量盘库｜目标识别中",
-    "FULL_INVENTORY_TARGET_DISTANCE_ALIGN": "全量盘库｜目标距离对齐",
-    "FULL_INVENTORY_SEARCH_GAP": "全量盘库｜正在找缝",
-    "FULL_INVENTORY_WAITING_GAP": "全量盘库｜等待目标间隙",
+    "FULL_INVENTORY_TARGET_DISTANCE_ALIGN": "全量盘库｜目标对齐",
+    "FULL_INVENTORY_SEARCH_GAP": "全量盘库｜搜索缝隙",
+    "FULL_INVENTORY_WAITING_GAP": "全量盘库｜等待缝隙",
     "FULL_INVENTORY_ENTERING_GAP": "全量盘库｜正在入缝",
-    "FULL_INVENTORY_INVENTORYING": "全量盘库｜盘库中",
+    "FULL_INVENTORY_IN_GAP_SCAN": "全量盘库｜缝内扫描",
+    "FULL_INVENTORY_INVENTORYING": "全量盘库｜缝内扫描",
     "FULL_INVENTORY_EXIT_GAP": "全量盘库｜正在出缝",
     "SINGLE_CABINET_ENTERING_GAP": "单柜盘库｜正在入缝",
     "SINGLE_CABINET_INVENTORYING": "单柜盘库｜盘库中",
@@ -63,9 +80,10 @@ MISSION_STATE_TEXT = {
 
 GAP_PROTECTED_TOKENS = (
     "ENTERING_GAP",
+    "IN_GAP_SCAN",
+    "IN_GAP",
     "INVENTORYING",
     "EXIT_GAP",
-    "IN_GAP",
     "SAFE_EXIT_GAP",
 )
 
@@ -134,9 +152,11 @@ class InventoryOperationGuiNode(Node):
             "recognition": "未知",
             "voltage": "未知",
             "charging": "未知",
+            "charging_flag_detail": "未知（robot_charging_flag=未知）",
             "charging_current": "未知",
             "red_flag": "未知",
             "recharge_flag": "未知",
+            "recharge_flag_detail": "未知（robot_recharge_flag=未知）",
             "auto_recharge_status": "未知",
             "lift_height": "未知",
             "lift_state": "未知",
@@ -205,7 +225,10 @@ class InventoryOperationGuiNode(Node):
         self.values["voltage"] = "%.2f V" % msg.data
 
     def charging_flag_callback(self, msg):
-        self.values["charging"] = "充电中" if msg.data else "未充电"
+        raw = 1 if msg.data else 0
+        text = "充电中" if msg.data else "未充电"
+        self.values["charging"] = text
+        self.values["charging_flag_detail"] = "%s（robot_charging_flag=%d）" % (text, raw)
 
     def charging_current_callback(self, msg):
         self.values["charging_current"] = "%.3f A" % msg.data
@@ -214,7 +237,9 @@ class InventoryOperationGuiNode(Node):
         self.values["red_flag"] = str(msg.data)
 
     def recharge_flag_callback(self, msg):
-        self.values["recharge_flag"] = "开启 (%d)" % msg.data if msg.data else "关闭 (0)"
+        text = "开启" if msg.data else "关闭"
+        self.values["recharge_flag"] = text
+        self.values["recharge_flag_detail"] = "%s（robot_recharge_flag=%d）" % (text, msg.data)
 
     def auto_recharge_status_callback(self, msg):
         status = msg.data.strip() or "UNKNOWN"
@@ -253,7 +278,9 @@ class InventoryOperationGuiApp:
 
     def build_widgets(self):
         self.configure_styles()
-        self.root.minsize(1180, 780)
+        self.root.geometry("%dx%d" % (WINDOW_WIDTH, WINDOW_HEIGHT))
+        self.root.minsize(WINDOW_WIDTH, WINDOW_HEIGHT)
+        self.root.resizable(True, True)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         self.root.configure(bg=self.colors["window"])
@@ -262,11 +289,15 @@ class InventoryOperationGuiApp:
         main.grid(row=0, column=0, sticky="nsew")
         main.columnconfigure(0, weight=4)
         main.columnconfigure(1, weight=3)
+        main.rowconfigure(0, weight=0, minsize=STATUS_BAR_HEIGHT)
         main.rowconfigure(1, weight=1)
-        main.rowconfigure(2, weight=0)
+        main.rowconfigure(2, weight=0, minsize=LOG_FRAME_HEIGHT)
 
         status_bar = self.ttk.Frame(main, style="App.TFrame")
-        status_bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        status_bar.grid(row=0, column=0, columnspan=2, sticky="nsew", pady=(0, 10))
+        status_bar.configure(height=STATUS_BAR_HEIGHT)
+        status_bar.grid_propagate(False)
+        status_bar.rowconfigure(0, minsize=STATUS_TILE_HEIGHT)
         for column_index in range(5):
             status_bar.columnconfigure(column_index, weight=1, uniform="status")
         self.add_status_tile(status_bar, 0, "任务状态", "mission_state_overview")
@@ -287,7 +318,11 @@ class InventoryOperationGuiApp:
         cabinet_select_frame.columnconfigure(0, weight=0)
         for column_index in range(1, 19):
             cabinet_select_frame.columnconfigure(column_index, weight=1, uniform="cabinet")
-        self.ttk.Label(cabinet_select_frame, textvariable=self.selected_cabinets_var).grid(
+        self.ttk.Label(
+            cabinet_select_frame,
+            textvariable=self.selected_cabinets_var,
+            width=SELECTED_CABINETS_MAX_CHARS,
+            style="Value.TLabel").grid(
             row=0, column=0, columnspan=15, sticky="w", pady=(0, 6))
         self.ttk.Button(
             cabinet_select_frame, text="清空选择", command=self.clear_cabinet_selection).grid(
@@ -332,36 +367,44 @@ class InventoryOperationGuiApp:
         safety_frame = self.ttk.LabelFrame(
             operation_frame, text="安全控制 / 回充控制区", padding=10, style="Panel.TLabelframe")
         safety_frame.grid(row=3, column=0, sticky="ew")
+        safety_frame.configure(height=SAFETY_FRAME_HEIGHT)
+        safety_frame.grid_propagate(False)
         safety_frame.columnconfigure(0, weight=1)
-        safety_frame.columnconfigure(1, weight=1)
-        safety_frame.columnconfigure(2, weight=1)
-        normal_charge_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
-        normal_charge_frame.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.ttk.Label(safety_frame, text="回充控制", style="SectionTitle.TLabel").grid(
+            row=0, column=0, sticky="w", pady=(0, 4))
+        charge_control_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
+        charge_control_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        charge_control_frame.configure(height=40)
+        charge_control_frame.grid_propagate(False)
         for column_index in range(2):
-            normal_charge_frame.columnconfigure(column_index, weight=1, uniform="safe_normal")
+            charge_control_frame.columnconfigure(column_index, weight=1, uniform="charge_control")
         self.return_to_charge_button = self.make_action_button(
-            normal_charge_frame, ACTION_RETURN_TO_CHARGE,
-            self.request_return_to_charge, "secondary")
+            charge_control_frame, ACTION_RETURN_TO_CHARGE,
+            self.request_return_to_charge, "primary")
         self.return_to_charge_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.cancel_auto_recharge_button = self.make_action_button(
-            normal_charge_frame, ACTION_CANCEL_AUTO_RECHARGE,
+            charge_control_frame, ACTION_CANCEL_AUTO_RECHARGE,
             self.request_cancel_auto_recharge, "warning")
         self.cancel_auto_recharge_button.grid(row=0, column=1, sticky="ew")
 
-        emergency_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
-        emergency_frame.grid(row=1, column=0, columnspan=3, sticky="ew")
+        self.ttk.Label(safety_frame, text="安全动作", style="SectionTitle.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(0, 4))
+        safe_action_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
+        safe_action_frame.grid(row=3, column=0, sticky="ew")
+        safe_action_frame.configure(height=40)
+        safe_action_frame.grid_propagate(False)
         for column_index in range(3):
-            emergency_frame.columnconfigure(column_index, weight=1, uniform="safe_danger")
+            safe_action_frame.columnconfigure(column_index, weight=1, uniform="safe_action")
         self.safe_exit_gap_button = self.make_action_button(
-            emergency_frame, ACTION_SAFE_EXIT_GAP,
+            safe_action_frame, ACTION_SAFE_EXIT_GAP,
             self.request_safe_exit_gap, "danger")
         self.safe_exit_gap_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
         self.stop_auto_charge_and_depart_button = self.make_action_button(
-            emergency_frame, ACTION_STOP_AUTO_CHARGE_AND_DEPART,
+            safe_action_frame, ACTION_STOP_AUTO_CHARGE_AND_DEPART,
             self.request_stop_auto_charge_and_depart, "warning")
         self.stop_auto_charge_and_depart_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
         self.return_home_button = self.make_action_button(
-            emergency_frame, ACTION_RETURN_HOME,
+            safe_action_frame, ACTION_RETURN_HOME,
             self.request_return_home, "warning")
         self.return_home_button.grid(row=0, column=2, sticky="ew")
 
@@ -388,11 +431,11 @@ class InventoryOperationGuiApp:
         charge_frame.columnconfigure(1, weight=1)
         charge_rows = [
             ("电压", "voltage"),
-            ("robot_charging_flag", "charging"),
+            ("充电标志", "charging_flag_detail"),
             ("充电电流", "charging_current"),
             ("自动回充状态", "auto_recharge_status"),
             ("红外状态", "red_flag"),
-            ("robot_recharge_flag", "recharge_flag"),
+            ("回充标志", "recharge_flag_detail"),
         ]
         for row_index, (label, key) in enumerate(charge_rows):
             self.add_value_row(charge_frame, row_index, label, key)
@@ -452,19 +495,28 @@ class InventoryOperationGuiApp:
         log_frame = self.ttk.LabelFrame(
             main, text="日志与异常", padding=12, style="Panel.TLabelframe")
         log_frame.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
+        log_frame.configure(height=LOG_FRAME_HEIGHT)
+        log_frame.grid_propagate(False)
         log_frame.columnconfigure(1, weight=1)
         log_frame.columnconfigure(2, weight=0)
-        log_frame.rowconfigure(2, weight=1)
+        log_frame.rowconfigure(3, weight=1)
         self.add_var_row(log_frame, 0, "最近操作", self.command_status)
         self.ttk.Button(
             log_frame, text="清空日志", command=self.clear_logs).grid(
             row=0, column=2, sticky="e", padx=(10, 0))
-        self.add_var_row(log_frame, 1, "异常信息", self.error_status)
+        self.add_var_row(log_frame, 1, "异常信息", self.error_status, value_style="ErrorValue.TLabel")
+        self.ttk.Label(log_frame, text="详细日志", style="Key.TLabel").grid(
+            row=2, column=0, sticky="w", pady=(8, 2))
         self.log_text = self.tk.Text(
-            log_frame, width=110, height=7, wrap=self.tk.WORD,
+            log_frame, width=110, height=5, wrap=self.tk.WORD,
             bg=self.colors["log_bg"], fg=self.colors["text"],
-            relief=self.tk.FLAT, bd=0, padx=10, pady=8)
-        self.log_text.grid(row=2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+            relief=self.tk.FLAT, bd=0, padx=10, pady=8,
+            font=("TkFixedFont", 9))
+        self.log_text.grid(row=3, column=0, columnspan=2, sticky="nsew")
+        log_scrollbar = self.ttk.Scrollbar(
+            log_frame, orient=self.tk.VERTICAL, command=self.log_text.yview)
+        log_scrollbar.grid(row=3, column=2, sticky="ns", padx=(6, 0))
+        self.log_text.configure(yscrollcommand=log_scrollbar.set)
         self.log_text.tag_configure("error", foreground=self.colors["danger"])
         self.log_text.tag_configure("warn", foreground=self.colors["warning"])
         self.log_text.tag_configure("normal", foreground=self.colors["text"])
@@ -517,34 +569,44 @@ class InventoryOperationGuiApp:
             font=("TkDefaultFont", 10, "bold"))
         style.configure("Key.TLabel", background=self.colors["window"], foreground=self.colors["muted"])
         style.configure("Value.TLabel", background=self.colors["window"], foreground=self.colors["text"])
+        style.configure("ErrorValue.TLabel", background=self.colors["window"], foreground=self.colors["danger"])
+        style.configure(
+            "SectionTitle.TLabel",
+            background=self.colors["window"],
+            foreground=self.colors["muted"],
+            font=("TkDefaultFont", 9, "bold"))
         style.configure("TButton", padding=(10, 5))
 
     def add_status_tile(self, parent, column_index, label, key):
         tile = self.tk.Frame(
             parent,
+            width=STATUS_TILE_WIDTH,
+            height=STATUS_TILE_HEIGHT,
             bg=self.colors["panel"],
             highlightbackground=self.colors["panel_border"],
             highlightthickness=1,
             padx=12,
-            pady=8)
-        tile.grid(row=0, column=column_index, sticky="ew", padx=(0, 8))
+            pady=7)
+        tile.grid(row=0, column=column_index, sticky="nsew", padx=(0, 8))
+        tile.grid_propagate(False)
+        tile.columnconfigure(0, weight=1)
         label_widget = self.tk.Label(
             tile, text=label, bg=self.colors["panel"], fg=self.colors["muted"],
-            anchor="w")
+            anchor="w", font=("TkDefaultFont", 9), width=18, height=1)
         label_widget.grid(row=0, column=0, sticky="ew")
         var = self.tk.StringVar(value="未知")
-        self.register_field(key, var)
+        self.register_field(key, var, STATUS_MAIN_MAX_CHARS)
         value_widget = self.tk.Label(
             tile, textvariable=var, bg=self.colors["panel"], fg=self.colors["text"],
             anchor="w", font=("TkDefaultFont", 11, "bold"),
-            wraplength=190, justify=self.tk.LEFT)
-        value_widget.grid(row=1, column=0, sticky="ew")
+            width=18, height=1, justify=self.tk.LEFT)
+        value_widget.grid(row=1, column=0, sticky="ew", pady=(2, 0))
         detail_var = self.tk.StringVar(value="")
-        self.register_field("%s_detail" % key, detail_var)
+        self.register_field("%s_detail" % key, detail_var, STATUS_DETAIL_MAX_CHARS)
         detail_widget = self.tk.Label(
             tile, textvariable=detail_var, bg=self.colors["panel"], fg=self.colors["muted"],
-            anchor="w", font=("TkDefaultFont", 8), wraplength=190, justify=self.tk.LEFT)
-        detail_widget.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+            anchor="w", font=("TkDefaultFont", 8), width=30, height=1, justify=self.tk.LEFT)
+        detail_widget.grid(row=2, column=0, sticky="ew", pady=(1, 0))
         self.status_tiles[key] = {
             "frame": tile,
             "label": label_widget,
@@ -577,26 +639,34 @@ class InventoryOperationGuiApp:
             disabledforeground="#9aa4b2",
             cursor="hand2")
 
-    def add_var_row(self, parent, row_index, label, variable, column=0):
-        self.ttk.Label(parent, text=label, style="Key.TLabel").grid(
-            row=row_index, column=column, sticky="w", padx=(0, 10), pady=4)
-        self.ttk.Label(parent, textvariable=variable, wraplength=720, style="Value.TLabel").grid(
-            row=row_index, column=column + 1, sticky="ew", pady=4)
+    def add_var_row(self, parent, row_index, label, variable, column=0, value_style="Value.TLabel"):
+        self.ttk.Label(parent, text=label, style="Key.TLabel", width=10).grid(
+            row=row_index, column=column, sticky="w", padx=(0, 10), pady=3)
+        self.ttk.Label(
+            parent,
+            textvariable=variable,
+            width=WIDE_VALUE_MAX_CHARS,
+            style=value_style).grid(
+            row=row_index, column=column + 1, sticky="ew", pady=3)
 
-    def add_value_row(self, parent, row_index, label, key):
-        self.ttk.Label(parent, text=label).grid(
+    def add_value_row(self, parent, row_index, label, key, max_chars=VALUE_MAX_CHARS):
+        self.ttk.Label(parent, text=label, style="Key.TLabel", width=14).grid(
             row=row_index, column=0, sticky="w", padx=(0, 10), pady=3)
         var = self.tk.StringVar(value="未知")
-        self.register_field(key, var)
-        self.ttk.Label(parent, textvariable=var, wraplength=520).grid(
+        self.register_field(key, var, max_chars)
+        self.ttk.Label(
+            parent,
+            textvariable=var,
+            width=max_chars,
+            style="Value.TLabel").grid(
             row=row_index, column=1, sticky="ew", pady=3)
 
-    def register_field(self, key, variable):
-        self.fields.setdefault(key, []).append(variable)
+    def register_field(self, key, variable, max_chars=None):
+        self.fields.setdefault(key, []).append((variable, max_chars))
 
     def set_field(self, key, value):
-        for variable in self.fields.get(key, []):
-            variable.set(value)
+        for variable, max_chars in self.fields.get(key, []):
+            variable.set(self.format_one_line(value, max_chars))
 
     def mission_state_indicates_in_gap(self):
         state = self.node.values.get("mission_state", "")
@@ -635,7 +705,8 @@ class InventoryOperationGuiApp:
             text = "当前选择：" + ", ".join(str(cabinet_id) for cabinet_id in self.selected_cabinets)
         else:
             text = "当前选择：无"
-        self.selected_cabinets_var.set(text)
+        self.selected_cabinets_var.set(
+            self.format_one_line(text, SELECTED_CABINETS_MAX_CHARS))
         for button_id, button in self.cabinet_buttons.items():
             if button_id in self.selected_cabinets:
                 button.configure(relief=self.tk.SUNKEN, bg=self.colors["selected"], fg="white")
@@ -699,7 +770,7 @@ class InventoryOperationGuiApp:
 
     def request_return_to_charge(self):
         if self.mission_state_indicates_in_gap():
-            self.set_command_status("请先停止并退出缝隙，再启动自动回充。", error=True)
+            self.set_command_status("当前可能位于缝隙内，请先执行‘停止并退出缝隙’。", error=True)
             return
         self.send_trigger_request(
             ACTION_RETURN_TO_CHARGE,
@@ -781,9 +852,11 @@ class InventoryOperationGuiApp:
 
     def set_command_status(self, message, error=False):
         stamp = datetime.now().strftime("%H:%M:%S")
-        self.command_status.set("[%s] %s" % (stamp, message))
+        self.command_status.set(
+            self.format_one_line("[%s] %s" % (stamp, message), COMMAND_MAX_CHARS))
         if error:
-            self.error_status.set("[%s] %s" % (stamp, message))
+            self.error_status.set(
+                self.format_one_line("[%s] %s" % (stamp, message), ERROR_MAX_CHARS))
         elif self.error_status.get() == "未知":
             self.error_status.set("无")
 
@@ -839,25 +912,50 @@ class InventoryOperationGuiApp:
         return "%s已返回: %s" % (label, detail)
 
     @staticmethod
+    def normalize_one_line(text):
+        value = str(text or "")
+        return " ".join(value.replace("\r", " ").replace("\n", " ").split())
+
+    @classmethod
+    def format_one_line(cls, text, max_chars=None):
+        value = cls.normalize_one_line(text)
+        if max_chars is None or max_chars <= 0 or len(value) <= max_chars:
+            return value
+        if max_chars <= 3:
+            return value[:max_chars]
+        return value[:max_chars - 3] + "..."
+
+    @classmethod
+    def truncate_text(cls, text, max_chars):
+        return cls.format_one_line(text, max_chars)
+
+    @staticmethod
     def raw_state_token(raw_state):
         state = (raw_state or "").strip()
         if not state:
             return "UNKNOWN"
         return state.split()[0].strip(":：")
 
+    def format_mission_state_display(self, raw_state):
+        token = self.raw_state_token(raw_state)
+        if token == "UNKNOWN":
+            main_text = "未知状态"
+        else:
+            main_text = MISSION_STATE_TEXT.get(token, token)
+        return (
+            self.truncate_text(main_text, STATUS_MAIN_MAX_CHARS),
+            self.truncate_text(token, STATUS_DETAIL_MAX_CHARS),
+        )
+
     def mission_state_display(self):
-        raw = self.node.values.get("mission_state", "未知")
-        token = self.raw_state_token(raw)
-        text = MISSION_STATE_TEXT.get(token, raw if raw and raw != "未知" else "未知")
-        detail = token if token != text else ""
-        return text, detail
+        return self.format_mission_state_display(self.node.values.get("mission_state", "未知"))
 
     def status_category(self, key, value):
         if key == "mission_state_overview":
             token = self.raw_state_token(self.node.values.get("mission_state", ""))
             if "ERROR" in token or "FAIL" in token:
                 return "error"
-            if any(token_part in token for token_part in ("ENTERING_GAP", "EXIT_GAP", "INVENTORYING", "SAFE_EXIT_GAP")):
+            if any(token_part in token for token_part in ("ENTERING_GAP", "IN_GAP", "EXIT_GAP", "INVENTORYING", "SAFE_EXIT_GAP")):
                 return "gap"
             if token in ("IDLE", "DONE"):
                 return "idle"
@@ -918,6 +1016,9 @@ class InventoryOperationGuiApp:
         self.set_field("charging_detail", "")
         self.set_field("current_target_cabinet_detail", "")
         self.set_field("last_update_detail", "")
+        self.set_field("auto_recharge_status", self.node.values.get("auto_recharge_status", "未知"))
+        self.set_field("charging", self.node.values.get("charging", "未知"))
+        self.set_field("current_target_cabinet", self.node.values.get("current_target_cabinet", "未知"))
         self.set_field("last_update", datetime.now().strftime("%H:%M:%S"))
         self.set_field("start_mission_service", self.ready_text(self.node.start_mission_client))
         self.set_field("cancel_mission_service", self.ready_text(self.node.cancel_mission_client))
@@ -963,7 +1064,7 @@ class InventoryOperationGuiApp:
         self.set_status_tile_category("last_update", "neutral")
         lift_error = self.node.values.get("lift_error", "")
         if lift_error:
-            self.error_status.set(lift_error)
+            self.error_status.set(self.format_one_line(lift_error, ERROR_MAX_CHARS))
 
     def update_log_text(self):
         snapshot = tuple(self.node.mission_logs)
@@ -983,9 +1084,10 @@ class InventoryOperationGuiApp:
                 tag = "warn"
             self.log_text.insert(self.tk.END, line + "\n", tag)
         if latest_error:
-            self.error_status.set(latest_error)
+            self.error_status.set(self.format_one_line(latest_error, ERROR_MAX_CHARS))
         elif not self.node.values.get("lift_error", "") and not self.pending_futures:
             self.error_status.set("无")
+        self.log_text.see(self.tk.END)
         self.log_text.configure(state=self.tk.DISABLED)
 
     def update_button_states(self):
