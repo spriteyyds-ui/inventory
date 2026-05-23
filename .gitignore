@@ -26,3 +26,7 @@ best_model.pth
 
 # VSCode
 .vscode/
+
+# Local assistant / Codex private instructions
+AGENTS.md
+AGENTS.local.md
