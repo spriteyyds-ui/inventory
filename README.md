@@ -4,9 +4,7 @@
 
 本 README 面向现场运行维护人员，重点说明构建、启动、任务调用和常用调试命令。更完整的命令表和调试流程请参考：
 
-- [docs/run_commands.md](docs/run_commands.md)
 - [docs/debug_manual.md](docs/debug_manual.md)
-- [docs/inventory_debug_manual.txt](docs/inventory_debug_manual.txt)
 - [models/README.md](models/README.md)
 
 ## 功能概览
