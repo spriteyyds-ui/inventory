@@ -1,0 +1,5 @@
+﻿failed_uploads/
+__pycache__/
+*.pyc
+.env
+
