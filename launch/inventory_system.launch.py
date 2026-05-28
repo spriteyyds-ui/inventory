@@ -168,7 +168,6 @@ def generate_launch_description():
     inventory_auto_recharger_node = Node(
         package='agv_inventory_system',
         executable='inventory_auto_recharger.py',
-        name='inventory_auto_recharger',
         output='screen',
         parameters=[inventory_params_file]
     )

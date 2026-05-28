@@ -10,6 +10,10 @@ namespace agv_inventory_system
 namespace
 {
 
+constexpr const char * kJavaServerUrl = "https://172.26.165.218:8099";
+constexpr const char * kJavaCarOpenEndpoint = "/http-control-plc/car_open";
+constexpr bool kJavaVerifyTls = false;
+
 std::size_t write_response_body(char * ptr, std::size_t size, std::size_t nmemb, void * userdata)
 {
   auto * body = static_cast<std::string *>(userdata);
@@ -52,12 +56,20 @@ std::string summarize_body(const std::string & body)
   return summary;
 }
 
+bool response_body_reports_failure(const std::string & body)
+{
+  return body.find("\"success\":false") != std::string::npos ||
+         body.find("\"success\": false") != std::string::npos ||
+         body.find("\"code\":500") != std::string::npos ||
+         body.find("\"code\": 500") != std::string::npos;
+}
+
 bool ensure_curl_global_init()
 {
   static const bool initialized = []() {
     const CURLcode code = curl_global_init(CURL_GLOBAL_DEFAULT);
     if (code != CURLE_OK) {
-      std::cout << "[web_api_client][PLC] ERROR curl_global_init failed code="
+      std::cout << "[web_api_client][Java] ERROR curl_global_init failed code="
                 << static_cast<int>(code)
                 << " reason=\"" << curl_easy_strerror(code) << "\"" << std::endl;
       return false;
@@ -96,16 +108,16 @@ bool WebApiClient::requestOpenGap(const std::string & gap_id) const
 
 bool WebApiClient::requestOpenCabinet(int cabinet_id) const
 {
-  const std::string base_url = trim_trailing_slashes(params_.plc_server_url);
-  const std::string endpoint = ensure_leading_slash(params_.plc_open_endpoint);
-  const std::string url = base_url + endpoint + "?shelf=" + std::to_string(cabinet_id);
+  const std::string base_url = trim_trailing_slashes(kJavaServerUrl);
+  const std::string endpoint = ensure_leading_slash(kJavaCarOpenEndpoint);
+  const std::string url = base_url + endpoint + "?shelfId=" + std::to_string(cabinet_id);
 
-  std::cout << "[web_api_client][PLC] open cabinet request cabinet=" << cabinet_id
-            << " shelf=" << cabinet_id
+  std::cout << "[web_api_client][Java] open cabinet request cabinet=" << cabinet_id
+            << " shelfId=" << cabinet_id
             << " url=" << url
             << " timeout_sec=" << params_.plc_request_timeout_sec
             << " retry_count=" << params_.plc_retry_count << std::endl;
-  return requestHttpGet("PLC open cabinet", url);
+  return requestHttpGet("Java open cabinet", url);
 }
 
 bool WebApiClient::requestCloseGap(const std::string & gap_id) const
@@ -159,7 +171,7 @@ bool WebApiClient::requestHttpGet(const std::string & action, const std::string 
   for (int attempt = 1; attempt <= total_attempts; ++attempt) {
     CURL * curl = curl_easy_init();
     if (curl == nullptr) {
-      std::cout << "[web_api_client][PLC] ERROR " << action
+      std::cout << "[web_api_client][Java] ERROR " << action
                 << " curl_easy_init failed attempt=" << attempt
                 << "/" << total_attempts << std::endl;
       continue;
@@ -177,8 +189,10 @@ bool WebApiClient::requestHttpGet(const std::string & action, const std::string 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response_body);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, kJavaVerifyTls ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, kJavaVerifyTls ? 2L : 0L);
 
-    std::cout << "[web_api_client][PLC] " << action
+    std::cout << "[web_api_client][Java] " << action
               << " attempt=" << attempt << "/" << total_attempts
               << " method=GET url=" << url
               << " timeout_sec=" << timeout_sec << std::endl;
@@ -188,8 +202,8 @@ bool WebApiClient::requestHttpGet(const std::string & action, const std::string 
     curl_easy_cleanup(curl);
 
     const std::string body_summary = summarize_body(response_body);
-    if (result == CURLE_OK && http_code == 200) {
-      std::cout << "[web_api_client][PLC] " << action
+    if (result == CURLE_OK && http_code == 200 && !response_body_reports_failure(response_body)) {
+      std::cout << "[web_api_client][Java] " << action
                 << " success http_code=" << http_code
                 << " body_summary=\"" << body_summary << "\"" << std::endl;
       return true;
@@ -198,21 +212,21 @@ bool WebApiClient::requestHttpGet(const std::string & action, const std::string 
     if (result != CURLE_OK) {
       const std::string error_text =
         error_buffer[0] != '\0' ? std::string(error_buffer) : curl_easy_strerror(result);
-      std::cout << "[web_api_client][PLC] WARNING " << action
+      std::cout << "[web_api_client][Java] WARNING " << action
                 << " transport failed attempt=" << attempt << "/" << total_attempts
                 << " curl_code=" << static_cast<int>(result)
                 << " reason=\"" << error_text << "\""
                 << " http_code=" << http_code
                 << " body_summary=\"" << body_summary << "\"" << std::endl;
     } else {
-      std::cout << "[web_api_client][PLC] WARNING " << action
-                << " non-200 response attempt=" << attempt << "/" << total_attempts
+      std::cout << "[web_api_client][Java] WARNING " << action
+                << " unsuccessful response attempt=" << attempt << "/" << total_attempts
                 << " http_code=" << http_code
                 << " body_summary=\"" << body_summary << "\"" << std::endl;
     }
   }
 
-  std::cout << "[web_api_client][PLC] ERROR " << action
+  std::cout << "[web_api_client][Java] ERROR " << action
             << " failed after attempts=" << total_attempts << std::endl;
   return false;
 }
