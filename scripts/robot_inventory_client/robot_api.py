@@ -1,17 +1,41 @@
 """FastAPI entrypoint for receiving Java backend robot control commands."""
 
 import threading
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, StrictStr
 
 try:
-    from .config import FASTAPI_HOST, FASTAPI_PORT
+    from .config import (
+        FASTAPI_HOST,
+        FASTAPI_PORT,
+        SCAN_RESULT_FILE,
+        TEST_SCAN_RESULT,
+        USE_TEST_SCAN_RESULT,
+    )
     from .ros_inventory_bridge import run_full_inventory_until_done
-    from .upload_client import send_error_status, send_finish_status
+    from .upload_client import (
+        load_scan_result_file,
+        send_error_status,
+        send_finish_status,
+        send_scan_result,
+    )
 except ImportError:
-    from config import FASTAPI_HOST, FASTAPI_PORT  # type: ignore
+    from config import (  # type: ignore
+        FASTAPI_HOST,
+        FASTAPI_PORT,
+        SCAN_RESULT_FILE,
+        TEST_SCAN_RESULT,
+        USE_TEST_SCAN_RESULT,
+    )
     from ros_inventory_bridge import run_full_inventory_until_done  # type: ignore
-    from upload_client import send_error_status, send_finish_status  # type: ignore
+    from upload_client import (  # type: ignore
+        load_scan_result_file,
+        send_error_status,
+        send_finish_status,
+        send_scan_result,
+    )
 
 
 app = FastAPI(title="Robot Inventory Client")
@@ -19,7 +43,7 @@ app = FastAPI(title="Robot Inventory Client")
 is_running = False
 
 _state_lock = threading.Lock()
-_worker_thread: threading.Thread | None = None
+_worker_thread: Optional[threading.Thread] = None
 
 
 class ControlRequest(BaseModel):
@@ -41,6 +65,15 @@ def _run_full_inventory_job() -> None:
             "ROS2 整体盘库完成："
             f"accepted_message={result.accepted_message}, final_state={result.final_state}"
         )
+        if USE_TEST_SCAN_RESULT:
+            scan_result = TEST_SCAN_RESULT
+            print("测试通信开关已开启，使用内置测试扫描结果")
+        else:
+            scan_result = load_scan_result_file(SCAN_RESULT_FILE)
+            print(f"读取扫描结果文件成功：{SCAN_RESULT_FILE}")
+
+        if not send_scan_result(scan_result):
+            print("扫描结果上传失败，已保存本地备份")
         if not send_finish_status():
             print("整体盘库已完成，但 status=2 上报失败")
     except Exception as exc:

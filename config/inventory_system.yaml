@@ -199,9 +199,22 @@ inventory_auto_recharger:
   ros__parameters:
     start_service_name: /inventory/auto_recharge/start                  # 自动回充启动服务名；节点启动后只等待该 service 请求
     cancel_service_name: /inventory/auto_recharge/cancel                # 自动回充取消服务名；取消时关闭底盘回充模式但不关闭 Nav2
-    status_topic: /inventory/auto_recharge/status                       # 自动回充状态输出；IDLE/STARTING/NAVIGATING/DOCKING/CHARGING/COMPLETE/FAILED/CANCELED
+    status_topic: /inventory/auto_recharge/status                       # 自动回充状态输出；IDLE/STARTING/NAVIGATING/DOCKING/CHARGING/CANCELING/COMPLETE/FAILED/CANCELED
     nav2_active_wait_timeout_sec: 60.0                                  # 收到回充请求后等待 Nav2 active 的超时，单位 s；超时不关闭 Nav2
     nav_feedback_timeout_sec: 120.0                                     # 接近充电桩但长时间未完成导航时的等待阈值，单位 s
+    set_charge_timeout_sec: 2.0                                         # 单次 /set_charge 请求等待响应超时，单位 s；取消回充时也使用
+    set_charge_retry_count: 3                                           # /set_charge 调用重试次数；取消回充失败会按 strict 策略返回失败
+    set_charge_cancel_strict: true                                      # true 表示真实 DOCKING/CHARGING/贴桩 active 下 /set_charge=0 失败时 cancel 返回失败
+    wait_charging_clear_timeout_sec: 5.0                                # /set_charge=0 后等待 robot_charging_flag=false 的超时，单位 s；超时 strict cancel 返回失败
+    cancel_charge_disconnect_wait_sec: 2.0                              # cancel 最终失败前额外等待 robot_charging_flag=false 的宽限时间，避免话题回调晚到
+    cancel_charge_disconnect_poll_interval_sec: 0.05                    # 宽限等待期间检查 robot_charging_flag 的周期，单位 s
+    recharge_depart_enabled: true                                       # cancel 后 robot_charging_flag 仍 true 时是否执行低速离桩动作
+    recharge_depart_speed_mps: 0.04                                     # 离桩速度，保留正负号；系统原生 E/e 使用 linear.x=+0.1，若方向相反改为负值，代码不要 abs()
+    recharge_depart_duration_sec: 10.0                                  # timed 离桩持续时间，单位 s；期间持续发布 cmd_vel，不只发一帧
+    recharge_depart_distance_m: 0.20                                    # 预留离桩目标距离，单位 m；当前自动回充 cancel 先采用 timed depart
+    recharge_depart_timeout_sec: 5.0                                    # 离桩动作最大持续时间，单位 s；实际运行时间取 duration 与 timeout 的较小值
+    recharge_depart_wait_charging_clear_sec: 5.0                        # 离桩后等待 robot_charging_flag=false 的超时，单位 s
+    recharge_depart_require_set_charge_success: false                   # false 时 /set_charge=0 超时仍可低速尝试离桩，之后必须确认 robot_charging_flag=false
     nav_goal_frame: map                                                 # 自动回充导航目标坐标系
     charger_pose_x: 0.21353509531521975                                 # 自动回充导航目标 x 坐标，单位 m
     charger_pose_y: 0.026333288560603657                                # 自动回充导航目标 y 坐标，单位 m
@@ -242,25 +255,26 @@ mission_manager_node:
     return_home_service_name: /inventory/return_home                    # 中断盘库并回零点服务名；缝隙内会记录为待执行请求
     return_to_charge_service_name: /inventory/return_to_charge          # 中断盘库并自动回充服务名；缝隙内会记录为待执行请求
     safe_exit_gap_service_name: /inventory/safe_exit_gap                # 缝隙内手动安全出缝服务名；先停止盘库再低速倒退出缝
-    stop_auto_charge_and_depart_service_name: /inventory/stop_auto_charge_and_depart # 停止自动充电并沿车体 x 正方向离桩服务名
+    stop_auto_charge_and_depart_service_name: /inventory/stop_auto_charge_and_depart # 停止自动充电并按配置速度符号离桩服务名
     inventory_auto_recharge_start_service_name: /inventory/auto_recharge/start # 盘库内部自动回充节点启动服务名
     inventory_auto_recharge_cancel_service_name: /inventory/auto_recharge/cancel # 盘库内部自动回充节点取消服务名
-    cancel_auto_recharge_service_name: /inventory/cancel_auto_recharge  # 对外取消自动回充服务名；仅 AUTO_RECHARGING 状态实际取消
+    cancel_auto_recharge_service_name: /inventory/cancel_auto_recharge  # 对外取消自动回充服务名；充电/回充标志仍 active 时也会转发到底层 cancel
     auto_recharge_status_topic: /inventory/auto_recharge/status          # 自动回充状态话题；CHARGING/COMPLETE 表示跨侧回充已到位
     auto_recharge_charging_flag_topic: robot_charging_flag               # 充电状态输入话题；true 可作为跨侧回充已到位的辅助判据
     auto_recharge_recharge_flag_topic: robot_recharge_flag               # 底盘回充模式标志输入话题；非 0 表示底盘可能仍在回充控制
     auto_recharge_service_timeout_sec: 3.0                              # 等待自动回充启动服务可用的超时，单位 s；超时不关闭 Nav2
     auto_recharge_cancel_timeout_sec: 3.0                               # 等待自动回充取消服务可用的超时，单位 s；超时不关闭 Nav2
+    auto_recharge_cancel_response_timeout_sec: 15.0                     # 跨侧自动回充取消请求发出后等待 service response 的超时，单位 s
     safe_exit_gap_enabled: true                                         # 是否启用手动安全出缝；关闭后 safe_exit_gap 请求会拒绝执行
     safe_exit_gap_speed_mps: 0.05                                       # 安全出缝倒退线速度，单位 m/s；使用车体 x 负方向
     safe_exit_gap_yaw_kp: 0.6                                           # 安全出缝 yaw 保持比例增益；调大会纠偏更强
     safe_exit_gap_max_angular_z: 0.15                                   # 安全出缝 yaw 修正角速度限幅，单位 rad/s
     safe_exit_gap_extra_clearance_m: 0.30                               # 安全出缝在入缝实测距离外额外倒退余量，单位 m
     safe_exit_gap_timeout_sec: 30.0                                     # 安全出缝超时，单位 s；超时后停车并保持在缝隙内标志
-    stop_auto_charge_depart_distance_m: 0.5                             # 停止自动充电后离桩前进距离，单位 m；沿车体 x 正方向
-    stop_auto_charge_depart_speed_mps: 0.05                             # 停止自动充电后离桩前进速度，单位 m/s
-    stop_auto_charge_depart_yaw_kp: 0.6                                 # 离桩前进 yaw 保持比例增益
-    stop_auto_charge_depart_max_angular_z: 0.15                         # 离桩前进 yaw 修正角速度限幅，单位 rad/s
+    stop_auto_charge_depart_distance_m: 0.5                             # 停止自动充电后二级离桩距离，单位 m；Python cancel 已清 charging flag 时会跳过
+    stop_auto_charge_depart_speed_mps: 0.05                             # 二级离桩速度，保留正负号；系统原生 E/e 为正向，方向相反可改负值
+    stop_auto_charge_depart_yaw_kp: 0.6                                 # 二级离桩 yaw 保持比例增益
+    stop_auto_charge_depart_max_angular_z: 0.15                         # 二级离桩 yaw 修正角速度限幅，单位 rad/s
     stop_auto_charge_depart_timeout_sec: 20.0                           # 离桩流程单阶段超时，单位 s
     stop_auto_charge_depart_stop_before_sec: 0.5                        # 自动回充取消成功后、离桩前停车等待时间，单位 s
     stop_auto_charge_depart_stop_after_sec: 0.5                         # 离桩到位后停车等待时间，单位 s

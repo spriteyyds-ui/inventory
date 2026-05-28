@@ -3,7 +3,7 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -12,6 +12,7 @@ try:
         FAILED_UPLOAD_DIR,
         JAVA_RESULT_URL,
         JAVA_STATUS_URL,
+        JAVA_VERIFY_TLS,
         UPLOAD_TIMEOUT_SECONDS,
     )
 except ImportError:
@@ -19,6 +20,7 @@ except ImportError:
         FAILED_UPLOAD_DIR,
         JAVA_RESULT_URL,
         JAVA_STATUS_URL,
+        JAVA_VERIFY_TLS,
         UPLOAD_TIMEOUT_SECONDS,
     )
 
@@ -30,17 +32,52 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
 
 
+def build_robot_audit_payload(scan_result: ScanResult) -> Dict[str, ScanResult]:
+    """Build the Java RobotAuditReqDTO payload."""
+    return {"scanCells": scan_result}
+
+
+def load_scan_result_file(file_path: Path) -> ScanResult:
+    """Load robot scan cells from a local JSON result file."""
+    if not file_path.exists():
+        raise FileNotFoundError(f"扫描结果文件不存在：{file_path}")
+
+    data = json.loads(file_path.read_text(encoding="utf-8-sig"))
+    if isinstance(data, dict) and "javaPayload" in data:
+        data = data["javaPayload"]
+
+    if isinstance(data, dict) and "scanCells" in data:
+        data = data["scanCells"]
+
+    if not isinstance(data, list):
+        raise ValueError("扫描结果 JSON 顶层必须是数组，或包含 scanCells 的对象")
+
+    for index, item in enumerate(data):
+        if not isinstance(item, dict):
+            raise ValueError(f"扫描结果第 {index + 1} 项必须是对象")
+        if not isinstance(item.get("locationRfid"), str) or not item["locationRfid"]:
+            raise ValueError(f"扫描结果第 {index + 1} 项缺少 locationRfid")
+        rfids = item.get("rfids")
+        if rfids is None:
+            item["rfids"] = []
+        elif not isinstance(rfids, list) or not all(isinstance(rfid, str) for rfid in rfids):
+            raise ValueError(f"扫描结果第 {index + 1} 项 rfids 必须是字符串数组")
+
+    return data
+
+
 def save_failed_scan_result(scan_result: ScanResult, reason: str) -> Path:
     """Save failed scan-result upload payload to a local JSON file."""
     FAILED_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     file_path = FAILED_UPLOAD_DIR / f"scan_result_{timestamp}.json"
 
+    java_payload = build_robot_audit_payload(scan_result)
     payload = {
         "failedAt": _now_iso(),
         "reason": reason,
         "javaResultUrl": JAVA_RESULT_URL,
-        "scanResult": scan_result,
+        "javaPayload": java_payload,
     }
 
     file_path.write_text(
@@ -51,7 +88,7 @@ def save_failed_scan_result(scan_result: ScanResult, reason: str) -> Path:
     return file_path
 
 
-def send_robot_status(status: str, message: str | None = None) -> bool:
+def send_robot_status(status: str, message: Optional[str] = None) -> bool:
     """向 Java 后端发送机器人状态。"""
     payload: Dict[str, Any] = {"status": status}
     if message:
@@ -62,6 +99,7 @@ def send_robot_status(status: str, message: str | None = None) -> bool:
             JAVA_STATUS_URL,
             json=payload,
             timeout=UPLOAD_TIMEOUT_SECONDS,
+            verify=JAVA_VERIFY_TLS,
         )
         print(f"Java 状态响应：{response.status_code} {response.text}")
         response.raise_for_status()
@@ -83,11 +121,13 @@ def send_error_status(reason: str) -> bool:
 
 def send_scan_result(scan_result: ScanResult) -> bool:
     """向 Java 后端发送扫描结果"""
+    payload = build_robot_audit_payload(scan_result)
     try:
         response = requests.post(
             JAVA_RESULT_URL,
-            json=scan_result,
+            json=payload,
             timeout=UPLOAD_TIMEOUT_SECONDS,
+            verify=JAVA_VERIFY_TLS,
         )
         print(f"Java 扫描结果响应：{response.status_code} {response.text}")
         response.raise_for_status()

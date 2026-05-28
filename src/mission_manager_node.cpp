@@ -114,6 +114,8 @@ public:
       declare_parameter<double>("auto_recharge_service_timeout_sec", 3.0);
     auto_recharge_cancel_timeout_sec_ =
       declare_parameter<double>("auto_recharge_cancel_timeout_sec", 3.0);
+    auto_recharge_cancel_response_timeout_sec_ =
+      declare_parameter<double>("auto_recharge_cancel_response_timeout_sec", 15.0);
     safe_exit_gap_enabled_ = declare_parameter<bool>("safe_exit_gap_enabled", true);
     safe_exit_gap_speed_mps_ = declare_parameter<double>("safe_exit_gap_speed_mps", 0.05);
     safe_exit_gap_yaw_kp_ = declare_parameter<double>("safe_exit_gap_yaw_kp", 0.6);
@@ -2950,6 +2952,7 @@ private:
       status == "NAVIGATING" ||
       status == "DOCKING" ||
       status == "CHARGING" ||
+      status == "CANCELING" ||
       status == "COMPLETE";
   }
 
@@ -2962,6 +2965,20 @@ private:
   bool auto_recharge_control_active_for_depart() const
   {
     return state_ == State::AUTO_RECHARGING ||
+      between_side_auto_charge_cancel_sent_ ||
+      auto_recharge_status_active_for_depart() ||
+      latest_auto_recharge_charging_ ||
+      latest_auto_recharge_recharge_flag_ != 0;
+  }
+
+  bool has_active_recharge_or_charging_state() const
+  {
+    return state_ == State::AUTO_RECHARGING ||
+      between_side_auto_charge_active_ ||
+      (between_side_auto_charge_cancel_sent_ && !between_side_auto_charge_cancel_response_ready_) ||
+      manual_auto_recharge_cancel_pending_ ||
+      (stop_auto_charge_depart_phase_ == StopAutoChargeDepartPhase::CANCELING &&
+      !stop_auto_charge_cancel_response_ready_) ||
       auto_recharge_status_active_for_depart() ||
       latest_auto_recharge_charging_ ||
       latest_auto_recharge_recharge_flag_ != 0;
@@ -2970,6 +2987,109 @@ private:
   bool auto_recharge_control_released_for_depart() const
   {
     return auto_recharge_status_released_for_depart() || latest_auto_recharge_recharge_flag_ == 0;
+  }
+
+  bool auto_recharge_cancel_response_reports_departed() const
+  {
+    return stop_auto_charge_cancel_response_message_.find("已离桩") != std::string::npos ||
+      stop_auto_charge_cancel_response_message_.find("充电状态已释放") != std::string::npos;
+  }
+
+  bool auto_recharge_status_blocks_start_mission() const
+  {
+    return auto_recharge_status_active_for_depart();
+  }
+
+  bool auto_recharge_control_blocks_start_mission(std::string & reason) const
+  {
+    reason.clear();
+    if (state_ == State::AUTO_RECHARGING) {
+      reason = "state=AUTO_RECHARGING";
+      return true;
+    }
+    if (between_side_auto_charge_cancel_sent_ && !between_side_auto_charge_cancel_response_ready_) {
+      reason = "between-side auto recharge cancel response pending";
+      return true;
+    }
+    if (manual_auto_recharge_cancel_pending_) {
+      reason = "manual auto recharge cancel response pending";
+      return true;
+    }
+    if (auto_recharge_status_blocks_start_mission()) {
+      reason = "auto_recharge/status=" + agv_inventory_system::trim(latest_auto_recharge_status_);
+      return true;
+    }
+    if (latest_auto_recharge_charging_) {
+      reason = "robot_charging_flag=true";
+      return true;
+    }
+    if (latest_auto_recharge_recharge_flag_ != 0) {
+      reason = "robot_recharge_flag=" + std::to_string(latest_auto_recharge_recharge_flag_);
+      return true;
+    }
+    if (stop_auto_charge_depart_phase_ == StopAutoChargeDepartPhase::CANCELING &&
+      !stop_auto_charge_cancel_response_ready_)
+    {
+      reason = "stop auto charge cancel response pending";
+      return true;
+    }
+    return false;
+  }
+
+  bool start_manual_auto_recharge_cancel(std::string & message)
+  {
+    message.clear();
+    manual_auto_recharge_cancel_pending_ = true;
+    manual_auto_recharge_cancel_success_ = false;
+    manual_auto_recharge_cancel_message_.clear();
+    manual_auto_recharge_cancel_request_time_ = this->now();
+
+    if (!send_auto_recharge_cancel_request_with_callback(
+        "收到取消自动回充指令",
+        [this](bool success, const std::string & response_message) {
+          manual_auto_recharge_cancel_pending_ = false;
+          manual_auto_recharge_cancel_success_ = success;
+          manual_auto_recharge_cancel_message_ = response_message;
+          const std::string detail =
+            std::string("对外取消自动回充底层响应: ") +
+            (success ? "success" : "failed") +
+            "，" + response_message;
+          if (success) {
+            publish_log(detail);
+          } else {
+            RCLCPP_ERROR(get_logger(), "%s", detail.c_str());
+            publish_log(detail);
+          }
+        },
+        message))
+    {
+      manual_auto_recharge_cancel_pending_ = false;
+      return false;
+    }
+
+    return true;
+  }
+
+  void handle_manual_auto_recharge_cancel_pending()
+  {
+    if (!manual_auto_recharge_cancel_pending_) {
+      return;
+    }
+
+    const double elapsed =
+      manual_auto_recharge_cancel_request_time_.nanoseconds() == 0 ?
+      0.0 : (this->now() - manual_auto_recharge_cancel_request_time_).seconds();
+    if (elapsed < std::max(0.1, auto_recharge_cancel_response_timeout_sec_)) {
+      return;
+    }
+
+    manual_auto_recharge_cancel_pending_ = false;
+    manual_auto_recharge_cancel_success_ = false;
+    manual_auto_recharge_cancel_message_ =
+      "取消自动回充超时，底盘可能仍处于充电/贴桩状态";
+    RCLCPP_ERROR(get_logger(), "%s", manual_auto_recharge_cancel_message_.c_str());
+    publish_log(manual_auto_recharge_cancel_message_);
+    publish_state_text(manual_auto_recharge_cancel_message_);
   }
 
   bool start_stop_auto_charge_and_depart_flow(std::string & message)
@@ -2988,7 +3108,7 @@ private:
       return false;
     }
     if (!auto_recharge_control_active_for_depart()) {
-      message = "当前未处于自动回充/充电状态，禁止离桩前进。";
+      message = "当前未处于自动回充/充电状态，禁止离桩移动。";
       publish_log(message);
       publish_state_text(message);
       return false;
@@ -3039,7 +3159,7 @@ private:
     }
 
     set_state(State::STOP_AUTO_CHARGE_AND_DEPART, "停止自动充电并离桩：等待自动回充取消");
-    message = "已发送停止自动充电请求，等待回充控制释放后离桩前进。";
+    message = "已发送停止自动充电请求，等待回充控制释放后离桩移动。";
     publish_state_text(message);
     publish_log(message);
     return true;
@@ -3094,6 +3214,13 @@ private:
         if (!auto_recharge_control_released_for_depart()) {
           return;
         }
+        if (!latest_auto_recharge_charging_ || auto_recharge_cancel_response_reports_departed()) {
+          stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::STOP_AFTER;
+          stop_auto_charge_depart_phase_start_time_ = this->now();
+          publish_log(
+            "charging flag cleared by auto_recharger cancel, skip extra depart motion");
+          return;
+        }
         stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::STOP_BEFORE;
         stop_auto_charge_depart_phase_start_time_ = this->now();
         publish_log("自动回充控制已释放，离桩前先停车等待。");
@@ -3120,7 +3247,7 @@ private:
         stop_auto_charge_depart_target_yaw_ = normalize_angle(current.yaw);
         stop_auto_charge_depart_phase_ = StopAutoChargeDepartPhase::DEPARTING;
         stop_auto_charge_depart_phase_start_time_ = this->now();
-        publish_log("开始沿机器人自身 x 正方向低速离桩。");
+        publish_log("开始按 stop_auto_charge_depart_speed_mps 符号低速离桩。");
         return;
       }
       case StopAutoChargeDepartPhase::DEPARTING: {
@@ -3147,11 +3274,12 @@ private:
           return;
         }
         geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = std::clamp(std::abs(stop_auto_charge_depart_speed_mps_), 0.0, 0.20);
-        if (cmd.linear.x <= 1e-4) {
-          fail_stop_auto_charge_and_depart("离桩前进速度非法");
+        const double speed_abs = std::clamp(std::abs(stop_auto_charge_depart_speed_mps_), 0.0, 0.20);
+        if (speed_abs <= 1e-4) {
+          fail_stop_auto_charge_and_depart("离桩速度非法");
           return;
         }
+        cmd.linear.x = std::copysign(speed_abs, stop_auto_charge_depart_speed_mps_);
         cmd.angular.z = yaw_hold_command(
           stop_auto_charge_depart_target_yaw_,
           current.yaw,
@@ -5094,6 +5222,8 @@ private:
     between_side_auto_charge_target_ = -1;
     between_side_auto_charge_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     between_side_auto_charge_ready_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    between_side_auto_charge_cancel_request_time_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
   bool apply_full_inventory_route_overrides(std::string & reason)
@@ -6195,6 +6325,7 @@ private:
     between_side_auto_charge_cancel_response_ready_ = false;
     between_side_auto_charge_cancel_response_success_ = false;
     between_side_auto_charge_cancel_response_message_.clear();
+    between_side_auto_charge_cancel_request_time_ = this->now();
 
     auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
     (void)inventory_auto_recharge_cancel_client_->async_send_request(
@@ -6311,6 +6442,51 @@ private:
     const double elapsed =
       (this->now() - between_side_auto_charge_start_time_).seconds();
     const bool ready = auto_recharge_status_is_ready() || auto_recharge_charging_flag_ready();
+    const std::string auto_recharge_status =
+      agv_inventory_system::trim(latest_auto_recharge_status_);
+
+    if (between_side_auto_charge_cancel_sent_) {
+      if (!between_side_auto_charge_cancel_response_ready_) {
+        const double cancel_elapsed =
+          between_side_auto_charge_cancel_request_time_.nanoseconds() == 0 ?
+          0.0 : (this->now() - between_side_auto_charge_cancel_request_time_).seconds();
+        if (cancel_elapsed >= std::max(0.1, auto_recharge_cancel_response_timeout_sec_)) {
+          fail_full_inventory(
+            "跨侧自动回充取消响应超时，timeout=" +
+            format_seconds(auto_recharge_cancel_response_timeout_sec_) +
+            " status=" + auto_recharge_status);
+          return;
+        }
+        if (auto_recharge_status == "CANCELING" || auto_recharge_status == "CANCELED") {
+          RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "[mission_manager][FULL_INVENTORY] waiting between-side auto charge cancel response, "
+            "ignore transitional status=%s",
+            auto_recharge_status.c_str());
+        } else {
+          RCLCPP_INFO_THROTTLE(
+            get_logger(),
+            *get_clock(),
+            1000,
+            "[mission_manager][FULL_INVENTORY] waiting between-side auto charge cancel response");
+        }
+        return;
+      }
+
+      if (!between_side_auto_charge_cancel_response_success_) {
+        fail_full_inventory(
+          "跨侧自动回充取消失败: " + between_side_auto_charge_cancel_response_message_);
+        return;
+      }
+
+      publish_full_inventory_log(
+        "between-side auto charge cancel confirmed, continue next side; fallback=" +
+        std::string(between_side_auto_charge_fallback_used_ ? "true" : "false"));
+      continue_full_inventory_after_between_side_auto_charge();
+      return;
+    }
 
     if (auto_recharge_status_is_failure() && !ready) {
       fail_full_inventory("跨侧自动回充失败，status=" + latest_auto_recharge_status_);
@@ -6347,7 +6523,7 @@ private:
         "[mission_manager][FULL_INVENTORY] between-side auto charge waiting target=%d "
         "status=%s charging=%s elapsed=%.2f runtime=%.2f ready=%s",
         between_side_auto_charge_target_,
-        latest_auto_recharge_status_.c_str(),
+        auto_recharge_status.c_str(),
         latest_auto_recharge_charging_ ? "true" : "false",
         elapsed,
         between_side_auto_charge_runtime_sec_,
@@ -6367,26 +6543,6 @@ private:
         std::string(between_side_auto_charge_fallback_used_ ? "true" : "false"));
       return;
     }
-
-    if (!between_side_auto_charge_cancel_response_ready_) {
-      RCLCPP_INFO_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        1000,
-        "[mission_manager][FULL_INVENTORY] waiting between-side auto charge cancel response");
-      return;
-    }
-
-    if (!between_side_auto_charge_cancel_response_success_) {
-      fail_full_inventory(
-        "跨侧自动回充取消失败: " + between_side_auto_charge_cancel_response_message_);
-      return;
-    }
-
-    publish_full_inventory_log(
-      "between-side auto charge cancel confirmed, continue next side; fallback=" +
-      std::string(between_side_auto_charge_fallback_used_ ? "true" : "false"));
-    continue_full_inventory_after_between_side_auto_charge();
   }
 
   void advance_full_inventory_sequence()
@@ -8083,9 +8239,14 @@ private:
     const std::shared_ptr<agv_inventory_system::srv::StartMission::Request> request,
     std::shared_ptr<agv_inventory_system::srv::StartMission::Response> response)
   {
-    if (state_ == State::AUTO_RECHARGING) {
+    std::string auto_recharge_block_reason;
+    if (auto_recharge_control_blocks_start_mission(auto_recharge_block_reason)) {
       response->accepted = false;
-      response->message = "自动回充流程正在运行，暂不接收盘库任务";
+      response->message =
+        "auto recharge is active or canceling; reject start_mission";
+      if (!auto_recharge_block_reason.empty()) {
+        response->message += " (" + auto_recharge_block_reason + ")";
+      }
       return;
     }
 
@@ -8361,15 +8522,47 @@ private:
   {
     (void)request;
 
-    if (state_ != State::AUTO_RECHARGING) {
+    if (!has_active_recharge_or_charging_state()) {
       response->success = true;
       response->message = "当前未处于自动回充状态，无需取消";
       publish_log(response->message);
       return;
     }
 
+    if (manual_auto_recharge_cancel_pending_) {
+      const double elapsed =
+        manual_auto_recharge_cancel_request_time_.nanoseconds() == 0 ?
+        0.0 : (this->now() - manual_auto_recharge_cancel_request_time_).seconds();
+      const double timeout = std::max(0.1, auto_recharge_cancel_response_timeout_sec_);
+      if (elapsed < timeout) {
+        response->success = true;
+        response->message = "取消自动回充请求已发出，正在等待底层释放充电状态。";
+        publish_log(response->message);
+        publish_state_text(response->message);
+        return;
+      }
+
+      manual_auto_recharge_cancel_pending_ = false;
+      response->success = false;
+      response->message = "取消自动回充超时，底盘可能仍处于充电/贴桩状态";
+      publish_log(response->message);
+      publish_state_text(response->message);
+      return;
+    }
+
+    RCLCPP_WARN(
+      get_logger(),
+      "cancel_auto_recharge: charging/recharge flag active, forward cancel to auto_recharger "
+      "(state=%s, status=%s, robot_charging_flag=%s, robot_recharge_flag=%d)",
+      state_to_string(state_).c_str(),
+      agv_inventory_system::trim(latest_auto_recharge_status_).c_str(),
+      latest_auto_recharge_charging_ ? "true" : "false",
+      latest_auto_recharge_recharge_flag_);
+    publish_log(
+      "cancel_auto_recharge: charging/recharge flag active, forward cancel to auto_recharger");
+
     std::string cancel_message;
-    if (!send_auto_recharge_cancel_request("收到取消自动回充指令", cancel_message)) {
+    if (!start_manual_auto_recharge_cancel(cancel_message)) {
       response->success = false;
       response->message = cancel_message;
       return;
@@ -8380,7 +8573,7 @@ private:
     pending_interrupt_request_ = PendingInterruptRequest::NONE;
     return_mode_ = ReturnMode::NONE;
     response->success = true;
-    response->message = "已发送取消自动回充请求，系统切回待机。";
+    response->message = "取消自动回充请求已发出，正在等待底层释放充电状态。";
     set_state(State::IDLE, response->message);
     publish_state_text(response->message);
     publish_log(response->message);
@@ -9913,6 +10106,8 @@ private:
 
   void on_timer()
   {
+    handle_manual_auto_recharge_cancel_pending();
+
     if (state_ == State::SAFE_EXIT_GAP) {
       handle_safe_exit_gap_state();
       return;
@@ -10268,6 +10463,7 @@ private:
   std::string nav2_goal_frame_{"map"};
   double auto_recharge_service_timeout_sec_{3.0};
   double auto_recharge_cancel_timeout_sec_{3.0};
+  double auto_recharge_cancel_response_timeout_sec_{15.0};
   bool safe_exit_gap_enabled_{true};
   double safe_exit_gap_speed_mps_{0.05};
   double safe_exit_gap_yaw_kp_{0.6};
@@ -10469,6 +10665,7 @@ private:
   int between_side_auto_charge_target_{-1};
   rclcpp::Time between_side_auto_charge_start_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time between_side_auto_charge_ready_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time between_side_auto_charge_cancel_request_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time full_inventory_same_side_search_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time full_inventory_final_recognition_wait_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time full_inventory_recognition_fallback_start_{0, 0, RCL_ROS_TIME};
@@ -10494,6 +10691,10 @@ private:
   rclcpp::Time latest_auto_recharge_charging_time_{0, 0, RCL_ROS_TIME};
   int latest_auto_recharge_recharge_flag_{0};
   rclcpp::Time latest_auto_recharge_recharge_flag_time_{0, 0, RCL_ROS_TIME};
+  bool manual_auto_recharge_cancel_pending_{false};
+  bool manual_auto_recharge_cancel_success_{false};
+  std::string manual_auto_recharge_cancel_message_;
+  rclcpp::Time manual_auto_recharge_cancel_request_time_{0, 0, RCL_ROS_TIME};
   bool robot_inside_gap_{false};
   double safe_exit_gap_start_distance_{0.0};
   double safe_exit_gap_target_distance_{0.0};
