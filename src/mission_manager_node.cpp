@@ -288,6 +288,27 @@ public:
     web_client_mode_ = declare_parameter<std::string>("web_client_mode", "local");
     open_gap_wait_sec_ = declare_parameter<double>("open_gap_wait_sec", 5.0);
     close_gap_wait_sec_ = declare_parameter<double>("close_gap_wait_sec", 3.0);
+    plc_http_enabled_ = declare_parameter<bool>("plc_http_enabled", false);
+    plc_server_url_ =
+      declare_parameter<std::string>("plc_server_url", "http://<PLC_GATEWAY_HOST>:8100");
+    plc_open_endpoint_ = declare_parameter<std::string>("plc_open_endpoint", "/open");
+    plc_close_endpoint_ = declare_parameter<std::string>("plc_close_endpoint", "/close");
+    plc_stop_endpoint_ = declare_parameter<std::string>("plc_stop_endpoint", "/stop");
+    plc_hello_endpoint_ = declare_parameter<std::string>("plc_hello_endpoint", "/hello");
+    plc_request_timeout_sec_ = declare_parameter<double>("plc_request_timeout_sec", 3.0);
+    plc_retry_count_ = declare_parameter<int>("plc_retry_count", 1);
+    plc_fail_policy_ = declare_parameter<std::string>("plc_fail_policy", "error");
+    const auto plc_supported_cabinets_param =
+      declare_parameter<std::vector<int64_t>>(
+      "plc_supported_cabinets",
+      std::vector<int64_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18});
+    plc_supported_cabinets_.assign(
+      plc_supported_cabinets_param.begin(),
+      plc_supported_cabinets_param.end());
+    plc_open_wait_sec_ = declare_parameter<double>("plc_open_wait_sec", 5.0);
+    plc_call_close_on_mission_done_ =
+      declare_parameter<bool>("plc_call_close_on_mission_done", false);
+    plc_call_stop_on_error_ = declare_parameter<bool>("plc_call_stop_on_error", false);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -751,6 +772,16 @@ private:
     AUTO_RECHARGE,
   };
 
+  enum class PlcOpenContinuation
+  {
+    NONE,
+    SINGLE_CABINET_PREPARE_NAV,
+    FULL_INVENTORY_START_ROUTE,
+    FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
+    FULL_INVENTORY_ADVANCE_ROUTE,
+    FULL_INVENTORY_BETWEEN_SIDE_ROUTE,
+  };
+
   enum class WaitGapPhase
   {
     IDLE,
@@ -1005,6 +1036,25 @@ private:
     }
   }
 
+  static std::string plc_open_continuation_to_string(PlcOpenContinuation continuation)
+  {
+    switch (continuation) {
+      case PlcOpenContinuation::SINGLE_CABINET_PREPARE_NAV:
+        return "SINGLE_CABINET_PREPARE_NAV";
+      case PlcOpenContinuation::FULL_INVENTORY_START_ROUTE:
+        return "FULL_INVENTORY_START_ROUTE";
+      case PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
+        return "FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH";
+      case PlcOpenContinuation::FULL_INVENTORY_ADVANCE_ROUTE:
+        return "FULL_INVENTORY_ADVANCE_ROUTE";
+      case PlcOpenContinuation::FULL_INVENTORY_BETWEEN_SIDE_ROUTE:
+        return "FULL_INVENTORY_BETWEEN_SIDE_ROUTE";
+      case PlcOpenContinuation::NONE:
+      default:
+        return "NONE";
+    }
+  }
+
   static double normalize_angle(double angle)
   {
     while (angle > M_PI) {
@@ -1104,6 +1154,18 @@ private:
       return mode;
     }
     return "auto_charge";
+  }
+
+  static std::string normalize_plc_fail_policy(std::string policy)
+  {
+    policy = agv_inventory_system::trim(policy);
+    std::transform(policy.begin(), policy.end(), policy.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (policy == "continue_without_plc") {
+      return policy;
+    }
+    return "error";
   }
 
   bool finish_return_mode_is_map_origin() const
@@ -1227,6 +1289,11 @@ private:
   void publish_full_inventory_log(const std::string & text)
   {
     publish_log("[mission_manager][FULL_INVENTORY] " + text);
+  }
+
+  void publish_plc_log(const std::string & text)
+  {
+    publish_log("[mission_manager][PLC] " + text);
   }
 
   void publish_motion_log(const std::string & text)
@@ -1460,6 +1527,10 @@ private:
     lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
     lift_down_duration_sec_ = std::max(0.0, lift_down_duration_sec_);
     lift_service_timeout_sec_ = std::max(0.1, lift_service_timeout_sec_);
+    plc_request_timeout_sec_ = std::max(0.1, plc_request_timeout_sec_);
+    plc_retry_count_ = std::max(0, plc_retry_count_);
+    plc_open_wait_sec_ = std::max(0.0, plc_open_wait_sec_);
+    plc_fail_policy_ = normalize_plc_fail_policy(plc_fail_policy_);
 
     agv_inventory_system::WebApiClientParams web_params;
     web_params.web_client_mode = web_client_mode_;
@@ -1468,6 +1539,13 @@ private:
     web_params.web_close_gap_endpoint = web_close_gap_endpoint_;
     web_params.web_status_endpoint = web_status_endpoint_;
     web_params.web_result_endpoint = web_result_endpoint_;
+    web_params.plc_server_url = plc_server_url_;
+    web_params.plc_open_endpoint = plc_open_endpoint_;
+    web_params.plc_close_endpoint = plc_close_endpoint_;
+    web_params.plc_stop_endpoint = plc_stop_endpoint_;
+    web_params.plc_hello_endpoint = plc_hello_endpoint_;
+    web_params.plc_request_timeout_sec = plc_request_timeout_sec_;
+    web_params.plc_retry_count = plc_retry_count_;
     web_api_client_.setParams(web_params);
   }
 
@@ -1561,6 +1639,20 @@ private:
       single_cabinet_motion_target_cabinet_,
       single_cabinet_motion_stop_after_scan_ ? "true" : "false",
       single_cabinet_final_recognition_wait_sec_);
+    RCLCPP_INFO(
+      get_logger(),
+      "PLC HTTP配置: enabled=%s server_url=%s open_endpoint=%s timeout=%.2f retry_count=%d "
+      "fail_policy=%s supported=%s open_wait=%.2f call_close_on_done=%s call_stop_on_error=%s",
+      plc_http_enabled_ ? "true" : "false",
+      plc_server_url_.c_str(),
+      plc_open_endpoint_.c_str(),
+      plc_request_timeout_sec_,
+      plc_retry_count_,
+      plc_fail_policy_.c_str(),
+      cabinet_unit_to_string(plc_supported_cabinets_).c_str(),
+      plc_open_wait_sec_,
+      plc_call_close_on_mission_done_ ? "true" : "false",
+      plc_call_stop_on_error_ ? "true" : "false");
     RCLCPP_INFO(
       get_logger(),
       "侧排盘库配置: enabled=%s name=%s first_gap=%s first_seq=%s "
@@ -4637,6 +4729,16 @@ private:
       reset_entry_gap_runtime();
       publish_gap_context();
       reset_segment_distance();
+      if (plc_http_enabled_) {
+        mission_active_ = false;
+        request_recognizer_enable(false);
+        set_corridor_mode(false, false);
+        publish_stop();
+        set_state(
+          State::ERROR,
+          "legacy targets_ 多目标切换入口本轮未接入 PLC open/wait，禁止在 plc_http_enabled=true 时直接移动");
+        return;
+      }
       std::string nav_route_fail_reason;
       if (!begin_nav_route_for_current_target("切换下一个目标，开始Nav2巡航路线识别", nav_route_fail_reason)) {
         set_state(State::ERROR, nav_route_fail_reason);
@@ -4668,6 +4770,232 @@ private:
   {
     state_enter_time_ = this->now();
     set_state(s, "[mission_manager][single_cabinet] " + detail);
+  }
+
+  bool plc_continue_without_plc() const
+  {
+    return normalize_plc_fail_policy(plc_fail_policy_) == "continue_without_plc";
+  }
+
+  bool is_plc_supported_cabinet(int cabinet_id) const
+  {
+    return std::find(
+      plc_supported_cabinets_.begin(),
+      plc_supported_cabinets_.end(),
+      cabinet_id) != plc_supported_cabinets_.end();
+  }
+
+  bool validate_plc_open_config(std::string & reason) const
+  {
+    reason.clear();
+    if (agv_inventory_system::trim(plc_server_url_).empty()) {
+      reason = "plc_server_url 为空";
+      return false;
+    }
+    if (plc_server_url_.find("<PLC_GATEWAY_HOST>") != std::string::npos) {
+      reason = "plc_server_url 仍包含 <PLC_GATEWAY_HOST> 占位，未配置小车端 PLC Flask 网关地址";
+      return false;
+    }
+    if (agv_inventory_system::trim(plc_open_endpoint_).empty()) {
+      reason = "plc_open_endpoint 为空";
+      return false;
+    }
+    return true;
+  }
+
+  void fail_plc_open(
+    int cabinet_id,
+    const std::string & context,
+    const std::string & reason)
+  {
+    const std::string message =
+      "PLC open failed target_cabinet=" + std::to_string(cabinet_id) +
+      " context=" + context +
+      " reason=" + reason +
+      " fail_policy=" + normalize_plc_fail_policy(plc_fail_policy_);
+    publish_plc_log("ERROR " + message);
+    if (full_inventory_active_) {
+      fail_full_inventory(message);
+    } else if (single_cabinet_motion_active_) {
+      fail_single_cabinet_motion(message);
+    } else {
+      mission_error_reason_ = message;
+      set_state(State::ERROR, message);
+    }
+  }
+
+  bool request_plc_open_for_cabinet(int cabinet_id, const std::string & context)
+  {
+    plc_open_wait_required_ = false;
+    if (!plc_http_enabled_) {
+      return true;
+    }
+
+    const std::string fail_policy = normalize_plc_fail_policy(plc_fail_policy_);
+    publish_plc_log(
+      "open start mode=" + current_plc_task_mode() +
+      " state=" + state_to_string(state_) +
+      " context=" + context +
+      " target_cabinet=" + std::to_string(cabinet_id) +
+      " shelf=" + std::to_string(cabinet_id) +
+      " server_url=" + plc_server_url_ +
+      " endpoint=" + plc_open_endpoint_ +
+      " timeout=" + format_seconds(plc_request_timeout_sec_) +
+      " retry_count=" + std::to_string(plc_retry_count_) +
+      " fail_policy=" + fail_policy);
+
+    std::string config_reason;
+    if (!validate_plc_open_config(config_reason)) {
+      fail_plc_open(cabinet_id, context, "配置错误: " + config_reason);
+      return false;
+    }
+
+    if (!is_plc_supported_cabinet(cabinet_id)) {
+      const std::string reason =
+        "目标柜号暂未配置 PLC 控制，不做 19-36 到 1-18 映射 cabinet=" +
+        std::to_string(cabinet_id) +
+        " supported=" + cabinet_unit_to_string(plc_supported_cabinets_);
+      if (plc_continue_without_plc()) {
+        RCLCPP_WARN(get_logger(), "[mission_manager][PLC] %s", reason.c_str());
+        publish_plc_log("WARNING " + reason + "，continue_without_plc 后继续原流程");
+        return true;
+      }
+      fail_plc_open(cabinet_id, context, reason);
+      return false;
+    }
+
+    if (web_api_client_.requestOpenCabinet(cabinet_id)) {
+      plc_open_wait_required_ = true;
+      publish_plc_log(
+        "open request success target_cabinet=" + std::to_string(cabinet_id) +
+        " HTTP 200 only means request-layer success; response body is log-only");
+      return true;
+    }
+
+    const std::string reason =
+      "/open 请求层失败: HTTP 非 200、连接失败或超时 target_cabinet=" +
+      std::to_string(cabinet_id);
+    if (plc_continue_without_plc()) {
+      RCLCPP_WARN(get_logger(), "[mission_manager][PLC] %s", reason.c_str());
+      publish_plc_log("WARNING " + reason + "，continue_without_plc 后继续原流程");
+      return true;
+    }
+
+    fail_plc_open(cabinet_id, context, reason);
+    return false;
+  }
+
+  bool begin_plc_open_wait_for_target(
+    int cabinet_id,
+    PlcOpenContinuation continuation,
+    const std::string & context)
+  {
+    plc_open_wait_target_cabinet_ = cabinet_id;
+    plc_open_wait_continuation_ = continuation;
+    plc_open_wait_context_ = context;
+
+    if (!plc_http_enabled_) {
+      clear_plc_open_wait_context();
+      publish_plc_log(
+        "skip open/wait plc_http_enabled=false mode=" + current_plc_task_mode() +
+        " target_cabinet=" + std::to_string(cabinet_id) +
+        " continuation=" + plc_open_continuation_to_string(continuation));
+      return true;
+    }
+
+    publish_stop();
+    if (!request_plc_open_for_cabinet(cabinet_id, context)) {
+      return false;
+    }
+
+    if (!plc_open_wait_required_) {
+      publish_plc_log(
+        "skip fixed open wait because PLC open was bypassed by fail policy target_cabinet=" +
+        std::to_string(cabinet_id) +
+        " continuation=" + plc_open_continuation_to_string(continuation));
+      handle_plc_open_wait_done(false);
+      return true;
+    }
+
+    publish_plc_log(
+      "enter fixed open wait target_cabinet=" + std::to_string(cabinet_id) +
+      " wait_sec=" + format_seconds(plc_open_wait_sec_) +
+      " current_state=" + state_to_string(state_) +
+      " continuation=" + plc_open_continuation_to_string(continuation));
+    set_flow_state(
+      State::WAIT_OPEN_READY,
+      "[PLC] 固定等待 open 完成，不接收 PLC 状态反馈 target_cabinet=" +
+      std::to_string(cabinet_id) +
+      " wait=" + format_seconds(plc_open_wait_sec_) +
+      " continuation=" + plc_open_continuation_to_string(continuation));
+    return true;
+  }
+
+  void clear_plc_open_wait_context()
+  {
+    plc_open_wait_continuation_ = PlcOpenContinuation::NONE;
+    plc_open_wait_target_cabinet_ = -1;
+    plc_open_wait_required_ = false;
+    plc_open_wait_context_.clear();
+  }
+
+  std::string current_plc_task_mode() const
+  {
+    if (full_inventory_active_) {
+      return "full";
+    }
+    if (single_cabinet_motion_active_) {
+      return "single";
+    }
+    if (mission_active_) {
+      return "legacy";
+    }
+    return "idle";
+  }
+
+  void handle_plc_open_wait_done(bool waited = true)
+  {
+    const PlcOpenContinuation continuation = plc_open_wait_continuation_;
+    const int cabinet_id = plc_open_wait_target_cabinet_;
+    const std::string context = plc_open_wait_context_;
+    clear_plc_open_wait_context();
+
+    publish_plc_log(
+      std::string(waited ? "fixed open wait done" : "PLC open bypass continuation") +
+      " target_cabinet=" + std::to_string(cabinet_id) +
+      " waited_sec=" + format_seconds(waited ? plc_open_wait_sec_ : 0.0) +
+      " previous_context=" + context +
+      " next=" + plc_open_continuation_to_string(continuation));
+
+    switch (continuation) {
+      case PlcOpenContinuation::SINGLE_CABINET_PREPARE_NAV:
+        set_single_cabinet_state(
+          State::SINGLE_CABINET_PREPARE_NAV,
+          "PLC open 固定等待结束，prepare nav target_cabinet=" + std::to_string(cabinet_id));
+        return;
+      case PlcOpenContinuation::FULL_INVENTORY_START_ROUTE:
+        (void)start_full_inventory_target_route("PLC open wait done, start target route");
+        return;
+      case PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
+        start_full_inventory_same_side_next_search();
+        return;
+      case PlcOpenContinuation::FULL_INVENTORY_ADVANCE_ROUTE:
+        (void)start_full_inventory_target_route("PLC open wait done, advance next target");
+        return;
+      case PlcOpenContinuation::FULL_INVENTORY_BETWEEN_SIDE_ROUTE:
+        (void)start_full_inventory_target_route("PLC open wait done, between-side auto charge finished");
+        return;
+      case PlcOpenContinuation::NONE:
+      default:
+        publish_plc_log("WARNING WAIT_OPEN_READY done with no PLC continuation; falling back to single cabinet prepare if active");
+        if (single_cabinet_motion_active_) {
+          const int target_cabinet = active_single_cabinet_scan_cabinet();
+          set_single_cabinet_state(
+            State::SINGLE_CABINET_PREPARE_NAV,
+            "open wait done, prepare nav target_cabinet=" + std::to_string(target_cabinet));
+        }
+        return;
+    }
   }
 
   bool find_configured_gap_cabinets(
@@ -5097,6 +5425,17 @@ private:
       reason = "等待 Nav2 启动完成超时: Nav2 action server 不可用";
       fail_full_inventory(reason);
       return false;
+    }
+    if (!begin_plc_open_wait_for_target(
+        current_target_cabinet_,
+        PlcOpenContinuation::FULL_INVENTORY_START_ROUTE,
+        "FULL_INVENTORY first target before route"))
+    {
+      reason = mission_error_reason_.empty() ? "PLC open 失败" : mission_error_reason_;
+      return false;
+    }
+    if (plc_http_enabled_) {
+      return true;
     }
     return start_full_inventory_target_route("start target route");
   }
@@ -5949,7 +6288,16 @@ private:
       "between-side auto charge finished, switch to side=" + full_inventory_current_side_ +
       " route=" + full_inventory_current_route_ +
       " target=" + std::to_string(target));
-    (void)start_full_inventory_target_route("between-side auto charge finished, switch side");
+    if (!begin_plc_open_wait_for_target(
+        current_target_cabinet_,
+        PlcOpenContinuation::FULL_INVENTORY_BETWEEN_SIDE_ROUTE,
+        "between-side auto charge finished before route"))
+    {
+      return;
+    }
+    if (!plc_http_enabled_) {
+      (void)start_full_inventory_target_route("between-side auto charge finished, switch side");
+    }
   }
 
   void handle_full_inventory_auto_charge_between_sides_state()
@@ -6102,14 +6450,32 @@ private:
     }
 
     if (same_side && full_inventory_same_side_next_search_enabled_) {
-      start_full_inventory_same_side_next_search();
+      if (!begin_plc_open_wait_for_target(
+          current_target_cabinet_,
+          PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
+          "advance same-side next target before search"))
+      {
+        return;
+      }
+      if (!plc_http_enabled_) {
+        start_full_inventory_same_side_next_search();
+      }
       return;
     }
 
     publish_full_inventory_log(
       "next_target=" + std::to_string(next_target) +
       " route restart side=" + next_side);
-    (void)start_full_inventory_target_route("advance next target");
+    if (!begin_plc_open_wait_for_target(
+        current_target_cabinet_,
+        PlcOpenContinuation::FULL_INVENTORY_ADVANCE_ROUTE,
+        "advance next target before route"))
+    {
+      return;
+    }
+    if (!plc_http_enabled_) {
+      (void)start_full_inventory_target_route("advance next target");
+    }
   }
 
   bool is_side_row_sequence_request(const std::vector<int> & cabinets) const
@@ -7413,6 +7779,10 @@ private:
       fail_single_cabinet_motion("single_cabinet_side_row_corridor_transfer_enabled=false");
       return;
     }
+    if (plc_http_enabled_) {
+      fail_single_cabinet_motion("side-row corridor transfer 本轮未接入 PLC open/wait，禁止在 plc_http_enabled=true 时直接移动");
+      return;
+    }
 
     const std::string previous_gap = active_single_cabinet_gap_id();
     publish_single_cabinet_log("[corridor_transfer] request close gap=" + previous_gap);
@@ -7456,6 +7826,11 @@ private:
 
   void handle_single_cabinet_prepare_next_gap_state()
   {
+    if (plc_http_enabled_) {
+      fail_single_cabinet_motion("side-row 第二 gap 入口本轮未接入 PLC open/wait，禁止在 plc_http_enabled=true 时直接移动");
+      return;
+    }
+
     single_cabinet_active_gap_id_ = single_cabinet_side_row_second_gap_;
     single_cabinet_side_row_phase_ = SingleCabinetSideRowPhase::SECOND_PRIMARY_SCAN;
     single_cabinet_current_scan_cabinet_ = single_cabinet_side_row_second_gap_scan_sequence_.front();
@@ -7817,6 +8192,18 @@ private:
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
     publish_gap_context();
+
+    if (plc_http_enabled_) {
+      mission_active_ = false;
+      request_recognizer_enable(false);
+      set_corridor_mode(false, false);
+      publish_stop();
+      response->accepted = false;
+      response->message =
+        "legacy targets_ 初始移动入口本轮未接入 PLC open/wait，禁止在 plc_http_enabled=true 时直接移动";
+      set_state(State::ERROR, response->message);
+      return;
+    }
 
     tracking_stable_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     last_target_seen_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -9240,6 +9627,32 @@ private:
           return;
         }
 
+        if (plc_http_enabled_) {
+          const int target_cabinet =
+            single_cabinet_motion_active_ ? active_single_cabinet_scan_cabinet() :
+            (!plan->scan_cabinets.empty() ? plan->scan_cabinets.front() : current_target_cabinet_);
+          if (target_cabinet <= 0) {
+            fail_inventory_flow("PLC open 目标柜号非法，无法发送 /open");
+            return;
+          }
+          publish_inventory_flow_log(
+            "PLC enabled: requesting open before movement target_cabinet=" +
+            std::to_string(target_cabinet) +
+            " gap=" + plan->gap_id +
+            " cabinets=" + cabinet_unit_to_string(plan->scan_cabinets));
+          if (single_cabinet_motion_active_) {
+            publish_single_cabinet_log(
+              "PLC open before single-cabinet movement target_cabinet=" +
+              std::to_string(target_cabinet) +
+              " gap=" + plan->gap_id);
+          }
+          (void)begin_plc_open_wait_for_target(
+            target_cabinet,
+            PlcOpenContinuation::SINGLE_CABINET_PREPARE_NAV,
+            "REQUEST_OPEN_GAP -> SINGLE_CABINET_PREPARE_NAV");
+          return;
+        }
+
         publish_inventory_flow_log(
           "start gap=" + plan->gap_id +
           " cabinets=" + cabinet_unit_to_string(plan->scan_cabinets));
@@ -9262,13 +9675,20 @@ private:
       }
 
       case State::WAIT_OPEN_READY: {
-        if (state_elapsed(open_gap_wait_sec_)) {
-          if (single_cabinet_motion_active_) {
-            const int target_cabinet = active_single_cabinet_scan_cabinet();
-            set_single_cabinet_state(
-              State::SINGLE_CABINET_PREPARE_NAV,
-              "prepare nav target_cabinet=" + std::to_string(target_cabinet));
-          }
+        const double wait_sec = plc_http_enabled_ ? plc_open_wait_sec_ : open_gap_wait_sec_;
+        publish_stop();
+        if (!state_elapsed(wait_sec)) {
+          break;
+        }
+        if (plc_http_enabled_) {
+          handle_plc_open_wait_done();
+          break;
+        }
+        if (single_cabinet_motion_active_) {
+          const int target_cabinet = active_single_cabinet_scan_cabinet();
+          set_single_cabinet_state(
+            State::SINGLE_CABINET_PREPARE_NAV,
+            "prepare nav target_cabinet=" + std::to_string(target_cabinet));
         }
         break;
       }
@@ -9970,6 +10390,23 @@ private:
   std::string web_close_gap_endpoint_{"/api/gap/close"};
   std::string web_status_endpoint_{"/api/robot/status"};
   std::string web_result_endpoint_{"/api/inventory/result"};
+  bool plc_http_enabled_{false};
+  std::string plc_server_url_{"http://<PLC_GATEWAY_HOST>:8100"};
+  std::string plc_open_endpoint_{"/open"};
+  std::string plc_close_endpoint_{"/close"};
+  std::string plc_stop_endpoint_{"/stop"};
+  std::string plc_hello_endpoint_{"/hello"};
+  double plc_request_timeout_sec_{3.0};
+  int plc_retry_count_{1};
+  std::string plc_fail_policy_{"error"};
+  std::vector<int> plc_supported_cabinets_{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+  double plc_open_wait_sec_{5.0};
+  bool plc_call_close_on_mission_done_{false};
+  bool plc_call_stop_on_error_{false};
+  PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
+  int plc_open_wait_target_cabinet_{-1};
+  bool plc_open_wait_required_{false};
+  std::string plc_open_wait_context_;
   bool inventory_flow_active_{false};
   std::vector<InventoryGapPlan> gap_request_queue_;
   std::size_t current_gap_request_index_{0};

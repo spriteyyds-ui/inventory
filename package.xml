@@ -27,6 +27,7 @@
   <depend>image_transport</depend>
   <depend>ament_index_cpp</depend>
   <depend>yaml-cpp</depend>
+  <depend>libcurl</depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>python3-serial</exec_depend>

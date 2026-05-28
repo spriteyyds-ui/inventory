@@ -14,6 +14,13 @@ struct WebApiClientParams
   std::string web_close_gap_endpoint{"/api/gap/close"};
   std::string web_status_endpoint{"/api/robot/status"};
   std::string web_result_endpoint{"/api/inventory/result"};
+  std::string plc_server_url{"http://<PLC_GATEWAY_HOST>:8100"};
+  std::string plc_open_endpoint{"/open"};
+  std::string plc_close_endpoint{"/close"};
+  std::string plc_stop_endpoint{"/stop"};
+  std::string plc_hello_endpoint{"/hello"};
+  double plc_request_timeout_sec{3.0};
+  int plc_retry_count{1};
 };
 
 class WebApiClient
@@ -25,6 +32,7 @@ public:
   const WebApiClientParams & params() const;
 
   bool requestOpenGap(const std::string & gap_id) const;
+  bool requestOpenCabinet(int cabinet_id) const;
   bool requestCloseGap(const std::string & gap_id) const;
   bool reportRobotStatus(const std::string & state) const;
   bool reportInventoryResult(
@@ -34,8 +42,9 @@ public:
     const std::string & result) const;
 
 private:
+  bool requestHttpGet(const std::string & action, const std::string & url) const;
   bool isLocalMode() const;
-  bool warnRealHttpNotImplemented(const std::string & action) const;
+  bool warnLegacyWebHttpUnavailable(const std::string & action) const;
 
   WebApiClientParams params_;
 };

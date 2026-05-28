@@ -30,6 +30,13 @@ find_package(image_transport REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(CURL REQUIRED)
+
+if(TARGET CURL::libcurl)
+  set(CURL_LIB_TARGET CURL::libcurl)
+else()
+  set(CURL_LIB_TARGET ${CURL_LIBRARIES})
+endif()
 
 set(msg_files
   "msg/RecognizedNumber.msg"
@@ -116,6 +123,7 @@ add_library(inventory_scan_modules STATIC
   src/inventory_scanner.cpp
   src/web_api_client.cpp
 )
+target_include_directories(inventory_scan_modules PUBLIC ${CURL_INCLUDE_DIRS})
 
 add_executable(mission_manager_node src/mission_manager_node.cpp)
 ament_target_dependencies(mission_manager_node
@@ -136,13 +144,15 @@ if(TARGET yaml-cpp::yaml-cpp)
     mission_manager_node
     ${cpp_typesupport_target}
     inventory_scan_modules
-    yaml-cpp::yaml-cpp)
+    yaml-cpp::yaml-cpp
+    ${CURL_LIB_TARGET})
 else()
   target_link_libraries(
     mission_manager_node
     ${cpp_typesupport_target}
     inventory_scan_modules
-    yaml-cpp)
+    yaml-cpp
+    ${CURL_LIB_TARGET})
 endif()
 
 add_executable(offline_test
@@ -160,6 +170,7 @@ add_executable(test_scan_sequence_generator
   test/test_scan_sequence_generator.cpp
 )
 target_link_libraries(test_scan_sequence_generator inventory_scan_modules)
+target_link_libraries(inventory_scan_modules PUBLIC ${CURL_LIB_TARGET})
 
 install(TARGETS
   corridor_follower_node
