@@ -10,9 +10,7 @@ namespace agv_inventory_system
 namespace
 {
 
-constexpr const char * kJavaServerUrl = "https://172.26.165.218:8099";
-constexpr const char * kJavaCarOpenEndpoint = "/http-control-plc/car_open";
-constexpr bool kJavaVerifyTls = false;
+constexpr const char * kDefaultPlcOpenQueryParam = "shelfId";
 
 std::size_t write_response_body(char * ptr, std::size_t size, std::size_t nmemb, void * userdata)
 {
@@ -60,8 +58,21 @@ bool response_body_reports_failure(const std::string & body)
 {
   return body.find("\"success\":false") != std::string::npos ||
          body.find("\"success\": false") != std::string::npos ||
+         body.find("\"code\":300") != std::string::npos ||
+         body.find("\"code\": 300") != std::string::npos ||
          body.find("\"code\":500") != std::string::npos ||
          body.find("\"code\": 500") != std::string::npos;
+}
+
+bool response_body_reports_success(const std::string & body)
+{
+  return body.find("\"success\":true") != std::string::npos ||
+         body.find("\"success\": true") != std::string::npos;
+}
+
+bool is_http_success(long http_code)
+{
+  return http_code >= 200 && http_code < 300;
 }
 
 bool ensure_curl_global_init()
@@ -108,16 +119,25 @@ bool WebApiClient::requestOpenGap(const std::string & gap_id) const
 
 bool WebApiClient::requestOpenCabinet(int cabinet_id) const
 {
-  const std::string base_url = trim_trailing_slashes(kJavaServerUrl);
-  const std::string endpoint = ensure_leading_slash(kJavaCarOpenEndpoint);
-  const std::string url = base_url + endpoint + "?shelfId=" + std::to_string(cabinet_id);
+  const std::string base_url = trim_trailing_slashes(params_.plc_server_url);
+  const std::string endpoint = ensure_leading_slash(params_.plc_open_endpoint);
+  std::string query_param = params_.plc_open_query_param;
+  if (query_param.empty()) {
+    query_param = kDefaultPlcOpenQueryParam;
+    std::cout << "[web_api_client][PLC] WARNING plc_open_query_param is empty, fallback to "
+              << query_param << std::endl;
+  }
+  const std::string url = base_url + endpoint + "?" + query_param + "=" +
+    std::to_string(cabinet_id);
 
-  std::cout << "[web_api_client][Java] open cabinet request cabinet=" << cabinet_id
-            << " shelfId=" << cabinet_id
+  std::cout << "[web_api_client][PLC] open cabinet request cabinet=" << cabinet_id
+            << " query_param=" << query_param
             << " url=" << url
+            << " verify_tls=" << (params_.plc_verify_tls ? "true" : "false")
+            << " require_body_success=" << (params_.plc_require_body_success ? "true" : "false")
             << " timeout_sec=" << params_.plc_request_timeout_sec
             << " retry_count=" << params_.plc_retry_count << std::endl;
-  return requestHttpGet("Java open cabinet", url);
+  return requestHttpGet("PLC open cabinet", url);
 }
 
 bool WebApiClient::requestCloseGap(const std::string & gap_id) const
@@ -189,8 +209,8 @@ bool WebApiClient::requestHttpGet(const std::string & action, const std::string 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response_body);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, kJavaVerifyTls ? 1L : 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, kJavaVerifyTls ? 2L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, params_.plc_verify_tls ? 1L : 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, params_.plc_verify_tls ? 2L : 0L);
 
     std::cout << "[web_api_client][Java] " << action
               << " attempt=" << attempt << "/" << total_attempts
@@ -202,10 +222,25 @@ bool WebApiClient::requestHttpGet(const std::string & action, const std::string 
     curl_easy_cleanup(curl);
 
     const std::string body_summary = summarize_body(response_body);
-    if (result == CURLE_OK && http_code == 200 && !response_body_reports_failure(response_body)) {
+    if (result == CURLE_OK && is_http_success(http_code)) {
+      if (params_.plc_require_body_success && !response_body_reports_success(response_body)) {
+        std::cout << "[web_api_client][Java] WARNING " << action
+                  << " body success required but success=true was not found"
+                  << " attempt=" << attempt << "/" << total_attempts
+                  << " http_code=" << http_code
+                  << " body_summary=\"" << body_summary << "\"" << std::endl;
+        continue;
+      }
+
       std::cout << "[web_api_client][Java] " << action
                 << " success http_code=" << http_code
                 << " body_summary=\"" << body_summary << "\"" << std::endl;
+      if (!params_.plc_require_body_success && response_body_reports_failure(response_body)) {
+        std::cout << "[web_api_client][Java] WARNING " << action
+                  << " body reports failure, but plc_require_body_success=false, continue after fixed wait"
+                  << " http_code=" << http_code
+                  << " body_summary=\"" << body_summary << "\"" << std::endl;
+      }
       return true;
     }
 

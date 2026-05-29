@@ -362,7 +362,7 @@ mission_manager_node:
     home_pose_yaw: 0.0                                                  # 回零点偏航角，单位 rad
     nav2_action_name: navigate_to_pose                                  # Nav2 NavigateToPose 动作名；改名需与 Nav2 action server 一致
     nav2_goal_frame: map                                                # Nav2 返航目标坐标系；通常为 map，改错会导致目标解释错误
-    nav2_server_wait_timeout_sec: 5.0                                   # 等待 Nav2 action server 超时，单位 s；调大会等待更久
+    nav2_server_wait_timeout_sec: 15.0                                   # 等待 Nav2 action server 超时，单位 s；调大会等待更久
     nav2_startup_wait_enabled: true                                     # 全量盘库启动前是否等待 Nav2 就绪；关闭可更快启动但可能导航未准备好
     nav2_startup_wait_timeout_sec: 60.0                                 # 启动等待 Nav2 就绪超时，单位 s；调大会更耐心等待
     nav2_startup_wait_poll_sec: 0.2                                     # 轮询 Nav2 就绪状态间隔，单位 s；调小响应更快但检查更频繁
@@ -390,11 +390,14 @@ mission_manager_node:
     open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
     plc_http_enabled: false                                             # 是否启用小车端 PLC Flask 网关 HTTP 开柜；关闭时完全保留原流程
-    plc_server_url: "http://<PLC_GATEWAY_HOST>:8100"                    # PLC Flask 网关地址占位；正式部署到小车端后再配置实际主机
-    plc_open_endpoint: "/open"                                          # PLC Flask 网关开柜接口；请求格式为 /open?shelf=<柜号>
+    plc_server_url: "https://172.26.165.218:8099"                       # 当前 Java/PLC HTTP 服务地址；plc_http_enabled=false 时不会发送请求
+    plc_open_endpoint: "/http-control-plc/car_open"                     # 当前 Java/PLC 开柜接口
+    plc_open_query_param: "shelfId"                                     # 当前 Java/PLC 开柜参数名；最终请求为 endpoint?shelfId=<柜号>
     plc_close_endpoint: "/close"                                        # PLC Flask 网关全关接口预留；默认不自动调用
     plc_stop_endpoint: "/stop"                                          # PLC Flask 网关全停止接口预留；默认不自动调用，不等同底盘急停
     plc_hello_endpoint: "/hello"                                        # PLC Flask 网关连通性接口预留；本轮不自动调用
+    plc_verify_tls: false                                               # 当前 HTTPS 测试默认不校验证书；正式部署建议开启并配置可信证书
+    plc_require_body_success: false                                     # false 时只要求 HTTP 2xx；true 时要求 body 明确包含 success=true
     plc_request_timeout_sec: 3.0                                        # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
     plc_retry_count: 1                                                  # PLC HTTP 请求失败后的重试次数，单位 次
     plc_fail_policy: "error"                                            # PLC open 失败策略：error 或 continue_without_plc

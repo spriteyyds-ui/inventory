@@ -16,9 +16,12 @@ struct WebApiClientParams
   std::string web_result_endpoint{"/api/inventory/result"};
   std::string plc_server_url{"http://<PLC_GATEWAY_HOST>:8100"};
   std::string plc_open_endpoint{"/open"};
+  std::string plc_open_query_param{"shelfId"};
   std::string plc_close_endpoint{"/close"};
   std::string plc_stop_endpoint{"/stop"};
   std::string plc_hello_endpoint{"/hello"};
+  bool plc_verify_tls{false};
+  bool plc_require_body_success{false};
   double plc_request_timeout_sec{3.0};
   int plc_retry_count{1};
 };
