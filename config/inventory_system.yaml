@@ -436,6 +436,15 @@ mission_manager_node:
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
 
+    rfid_upload_enabled: true                                           # 是否在每个盘库格位扫描完成后上传 RFID/扫码结果
+    rfid_upload_url: "http://127.0.0.1:8100/upload_inventory"           # RFID 盘库结果 HTTP POST 地址；显式配置，不从 web_base_url 推导
+    rfid_upload_timeout_sec: 3.0                                        # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
+    rfid_upload_retry_count: 2                                          # RFID 上传失败后的重试次数，单位 次
+    rfid_upload_fail_policy: "error"                                    # RFID 上传失败策略：error 或 continue_without_upload
+    rfid_placeholder_enabled: true                                      # 当前无真实 reader 数据时是否生成占位 RFID tag
+    rfid_placeholder_prefix: "RFID_PLACEHOLDER"                         # 占位 RFID tag 前缀，最终格式含柜号/层/格位
+    rfid_upload_require_success: false                                  # false 时 HTTP 200 即成功；true 时要求响应体包含 success=true
+
     scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
     scan_duration_sec: 2.0                                              # 单次扫描动作持续时间，单位 s；调大会采集更久但任务变慢
     scan_timeout_sec: 5.0                                               # 等待扫描完成超时，单位 s；调大会允许扫描设备更慢返回

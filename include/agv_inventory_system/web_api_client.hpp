@@ -24,6 +24,14 @@ struct WebApiClientParams
   bool plc_require_body_success{false};
   double plc_request_timeout_sec{3.0};
   int plc_retry_count{1};
+  bool rfid_upload_enabled{true};
+  std::string rfid_upload_url{"http://127.0.0.1:8100/upload_inventory"};
+  double rfid_upload_timeout_sec{3.0};
+  int rfid_upload_retry_count{2};
+  std::string rfid_upload_fail_policy{"error"};
+  bool rfid_placeholder_enabled{true};
+  std::string rfid_placeholder_prefix{"RFID_PLACEHOLDER"};
+  bool rfid_upload_require_success{false};
 };
 
 class WebApiClient
@@ -46,6 +54,10 @@ public:
 
 private:
   bool requestHttpGet(const std::string & action, const std::string & url) const;
+  bool requestHttpPostJson(
+    const std::string & action,
+    const std::string & url,
+    const std::string & body) const;
   bool isLocalMode() const;
   bool warnLegacyWebHttpUnavailable(const std::string & action) const;
 
