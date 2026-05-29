@@ -192,7 +192,7 @@ gap_detector_node:
     detect_cycle_timeout_sec: 2.5                                       # WAITING_GAP 单轮检测周期超时，单位 s；调大会等待更久，调小更快进入调整
 
     enable_csv_log: true                                                # 是否输出 CSV 调试日志；开启便于分析但会写入磁盘
-    csv_log_dir: /tmp/agv_inventory_gap_logs                       # CSV 调试日志目录；改动会改变日志保存位置
+    csv_log_dir: /tmp/agv_inventory_gap_logs                            # CSV 调试日志目录；改动会改变日志保存位置
     csv_file_prefix: gap_debug                                          # CSV 调试日志文件名前缀；改动便于区分不同实验
 
 inventory_auto_recharger:
@@ -398,7 +398,7 @@ mission_manager_node:
     plc_hello_endpoint: "/hello"                                        # PLC Flask 网关连通性接口预留；本轮不自动调用
     plc_verify_tls: false                                               # 当前 HTTPS 测试默认不校验证书；正式部署建议开启并配置可信证书
     plc_require_body_success: false                                     # false 时只要求 HTTP 2xx；true 时要求 body 明确包含 success=true
-    plc_request_timeout_sec: 3.0                                        # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
+    plc_request_timeout_sec: 10.0                                       # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
     plc_retry_count: 1                                                  # PLC HTTP 请求失败后的重试次数，单位 次
     plc_fail_policy: "error"                                            # PLC open 失败策略：error 或 continue_without_plc
     plc_supported_cabinets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] # 首版支持 PLC 控制的柜号；19-36 不映射
