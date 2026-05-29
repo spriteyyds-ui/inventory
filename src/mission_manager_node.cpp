@@ -294,9 +294,12 @@ public:
     plc_server_url_ =
       declare_parameter<std::string>("plc_server_url", "http://<PLC_GATEWAY_HOST>:8100");
     plc_open_endpoint_ = declare_parameter<std::string>("plc_open_endpoint", "/open");
+    plc_open_query_param_ = declare_parameter<std::string>("plc_open_query_param", "shelfId");
     plc_close_endpoint_ = declare_parameter<std::string>("plc_close_endpoint", "/close");
     plc_stop_endpoint_ = declare_parameter<std::string>("plc_stop_endpoint", "/stop");
     plc_hello_endpoint_ = declare_parameter<std::string>("plc_hello_endpoint", "/hello");
+    plc_verify_tls_ = declare_parameter<bool>("plc_verify_tls", false);
+    plc_require_body_success_ = declare_parameter<bool>("plc_require_body_success", false);
     plc_request_timeout_sec_ = declare_parameter<double>("plc_request_timeout_sec", 3.0);
     plc_retry_count_ = declare_parameter<int>("plc_retry_count", 1);
     plc_fail_policy_ = declare_parameter<std::string>("plc_fail_policy", "error");
@@ -1543,9 +1546,12 @@ private:
     web_params.web_result_endpoint = web_result_endpoint_;
     web_params.plc_server_url = plc_server_url_;
     web_params.plc_open_endpoint = plc_open_endpoint_;
+    web_params.plc_open_query_param = plc_open_query_param_;
     web_params.plc_close_endpoint = plc_close_endpoint_;
     web_params.plc_stop_endpoint = plc_stop_endpoint_;
     web_params.plc_hello_endpoint = plc_hello_endpoint_;
+    web_params.plc_verify_tls = plc_verify_tls_;
+    web_params.plc_require_body_success = plc_require_body_success_;
     web_params.plc_request_timeout_sec = plc_request_timeout_sec_;
     web_params.plc_retry_count = plc_retry_count_;
     web_api_client_.setParams(web_params);
@@ -1643,11 +1649,15 @@ private:
       single_cabinet_final_recognition_wait_sec_);
     RCLCPP_INFO(
       get_logger(),
-      "PLC HTTP配置: enabled=%s server_url=%s open_endpoint=%s timeout=%.2f retry_count=%d "
+      "PLC HTTP配置: enabled=%s server_url=%s open_endpoint=%s open_query_param=%s "
+      "verify_tls=%s require_body_success=%s timeout=%.2f retry_count=%d "
       "fail_policy=%s supported=%s open_wait=%.2f call_close_on_done=%s call_stop_on_error=%s",
       plc_http_enabled_ ? "true" : "false",
       plc_server_url_.c_str(),
       plc_open_endpoint_.c_str(),
+      plc_open_query_param_.c_str(),
+      plc_verify_tls_ ? "true" : "false",
+      plc_require_body_success_ ? "true" : "false",
       plc_request_timeout_sec_,
       plc_retry_count_,
       plc_fail_policy_.c_str(),
@@ -4928,6 +4938,11 @@ private:
       reason = "plc_open_endpoint 为空";
       return false;
     }
+    if (agv_inventory_system::trim(plc_open_query_param_).empty()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][PLC] plc_open_query_param 为空，web_api_client 将默认使用 shelfId");
+    }
     return true;
   }
 
@@ -4965,9 +4980,11 @@ private:
       " state=" + state_to_string(state_) +
       " context=" + context +
       " target_cabinet=" + std::to_string(cabinet_id) +
-      " shelf=" + std::to_string(cabinet_id) +
+      " query_param=" + plc_open_query_param_ +
       " server_url=" + plc_server_url_ +
       " endpoint=" + plc_open_endpoint_ +
+      " verify_tls=" + std::string(plc_verify_tls_ ? "true" : "false") +
+      " require_body_success=" + std::string(plc_require_body_success_ ? "true" : "false") +
       " timeout=" + format_seconds(plc_request_timeout_sec_) +
       " retry_count=" + std::to_string(plc_retry_count_) +
       " fail_policy=" + fail_policy);
@@ -4996,12 +5013,12 @@ private:
       plc_open_wait_required_ = true;
       publish_plc_log(
         "open request success target_cabinet=" + std::to_string(cabinet_id) +
-        " HTTP 200 only means request-layer success; response body is log-only");
+        " HTTP 2xx only means request-layer delivered; response body is log-only");
       return true;
     }
 
     const std::string reason =
-      "/open 请求层失败: HTTP 非 200、连接失败或超时 target_cabinet=" +
+      "/open 请求层失败: HTTP 非 2xx、连接失败或超时 target_cabinet=" +
       std::to_string(cabinet_id);
     if (plc_continue_without_plc()) {
       RCLCPP_WARN(get_logger(), "[mission_manager][PLC] %s", reason.c_str());
@@ -10589,9 +10606,12 @@ private:
   bool plc_http_enabled_{false};
   std::string plc_server_url_{"http://<PLC_GATEWAY_HOST>:8100"};
   std::string plc_open_endpoint_{"/open"};
+  std::string plc_open_query_param_{"shelfId"};
   std::string plc_close_endpoint_{"/close"};
   std::string plc_stop_endpoint_{"/stop"};
   std::string plc_hello_endpoint_{"/hello"};
+  bool plc_verify_tls_{false};
+  bool plc_require_body_success_{false};
   double plc_request_timeout_sec_{3.0};
   int plc_retry_count_{1};
   std::string plc_fail_policy_{"error"};
