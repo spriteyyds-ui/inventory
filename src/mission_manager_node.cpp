@@ -10,6 +10,7 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -314,6 +315,18 @@ public:
     plc_call_close_on_mission_done_ =
       declare_parameter<bool>("plc_call_close_on_mission_done", false);
     plc_call_stop_on_error_ = declare_parameter<bool>("plc_call_stop_on_error", false);
+    rfid_upload_enabled_ = declare_parameter<bool>("rfid_upload_enabled", true);
+    rfid_upload_url_ =
+      declare_parameter<std::string>("rfid_upload_url", "http://127.0.0.1:8100/upload_inventory");
+    rfid_upload_timeout_sec_ = declare_parameter<double>("rfid_upload_timeout_sec", 3.0);
+    rfid_upload_retry_count_ = declare_parameter<int>("rfid_upload_retry_count", 2);
+    rfid_upload_fail_policy_ =
+      declare_parameter<std::string>("rfid_upload_fail_policy", "error");
+    rfid_placeholder_enabled_ = declare_parameter<bool>("rfid_placeholder_enabled", true);
+    rfid_placeholder_prefix_ =
+      declare_parameter<std::string>("rfid_placeholder_prefix", "RFID_PLACEHOLDER");
+    rfid_upload_require_success_ =
+      declare_parameter<bool>("rfid_upload_require_success", false);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -1173,6 +1186,26 @@ private:
     return "error";
   }
 
+  static std::string normalize_rfid_upload_fail_policy(std::string policy)
+  {
+    policy = agv_inventory_system::trim(policy);
+    std::transform(policy.begin(), policy.end(), policy.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (policy == "continue_without_upload") {
+      return policy;
+    }
+    return "error";
+  }
+
+  static std::string make_inventory_location_rfid(int cabinet_id, int layer, int grid)
+  {
+    std::ostringstream oss;
+    oss << "shelf_" << std::setw(2) << std::setfill('0') << cabinet_id
+        << "_" << layer << "_" << grid;
+    return oss.str();
+  }
+
   bool finish_return_mode_is_map_origin() const
   {
     return normalize_finish_return_mode(finish_return_mode_) == "map_origin";
@@ -1536,6 +1569,12 @@ private:
     plc_retry_count_ = std::max(0, plc_retry_count_);
     plc_open_wait_sec_ = std::max(0.0, plc_open_wait_sec_);
     plc_fail_policy_ = normalize_plc_fail_policy(plc_fail_policy_);
+    rfid_upload_timeout_sec_ = std::max(0.1, rfid_upload_timeout_sec_);
+    rfid_upload_retry_count_ = std::max(0, rfid_upload_retry_count_);
+    rfid_upload_fail_policy_ = normalize_rfid_upload_fail_policy(rfid_upload_fail_policy_);
+    if (rfid_placeholder_prefix_.empty()) {
+      rfid_placeholder_prefix_ = "RFID_PLACEHOLDER";
+    }
 
     agv_inventory_system::WebApiClientParams web_params;
     web_params.web_client_mode = web_client_mode_;
@@ -1554,6 +1593,14 @@ private:
     web_params.plc_require_body_success = plc_require_body_success_;
     web_params.plc_request_timeout_sec = plc_request_timeout_sec_;
     web_params.plc_retry_count = plc_retry_count_;
+    web_params.rfid_upload_enabled = rfid_upload_enabled_;
+    web_params.rfid_upload_url = rfid_upload_url_;
+    web_params.rfid_upload_timeout_sec = rfid_upload_timeout_sec_;
+    web_params.rfid_upload_retry_count = rfid_upload_retry_count_;
+    web_params.rfid_upload_fail_policy = rfid_upload_fail_policy_;
+    web_params.rfid_placeholder_enabled = rfid_placeholder_enabled_;
+    web_params.rfid_placeholder_prefix = rfid_placeholder_prefix_;
+    web_params.rfid_upload_require_success = rfid_upload_require_success_;
     web_api_client_.setParams(web_params);
   }
 
@@ -1665,6 +1712,18 @@ private:
       plc_open_wait_sec_,
       plc_call_close_on_mission_done_ ? "true" : "false",
       plc_call_stop_on_error_ ? "true" : "false");
+    RCLCPP_INFO(
+      get_logger(),
+      "RFID上传配置: enabled=%s url=%s timeout=%.2f retry_count=%d fail_policy=%s "
+      "placeholder=%s prefix=%s require_success=%s",
+      rfid_upload_enabled_ ? "true" : "false",
+      rfid_upload_url_.c_str(),
+      rfid_upload_timeout_sec_,
+      rfid_upload_retry_count_,
+      rfid_upload_fail_policy_.c_str(),
+      rfid_placeholder_enabled_ ? "true" : "false",
+      rfid_placeholder_prefix_.c_str(),
+      rfid_upload_require_success_ ? "true" : "false");
     RCLCPP_INFO(
       get_logger(),
       "侧排盘库配置: enabled=%s name=%s first_gap=%s first_seq=%s "
@@ -6821,6 +6880,7 @@ private:
     single_cabinet_grid_move_step_ = agv_inventory_system::ScanStep{};
     single_cabinet_grid_move_start_pose_ = Pose2D{};
     inventory_scanner_.reset();
+    uploaded_inventory_locations_.clear();
     reset_lift_runtime();
   }
 
@@ -6842,6 +6902,7 @@ private:
     single_cabinet_scan_active_ = true;
     single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     inventory_scanner_.reset();
+    uploaded_inventory_locations_.clear();
     reset_lift_runtime();
     if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
       const int initial_depth = std::max(1, current_target_depth_index_);
@@ -7098,18 +7159,36 @@ private:
           " depth=" + std::to_string(step.depth_index));
         return false;
       }
-      if (!web_api_client_.reportInventoryResult(
+      const int level = step.layer_index > 0 ? step.layer_index : 1;
+      const int grid = step.depth_index > 0 ? step.depth_index : 1;
+      const std::string location_rfid =
+        make_inventory_location_rfid(step.cabinet_id, level, grid);
+      if (uploaded_inventory_locations_.find(location_rfid) != uploaded_inventory_locations_.end()) {
+        RCLCPP_WARN(
+          get_logger(),
+          "[mission_manager][%s][scan_runtime] skip duplicate inventory upload "
+          "cabinet=%d level=%d grid=%d locationRfid=%s",
+          in_gap_scan_mode_label(mode),
           step.cabinet_id,
-          step.layer_index,
-          step.depth_index,
-          inventory_scanner_.last_scan_result()))
-      {
-        fail_in_gap_scan_runtime(
-          mode,
-          "扫描结果上报失败: cabinet=" + std::to_string(step.cabinet_id) +
-          " layer=" + std::to_string(step.layer_index) +
-          " depth=" + std::to_string(step.depth_index));
-        return false;
+          level,
+          grid,
+          location_rfid.c_str());
+      } else {
+        if (!web_api_client_.reportInventoryResult(
+            step.cabinet_id,
+            level,
+            grid,
+            inventory_scanner_.last_scan_result()))
+        {
+          fail_in_gap_scan_runtime(
+            mode,
+            "扫描结果上报失败: cabinet=" + std::to_string(step.cabinet_id) +
+            " level=" + std::to_string(level) +
+            " grid=" + std::to_string(grid) +
+            " locationRfid=" + location_rfid);
+          return false;
+        }
+        uploaded_inventory_locations_.insert(location_rfid);
       }
     } else {
       if (!check_lift_step_finished(step, mode)) {
@@ -10619,6 +10698,14 @@ private:
   double plc_open_wait_sec_{5.0};
   bool plc_call_close_on_mission_done_{false};
   bool plc_call_stop_on_error_{false};
+  bool rfid_upload_enabled_{true};
+  std::string rfid_upload_url_{"http://127.0.0.1:8100/upload_inventory"};
+  double rfid_upload_timeout_sec_{3.0};
+  int rfid_upload_retry_count_{2};
+  std::string rfid_upload_fail_policy_{"error"};
+  bool rfid_placeholder_enabled_{true};
+  std::string rfid_placeholder_prefix_{"RFID_PLACEHOLDER"};
+  bool rfid_upload_require_success_{false};
   PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
   int plc_open_wait_target_cabinet_{-1};
   bool plc_open_wait_required_{false};
@@ -10650,6 +10737,7 @@ private:
   SingleCabinetExitPhase single_cabinet_exit_phase_{SingleCabinetExitPhase::STRAIGHT_REVERSE};
   std::vector<agv_inventory_system::ScanStep> single_cabinet_scan_steps_;
   std::size_t single_cabinet_scan_step_index_{0};
+  std::set<std::string> uploaded_inventory_locations_;
   int single_cabinet_scan_cabinet_{-1};
   bool single_cabinet_scan_active_{false};
   rclcpp::Time single_cabinet_scan_step_start_time_{0, 0, RCL_ROS_TIME};
