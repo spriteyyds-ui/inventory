@@ -23,6 +23,7 @@
 #include "std_msgs/msg/int32.hpp"
 #include "std_srvs/srv/set_bool.hpp"
 #include "agv_inventory_system/a4_detector.hpp"
+#include "agv_inventory_system/circle_marker_recognizer.hpp"
 #include "agv_inventory_system/digit_classifier.hpp"
 #include "agv_inventory_system/digit_segmenter.hpp"
 #include "agv_inventory_system/id_utils.hpp"
@@ -129,6 +130,8 @@ private:
     distance_overlay_topic_ = declare_parameter<std::string>(
       "distance_overlay_topic", "/inventory/target_distance");
 
+    recognition_target_style_ = declare_parameter<std::string>(
+      "recognition_target_style", "circle_marker");
     enable_on_start_ = declare_parameter<bool>("enable_on_start", true);
     min_confidence_ = declare_parameter<double>("min_confidence", 0.70);
     max_attempts_ = declare_parameter<int>("max_attempts", 20);
@@ -268,6 +271,58 @@ private:
     cls_params_.prefer_cuda = declare_parameter<bool>("prefer_cuda", false);
     cls_params_.input_size = declare_parameter<int>("classifier_input_size", 64);
 
+    circle_params_.use_color = declare_parameter<bool>("circle_marker_use_color", false);
+    circle_params_.panel_gaussian_kernel =
+      declare_parameter<int>("circle_marker_panel_gaussian_kernel", 5);
+    circle_params_.panel_morph_kernel_size =
+      declare_parameter<int>("circle_marker_panel_morph_kernel_size", 5);
+    circle_params_.panel_min_area_ratio =
+      declare_parameter<double>("circle_marker_panel_min_area_ratio", 0.01);
+    circle_params_.panel_max_area_ratio =
+      declare_parameter<double>("circle_marker_panel_max_area_ratio", 0.90);
+    circle_params_.panel_approx_epsilon_ratio =
+      declare_parameter<double>("circle_marker_panel_approx_epsilon", 0.02);
+    circle_params_.panel_aspect_ratio =
+      declare_parameter<double>("circle_marker_panel_aspect_ratio", 1.414);
+    circle_params_.panel_aspect_tolerance =
+      declare_parameter<double>("circle_marker_panel_aspect_tolerance", 0.35);
+    circle_params_.panel_warp_width =
+      declare_parameter<int>("circle_marker_panel_warp_width", 640);
+    circle_params_.panel_warp_height =
+      declare_parameter<int>("circle_marker_panel_warp_height", 452);
+    circle_params_.search_x_min_ratio =
+      declare_parameter<double>("circle_marker_search_x_min_ratio", 0.10);
+    circle_params_.search_x_max_ratio =
+      declare_parameter<double>("circle_marker_search_x_max_ratio", 0.90);
+    circle_params_.search_y_min_ratio =
+      declare_parameter<double>("circle_marker_search_y_min_ratio", 0.10);
+    circle_params_.search_y_max_ratio =
+      declare_parameter<double>("circle_marker_search_y_max_ratio", 0.90);
+    circle_params_.dark_threshold =
+      declare_parameter<int>("circle_marker_dark_threshold", 180);
+    circle_params_.bright_threshold =
+      declare_parameter<int>("circle_marker_bright_threshold", 190);
+    circle_params_.use_otsu = declare_parameter<bool>("circle_marker_use_otsu", true);
+    circle_params_.circle_min_area_ratio =
+      declare_parameter<double>("circle_marker_min_area_ratio", 0.03);
+    circle_params_.circle_max_area_ratio =
+      declare_parameter<double>("circle_marker_max_area_ratio", 0.55);
+    circle_params_.circle_min_circularity =
+      declare_parameter<double>("circle_marker_min_circularity", 0.50);
+    circle_params_.circle_aspect_min =
+      declare_parameter<double>("circle_marker_aspect_min", 0.70);
+    circle_params_.circle_aspect_max =
+      declare_parameter<double>("circle_marker_aspect_max", 1.35);
+    circle_params_.digit_min_area_ratio =
+      declare_parameter<double>("circle_marker_digit_min_area_ratio", 0.001);
+    circle_params_.digit_max_area_ratio =
+      declare_parameter<double>("circle_marker_digit_max_area_ratio", 0.30);
+    circle_params_.digit_padding_ratio =
+      declare_parameter<double>("circle_marker_digit_padding_ratio", 0.22);
+    circle_params_.max_digits = declare_parameter<int>("circle_marker_max_digits", 2);
+    circle_params_.min_number = declare_parameter<int>("circle_marker_min_number", 1);
+    circle_params_.max_number = declare_parameter<int>("circle_marker_max_number", 36);
+
     enabled_ = enable_on_start_;
   }
 
@@ -275,8 +330,19 @@ private:
   {
     seg_params_.digit_input_size = std::max(8, seg_params_.digit_input_size);
     cls_params_.input_size = std::max(8, cls_params_.input_size);
+    circle_params_.digit_input_size = cls_params_.input_size;
+    if (recognition_target_style_ != "circle_marker" &&
+      recognition_target_style_ != "legacy_a4_digit")
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "recognition_target_style=%s 不支持，回退为 circle_marker",
+        recognition_target_style_.c_str());
+      recognition_target_style_ = "circle_marker";
+    }
     detector_.set_params(a4_params_);
     segmenter_.set_params(seg_params_);
+    circle_recognizer_.set_params(circle_params_);
     classifier_.set_params(cls_params_);
   }
 
@@ -381,6 +447,32 @@ private:
       distance_overlay_topic_.c_str(),
       distance_overlay_timeout_sec_,
       enable_union_fallback_classification_ ? 1 : 0);
+
+    RCLCPP_INFO(
+      get_logger(),
+      "recognition_target_style=%s | CIRCLE_MARKER: panel_aspect=%.3f tol=%.3f warp=%dx%d "
+      "panel_area=%.3f..%.3f search=%.2f..%.2f/%.2f..%.2f dark=%d bright=%d otsu=%d "
+      "circle_area=%.3f..%.3f circ>=%.2f digits<=%d range=%d..%d",
+      recognition_target_style_.c_str(),
+      circle_params_.panel_aspect_ratio,
+      circle_params_.panel_aspect_tolerance,
+      circle_params_.panel_warp_width,
+      circle_params_.panel_warp_height,
+      circle_params_.panel_min_area_ratio,
+      circle_params_.panel_max_area_ratio,
+      circle_params_.search_x_min_ratio,
+      circle_params_.search_x_max_ratio,
+      circle_params_.search_y_min_ratio,
+      circle_params_.search_y_max_ratio,
+      circle_params_.dark_threshold,
+      circle_params_.bright_threshold,
+      circle_params_.use_otsu ? 1 : 0,
+      circle_params_.circle_min_area_ratio,
+      circle_params_.circle_max_area_ratio,
+      circle_params_.circle_min_circularity,
+      circle_params_.max_digits,
+      circle_params_.min_number,
+      circle_params_.max_number);
   }
 
   std::filesystem::path resolve_config_path(const std::string & raw_path) const
@@ -603,13 +695,17 @@ private:
     auto a4_new = a4_params_;
     auto seg_new = seg_params_;
     auto cls_new = cls_params_;
+    auto circle_new = circle_params_;
+    auto style_new = recognition_target_style_;
 
     bool reload_model = false;
 
     for (const auto & p : params) {
       const auto & name = p.get_name();
 
-      if (name == "min_confidence") {
+      if (name == "recognition_target_style") {
+        style_new = p.as_string();
+      } else if (name == "min_confidence") {
         min_confidence_ = p.as_double();
       } else if (name == "max_attempts") {
         max_attempts_ = p.as_int();
@@ -797,6 +893,62 @@ private:
       } else if (name == "prefer_cuda") {
         cls_new.prefer_cuda = p.as_bool();
         reload_model = true;
+      } else if (name == "circle_marker_use_color") {
+        circle_new.use_color = p.as_bool();
+      } else if (name == "circle_marker_panel_gaussian_kernel") {
+        circle_new.panel_gaussian_kernel = p.as_int();
+      } else if (name == "circle_marker_panel_morph_kernel_size") {
+        circle_new.panel_morph_kernel_size = p.as_int();
+      } else if (name == "circle_marker_panel_min_area_ratio") {
+        circle_new.panel_min_area_ratio = p.as_double();
+      } else if (name == "circle_marker_panel_max_area_ratio") {
+        circle_new.panel_max_area_ratio = p.as_double();
+      } else if (name == "circle_marker_panel_approx_epsilon") {
+        circle_new.panel_approx_epsilon_ratio = p.as_double();
+      } else if (name == "circle_marker_panel_aspect_ratio") {
+        circle_new.panel_aspect_ratio = p.as_double();
+      } else if (name == "circle_marker_panel_aspect_tolerance") {
+        circle_new.panel_aspect_tolerance = p.as_double();
+      } else if (name == "circle_marker_panel_warp_width") {
+        circle_new.panel_warp_width = p.as_int();
+      } else if (name == "circle_marker_panel_warp_height") {
+        circle_new.panel_warp_height = p.as_int();
+      } else if (name == "circle_marker_search_x_min_ratio") {
+        circle_new.search_x_min_ratio = p.as_double();
+      } else if (name == "circle_marker_search_x_max_ratio") {
+        circle_new.search_x_max_ratio = p.as_double();
+      } else if (name == "circle_marker_search_y_min_ratio") {
+        circle_new.search_y_min_ratio = p.as_double();
+      } else if (name == "circle_marker_search_y_max_ratio") {
+        circle_new.search_y_max_ratio = p.as_double();
+      } else if (name == "circle_marker_dark_threshold") {
+        circle_new.dark_threshold = p.as_int();
+      } else if (name == "circle_marker_bright_threshold") {
+        circle_new.bright_threshold = p.as_int();
+      } else if (name == "circle_marker_use_otsu") {
+        circle_new.use_otsu = p.as_bool();
+      } else if (name == "circle_marker_min_area_ratio") {
+        circle_new.circle_min_area_ratio = p.as_double();
+      } else if (name == "circle_marker_max_area_ratio") {
+        circle_new.circle_max_area_ratio = p.as_double();
+      } else if (name == "circle_marker_min_circularity") {
+        circle_new.circle_min_circularity = p.as_double();
+      } else if (name == "circle_marker_aspect_min") {
+        circle_new.circle_aspect_min = p.as_double();
+      } else if (name == "circle_marker_aspect_max") {
+        circle_new.circle_aspect_max = p.as_double();
+      } else if (name == "circle_marker_digit_min_area_ratio") {
+        circle_new.digit_min_area_ratio = p.as_double();
+      } else if (name == "circle_marker_digit_max_area_ratio") {
+        circle_new.digit_max_area_ratio = p.as_double();
+      } else if (name == "circle_marker_digit_padding_ratio") {
+        circle_new.digit_padding_ratio = p.as_double();
+      } else if (name == "circle_marker_max_digits") {
+        circle_new.max_digits = p.as_int();
+      } else if (name == "circle_marker_min_number") {
+        circle_new.min_number = p.as_int();
+      } else if (name == "circle_marker_max_number") {
+        circle_new.max_number = p.as_int();
       }
     }
 
@@ -811,16 +963,39 @@ private:
       result.reason = "输入尺寸参数必须大于0";
       return result;
     }
+    if (circle_new.panel_warp_width <= 0 || circle_new.panel_warp_height <= 0 ||
+      circle_new.max_digits <= 0)
+    {
+      result.successful = false;
+      result.reason = "circle_marker panel 输入尺寸和最大位数必须大于0";
+      return result;
+    }
+    if (circle_new.max_number < circle_new.min_number) {
+      result.successful = false;
+      result.reason = "circle_marker_max_number 必须 >= circle_marker_min_number";
+      return result;
+    }
+    if (style_new != "circle_marker" &&
+      style_new != "legacy_a4_digit")
+    {
+      result.successful = false;
+      result.reason = "recognition_target_style 仅支持 circle_marker 或 legacy_a4_digit";
+      return result;
+    }
 
     a4_params_ = a4_new;
     seg_params_ = seg_new;
     cls_params_ = cls_new;
+    circle_params_ = circle_new;
+    recognition_target_style_ = style_new;
 
     seg_params_.digit_input_size = std::max(8, seg_params_.digit_input_size);
     cls_params_.input_size = std::max(8, cls_params_.input_size);
+    circle_params_.digit_input_size = cls_params_.input_size;
 
     detector_.set_params(a4_params_);
     segmenter_.set_params(seg_params_);
+    circle_recognizer_.set_params(circle_params_);
     classifier_.set_params(cls_params_);
 
     if (reload_model && !reload_classifier_model()) {
@@ -1135,6 +1310,98 @@ private:
       cv::LINE_AA);
   }
 
+  void runCircleMarker(
+    const sensor_msgs::msg::Image::SharedPtr & msg,
+    const cv::Mat & image,
+    cv::Mat & visualization,
+    const rclcpp::Time & now)
+  {
+    agv_inventory_system::CircleMarkerResult circle_result;
+    const bool recognized = circle_recognizer_.recognize(image, classifier_, circle_result);
+    const cv::Mat circle_visualization =
+      circle_result.visualization.empty() ? visualization : circle_result.visualization;
+
+    float horizontal_offset = 0.0F;
+    float estimated_distance = 0.0F;
+    const cv::Rect marker_box = circle_result.digit_union_bbox.empty() ?
+      circle_result.circle_bbox :
+      circle_result.digit_union_bbox;
+    if (circle_result.panel.success && !marker_box.empty() &&
+      !circle_result.panel.inverse_warp_matrix.empty())
+    {
+      std::vector<cv::Point2f> warp_pts = {
+        cv::Point2f(static_cast<float>(marker_box.x), static_cast<float>(marker_box.y)),
+        cv::Point2f(static_cast<float>(marker_box.x + marker_box.width), static_cast<float>(marker_box.y)),
+        cv::Point2f(static_cast<float>(marker_box.x + marker_box.width), static_cast<float>(marker_box.y + marker_box.height)),
+        cv::Point2f(static_cast<float>(marker_box.x), static_cast<float>(marker_box.y + marker_box.height))};
+      std::vector<cv::Point2f> src_pts;
+      cv::perspectiveTransform(warp_pts, src_pts, circle_result.panel.inverse_warp_matrix);
+      if (src_pts.size() == 4U) {
+        float cx = 0.0F;
+        float min_y = static_cast<float>(image.rows);
+        float max_y = 0.0F;
+        for (const auto & p : src_pts) {
+          cx += p.x;
+          min_y = std::min(min_y, p.y);
+          max_y = std::max(max_y, p.y);
+        }
+        cx /= 4.0F;
+        horizontal_offset = cx - static_cast<float>(image.cols) * 0.5F;
+        const float pixel_height = std::max(0.0F, max_y - min_y);
+        if (pixel_height > 1.0F) {
+          const double known_height_m =
+            (known_digit_height_px_ * known_distance_m_) /
+            std::max(1e-6, distance_focal_length_);
+          const double dist = (known_height_m * distance_focal_length_) / pixel_height;
+          estimated_distance = static_cast<float>(std::max(0.0, dist));
+        }
+      }
+    }
+
+    const bool conf_ok = circle_result.confidence >= static_cast<float>(min_confidence_);
+    const bool valid = recognized && circle_result.valid && conf_ok;
+    if (valid) {
+      attempts_ = 0;
+    } else if (max_attempts_ > 0 && attempts_ >= max_attempts_) {
+      attempts_ = 0;
+    }
+
+    publish_recognition(
+      valid ? circle_result.number : std::string(""),
+      valid ? circle_result.confidence : 0.0F,
+      valid,
+      horizontal_offset,
+      estimated_distance);
+    publish_image(
+      debug_a4_pub_,
+      msg->header,
+      circle_result.debug_panel.empty() ? circle_result.panel.debug_image : circle_result.debug_panel);
+    publish_image(debug_digits_pub_, msg->header, circle_result.debug_digits);
+    publish_image(vis_pub_, msg->header, circle_visualization);
+
+    const bool tracking_dist_fresh =
+      std::isfinite(latest_tracking_distance_) &&
+      (now - latest_tracking_distance_stamp_).seconds() <=
+        std::max(0.05, distance_overlay_timeout_sec_);
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 1200,
+      "circle_marker 识别结果: number=%s conf=%.3f valid=%d recognized=%d offset=%.1fpx "
+      "dist_track=%.2fm dist_visual=%.2fm panel=%d circle=%dx%d digits=%zu err=%s",
+      circle_result.number.c_str(),
+      circle_result.confidence,
+      valid ? 1 : 0,
+      recognized ? 1 : 0,
+      horizontal_offset,
+      tracking_dist_fresh ? latest_tracking_distance_ : std::numeric_limits<double>::quiet_NaN(),
+      estimated_distance,
+      circle_result.panel.success ? 1 : 0,
+      circle_result.circle_bbox.width,
+      circle_result.circle_bbox.height,
+      circle_result.digit_images.size(),
+      circle_result.error_message.c_str());
+  }
+
   void image_callback(const sensor_msgs::msg::Image::SharedPtr msg)
   {
     if (!enabled_) {
@@ -1168,6 +1435,10 @@ private:
     ++attempts_;
 
     cv::Mat visualization = cv_ptr->image.clone();
+    if (recognition_target_style_ == "circle_marker") {
+      runCircleMarker(msg, cv_ptr->image, visualization, now);
+      return;
+    }
 
     agv_inventory_system::A4DetectionResult a4_result;
     if (!detector_.detect(cv_ptr->image, a4_result)) {
@@ -1830,6 +2101,7 @@ private:
   std::string trigger_service_name_;
   std::string enable_control_topic_;
   std::string distance_overlay_topic_;
+  std::string recognition_target_style_{"circle_marker"};
 
   bool enable_on_start_{true};
   bool enabled_{true};
@@ -1851,10 +2123,12 @@ private:
   agv_inventory_system::A4DetectorParams a4_params_;
   agv_inventory_system::DigitSegmenterParams seg_params_;
   agv_inventory_system::DigitClassifierParams cls_params_;
+  agv_inventory_system::CircleMarkerParams circle_params_;
 
   agv_inventory_system::A4Detector detector_;
   agv_inventory_system::DigitSegmenter segmenter_;
   agv_inventory_system::DigitClassifier classifier_;
+  agv_inventory_system::CircleMarkerRecognizer circle_recognizer_;
 
   int attempts_{0};
   rclcpp::Time last_attempt_time_{0, 0, RCL_ROS_TIME};

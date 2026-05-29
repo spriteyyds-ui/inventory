@@ -34,6 +34,7 @@ number_recognizer_node:
     enable_control_topic: /inventory/recognizer_enable                  # 识别器使能控制话题；任务阶段切换时控制是否运行识别
     distance_overlay_topic: /inventory/target_distance                  # 可视化叠加距离输入话题；缺失时只影响显示距离文本
 
+    recognition_target_style: circle_marker                             # 识别目标样式：circle_marker 为圆形标靶；legacy_a4_digit 为旧 A4 黑字模式
     enable_on_start: true                                               # 启动后是否默认开启识别；设为 false 可等任务管理器明确使能
     min_confidence: 0.80                                                # 整体识别有效的最低置信度比例；调大会更严格，调小更容易接受低置信结果
     max_attempts: 20                                                    # 本地连续失败计数上限，单位 次；调大会延长重试，调小更快复位
@@ -135,6 +136,35 @@ number_recognizer_node:
     classifier_min_confidence: 0.70                                     # 单个数字分类最低置信度比例；调大会更严格，调小更容易通过
     classifier_input_size: 64                                           # 分类器网络输入尺寸，单位 px；需与模型训练尺寸一致
     prefer_cuda: false                                                  # 是否优先使用 CUDA 推理后端；开启可提速但依赖硬件和运行库
+
+    circle_marker_use_color: false                                      # 圆形标靶第一版是否使用颜色信息；false 表示仅使用灰度结构识别
+    circle_marker_panel_gaussian_kernel: 5                              # marker panel 检测高斯模糊核尺寸，单位 px；通常取奇数
+    circle_marker_panel_morph_kernel_size: 5                            # marker panel 检测形态学闭运算核尺寸，单位 px
+    circle_marker_panel_min_area_ratio: 0.01                            # marker panel 候选面积占整图面积的最小比例
+    circle_marker_panel_max_area_ratio: 0.90                            # marker panel 候选面积占整图面积的最大比例
+    circle_marker_panel_approx_epsilon: 0.02                            # marker panel 四边形轮廓拟合精度比例
+    circle_marker_panel_aspect_ratio: 1.414                             # 中间白色 marker panel 期望宽高比；默认临时按横向 A4，后续换标牌只改参数
+    circle_marker_panel_aspect_tolerance: 0.35                          # marker panel 宽高比评分容差；调大更容忍长条或透视误差
+    circle_marker_panel_warp_width: 640                                 # marker panel 透视矫正输出宽度，单位 px
+    circle_marker_panel_warp_height: 452                                # marker panel 透视矫正输出高度，单位 px
+    circle_marker_search_x_min_ratio: 0.10                              # panel 内圆形标靶搜索 ROI 左边界比例
+    circle_marker_search_x_max_ratio: 0.90                              # panel 内圆形标靶搜索 ROI 右边界比例
+    circle_marker_search_y_min_ratio: 0.10                              # panel 内圆形标靶搜索 ROI 上边界比例
+    circle_marker_search_y_max_ratio: 0.90                              # panel 内圆形标靶搜索 ROI 下边界比例
+    circle_marker_dark_threshold: 180                                   # 深色圆形区域灰度阈值；灰度小于该值视作暗区域候选
+    circle_marker_bright_threshold: 190                                 # 圆内白色数字灰度阈值；灰度大于该值视作亮色数字候选
+    circle_marker_use_otsu: true                                        # 是否融合 Otsu 自适应阈值，提高光照变化下的圆和数字提取稳定性
+    circle_marker_min_area_ratio: 0.03                                  # 深色圆候选面积占 panel 面积的最小比例
+    circle_marker_max_area_ratio: 0.55                                  # 深色圆候选面积占 panel 面积的最大比例
+    circle_marker_min_circularity: 0.50                                 # 深色圆候选最小圆度，4*pi*area/perimeter^2
+    circle_marker_aspect_min: 0.70                                      # 深色圆候选 bbox 宽高比下限
+    circle_marker_aspect_max: 1.35                                      # 深色圆候选 bbox 宽高比上限
+    circle_marker_digit_min_area_ratio: 0.001                           # 圆内数字候选面积占圆内区域面积的最小比例
+    circle_marker_digit_max_area_ratio: 0.30                            # 圆内数字候选面积占圆内区域面积的最大比例
+    circle_marker_digit_padding_ratio: 0.22                             # 圆内数字裁剪扩边比例；调大保留更多笔画边缘
+    circle_marker_max_digits: 2                                         # 圆形标靶内最多识别数字位数；柜号 1-36 需要最多 2 位
+    circle_marker_min_number: 1                                         # 圆形标靶接受的最小柜号
+    circle_marker_max_number: 36                                        # 圆形标靶接受的最大柜号
 
 distance_estimator_node:
   ros__parameters:

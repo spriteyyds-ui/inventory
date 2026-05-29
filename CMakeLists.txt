@@ -72,6 +72,7 @@ target_link_libraries(corridor_follower_node ${cpp_typesupport_target})
 add_executable(number_recognizer_node
   src/number_recognizer_node.cpp
   src/a4_detector.cpp
+  src/circle_marker_recognizer.cpp
   src/digit_segmenter.cpp
   src/digit_classifier.cpp
 )
@@ -158,6 +159,7 @@ endif()
 add_executable(offline_test
   test/offline_test.cpp
   src/a4_detector.cpp
+  src/circle_marker_recognizer.cpp
   src/digit_segmenter.cpp
   src/digit_classifier.cpp
 )
