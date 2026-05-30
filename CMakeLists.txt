@@ -186,6 +186,7 @@ install(TARGETS
 )
 
 install(PROGRAMS
+  scripts/init_camera_controls.sh
   scripts/inventory_operation_gui.py
   scripts/inventory_auto_recharger.py
   scripts/lift_relay_controller.py
