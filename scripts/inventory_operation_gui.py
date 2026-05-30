@@ -16,7 +16,7 @@ WINDOW_WIDTH = 1180
 WINDOW_HEIGHT = 780
 STATUS_BAR_HEIGHT = 92
 LOG_FRAME_HEIGHT = 205
-SAFETY_FRAME_HEIGHT = 150
+SAFETY_FRAME_HEIGHT = 192
 STATUS_TILE_WIDTH = 214
 STATUS_TILE_HEIGHT = 82
 STATUS_MAIN_MAX_CHARS = 18
@@ -26,6 +26,9 @@ WIDE_VALUE_MAX_CHARS = 72
 COMMAND_MAX_CHARS = 96
 ERROR_MAX_CHARS = 96
 SELECTED_CABINETS_MAX_CHARS = 78
+MAIN_ACTION_BUTTON_HEIGHT_PX = 48
+MAIN_ACTION_BUTTON_FONT = ("TkDefaultFont", 12, "bold")
+LIFT_BASE_HEIGHT_M = 1.25
 
 ACTION_START_INVENTORY = "开始盘库"
 ACTION_FULL_INVENTORY = "全量盘库"
@@ -158,7 +161,9 @@ class InventoryOperationGuiNode(Node):
             "recharge_flag": "未知",
             "recharge_flag_detail": "未知（robot_recharge_flag=未知）",
             "auto_recharge_status": "未知",
-            "lift_height": "未知",
+            "lift_base_height": "%.2f m" % LIFT_BASE_HEIGHT_M,
+            "lift_travel_height": "未知",
+            "lift_total_height": "未知",
             "lift_state": "未知",
             "lift_error": "",
         }
@@ -247,7 +252,14 @@ class InventoryOperationGuiNode(Node):
         self.values["auto_recharge_status"] = "%s / %s" % (status, text)
 
     def lift_state_callback(self, msg):
-        self.values["lift_height"] = "%.0f mm" % (msg.estimated_height_m * 1000.0)
+        # LiftState only provides estimated_height_m, so the GUI height display
+        # reuses the existing estimated lift travel rather than a real sensor feedback value.
+        estimated_lift_height_m = float(msg.estimated_height_m)
+        estimated_lift_height_mm = estimated_lift_height_m * 1000.0
+        total_lift_height_m = LIFT_BASE_HEIGHT_M + estimated_lift_height_m
+        self.values["lift_travel_height"] = (
+            "%.0f mm / %.3f m" % (estimated_lift_height_mm, estimated_lift_height_m))
+        self.values["lift_total_height"] = "%.3f m" % total_lift_height_m
         self.values["lift_state"] = msg.state
         self.values["lift_error"] = msg.error_message
 
@@ -348,21 +360,22 @@ class InventoryOperationGuiApp:
         self.add_var_row(task_input_frame, 0, "当前选择", self.selected_cabinets_var, column=2)
 
         inventory_button_frame = self.ttk.Frame(operation_frame, style="App.TFrame")
-        inventory_button_frame.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        inventory_button_frame.grid(row=2, column=0, sticky="ew", pady=(4, 14))
+        inventory_button_frame.rowconfigure(0, minsize=MAIN_ACTION_BUTTON_HEIGHT_PX)
         for column_index in range(3):
             inventory_button_frame.columnconfigure(column_index, weight=1, uniform="inventory_action")
         self.start_inventory_button = self.make_action_button(
             inventory_button_frame, ACTION_START_INVENTORY,
-            self.request_start_inventory, "primary")
-        self.start_inventory_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+            self.request_start_inventory, "primary", large=True)
+        self.start_inventory_button.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         self.full_inventory_button = self.make_action_button(
             inventory_button_frame, ACTION_FULL_INVENTORY,
-            self.request_full_inventory, "primary")
-        self.full_inventory_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+            self.request_full_inventory, "primary", large=True)
+        self.full_inventory_button.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
         self.cancel_mission_button = self.make_action_button(
             inventory_button_frame, ACTION_CANCEL_MISSION,
-            self.request_cancel_mission, "danger")
-        self.cancel_mission_button.grid(row=0, column=2, sticky="ew")
+            self.request_cancel_mission, "danger", large=True)
+        self.cancel_mission_button.grid(row=0, column=2, sticky="nsew")
 
         safety_frame = self.ttk.LabelFrame(
             operation_frame, text="安全控制 / 回充控制区", padding=10, style="Panel.TLabelframe")
@@ -371,42 +384,44 @@ class InventoryOperationGuiApp:
         safety_frame.grid_propagate(False)
         safety_frame.columnconfigure(0, weight=1)
         self.ttk.Label(safety_frame, text="回充控制", style="SectionTitle.TLabel").grid(
-            row=0, column=0, sticky="w", pady=(0, 4))
+            row=0, column=0, sticky="w", pady=(0, 6))
         charge_control_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
-        charge_control_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        charge_control_frame.configure(height=40)
+        charge_control_frame.grid(row=1, column=0, sticky="ew", pady=(0, 14))
+        charge_control_frame.configure(height=MAIN_ACTION_BUTTON_HEIGHT_PX)
         charge_control_frame.grid_propagate(False)
+        charge_control_frame.rowconfigure(0, weight=1, minsize=MAIN_ACTION_BUTTON_HEIGHT_PX)
         for column_index in range(2):
             charge_control_frame.columnconfigure(column_index, weight=1, uniform="charge_control")
         self.return_to_charge_button = self.make_action_button(
             charge_control_frame, ACTION_RETURN_TO_CHARGE,
-            self.request_return_to_charge, "primary")
-        self.return_to_charge_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+            self.request_return_to_charge, "primary", large=True)
+        self.return_to_charge_button.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         self.cancel_auto_recharge_button = self.make_action_button(
             charge_control_frame, ACTION_CANCEL_AUTO_RECHARGE,
-            self.request_cancel_auto_recharge, "warning")
-        self.cancel_auto_recharge_button.grid(row=0, column=1, sticky="ew")
+            self.request_cancel_auto_recharge, "warning", large=True)
+        self.cancel_auto_recharge_button.grid(row=0, column=1, sticky="nsew")
 
         self.ttk.Label(safety_frame, text="安全动作", style="SectionTitle.TLabel").grid(
-            row=2, column=0, sticky="w", pady=(0, 4))
+            row=2, column=0, sticky="w", pady=(0, 6))
         safe_action_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
         safe_action_frame.grid(row=3, column=0, sticky="ew")
-        safe_action_frame.configure(height=40)
+        safe_action_frame.configure(height=MAIN_ACTION_BUTTON_HEIGHT_PX)
         safe_action_frame.grid_propagate(False)
+        safe_action_frame.rowconfigure(0, weight=1, minsize=MAIN_ACTION_BUTTON_HEIGHT_PX)
         for column_index in range(3):
             safe_action_frame.columnconfigure(column_index, weight=1, uniform="safe_action")
         self.safe_exit_gap_button = self.make_action_button(
             safe_action_frame, ACTION_SAFE_EXIT_GAP,
-            self.request_safe_exit_gap, "danger")
-        self.safe_exit_gap_button.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+            self.request_safe_exit_gap, "danger", large=True)
+        self.safe_exit_gap_button.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         self.stop_auto_charge_and_depart_button = self.make_action_button(
             safe_action_frame, ACTION_STOP_AUTO_CHARGE_AND_DEPART,
-            self.request_stop_auto_charge_and_depart, "warning")
-        self.stop_auto_charge_and_depart_button.grid(row=0, column=1, sticky="ew", padx=(0, 8))
+            self.request_stop_auto_charge_and_depart, "warning", large=True)
+        self.stop_auto_charge_and_depart_button.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
         self.return_home_button = self.make_action_button(
             safe_action_frame, ACTION_RETURN_HOME,
-            self.request_return_home, "warning")
-        self.return_home_button.grid(row=0, column=2, sticky="ew")
+            self.request_return_home, "warning", large=True)
+        self.return_home_button.grid(row=0, column=2, sticky="nsew")
 
         right_frame = self.ttk.Frame(main, style="App.TFrame")
         right_frame.grid(row=1, column=1, sticky="nsew")
@@ -445,12 +460,14 @@ class InventoryOperationGuiApp:
         lift_frame.grid(row=2, column=0, sticky="new", pady=(10, 0))
         lift_frame.columnconfigure(1, weight=1)
         lift_rows = [
-            ("预估高度", "lift_height"),
-            ("状态", "lift_state"),
-            ("错误", "lift_error"),
+            ("初始高度", "lift_base_height", "Value.TLabel"),
+            ("估算升降高度", "lift_travel_height", "Value.TLabel"),
+            ("当前总高度", "lift_total_height", "StrongValue.TLabel"),
+            ("状态", "lift_state", "Value.TLabel"),
+            ("错误", "lift_error", "Value.TLabel"),
         ]
-        for row_index, (label, key) in enumerate(lift_rows):
-            self.add_value_row(lift_frame, row_index, label, key)
+        for row_index, (label, key, value_style) in enumerate(lift_rows):
+            self.add_value_row(lift_frame, row_index, label, key, value_style=value_style)
 
         lift_button_frame = self.ttk.Frame(lift_frame)
         lift_button_frame.grid(
@@ -569,6 +586,11 @@ class InventoryOperationGuiApp:
             font=("TkDefaultFont", 10, "bold"))
         style.configure("Key.TLabel", background=self.colors["window"], foreground=self.colors["muted"])
         style.configure("Value.TLabel", background=self.colors["window"], foreground=self.colors["text"])
+        style.configure(
+            "StrongValue.TLabel",
+            background=self.colors["window"],
+            foreground=self.colors["text"],
+            font=("TkDefaultFont", 11, "bold"))
         style.configure("ErrorValue.TLabel", background=self.colors["window"], foreground=self.colors["danger"])
         style.configure(
             "SectionTitle.TLabel",
@@ -614,7 +636,7 @@ class InventoryOperationGuiApp:
             "detail": detail_widget,
         }
 
-    def make_action_button(self, parent, text, command, variant, width=14):
+    def make_action_button(self, parent, text, command, variant, width=14, large=False):
         palettes = {
             "primary": (self.colors["primary"], "white", self.colors["primary_active"]),
             "secondary": (
@@ -624,12 +646,21 @@ class InventoryOperationGuiApp:
             "warning": (self.colors["warning"], "white", self.colors["warning_active"]),
         }
         bg, fg, active_bg = palettes[variant]
+        button_options = {}
+        if large:
+            button_options.update({
+                "font": MAIN_ACTION_BUTTON_FONT,
+                "height": 1,
+                "padx": 14,
+                "pady": 8,
+            })
+        else:
+            button_options["height"] = 2
         return self.tk.Button(
             parent,
             text=text,
             command=command,
             width=width,
-            height=2,
             relief=self.tk.FLAT,
             bd=0,
             bg=bg,
@@ -637,7 +668,8 @@ class InventoryOperationGuiApp:
             activebackground=active_bg,
             activeforeground=fg,
             disabledforeground="#9aa4b2",
-            cursor="hand2")
+            cursor="hand2",
+            **button_options)
 
     def add_var_row(self, parent, row_index, label, variable, column=0, value_style="Value.TLabel"):
         self.ttk.Label(parent, text=label, style="Key.TLabel", width=10).grid(
@@ -649,7 +681,9 @@ class InventoryOperationGuiApp:
             style=value_style).grid(
             row=row_index, column=column + 1, sticky="ew", pady=3)
 
-    def add_value_row(self, parent, row_index, label, key, max_chars=VALUE_MAX_CHARS):
+    def add_value_row(
+            self, parent, row_index, label, key, max_chars=VALUE_MAX_CHARS,
+            value_style="Value.TLabel"):
         self.ttk.Label(parent, text=label, style="Key.TLabel", width=14).grid(
             row=row_index, column=0, sticky="w", padx=(0, 10), pady=3)
         var = self.tk.StringVar(value="未知")
@@ -658,7 +692,7 @@ class InventoryOperationGuiApp:
             parent,
             textvariable=var,
             width=max_chars,
-            style="Value.TLabel").grid(
+            style=value_style).grid(
             row=row_index, column=1, sticky="ew", pady=3)
 
     def register_field(self, key, variable, max_chars=None):

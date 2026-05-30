@@ -440,7 +440,7 @@ mission_manager_node:
     rfid_upload_url: "http://127.0.0.1:8100/upload_inventory"           # RFID 盘库结果 HTTP POST 地址；显式配置，不从 web_base_url 推导
     rfid_upload_timeout_sec: 3.0                                        # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
     rfid_upload_retry_count: 2                                          # RFID 上传失败后的重试次数，单位 次
-    rfid_upload_fail_policy: "error"                                    # RFID 上传失败策略：error 或 continue_without_upload
+    rfid_upload_fail_policy: "continue_without_upload"                                    # RFID 上传失败策略：error 或 continue_without_upload
     rfid_placeholder_enabled: true                                      # 当前无真实 reader 数据时是否生成占位 RFID tag
     rfid_placeholder_prefix: "RFID_PLACEHOLDER"                         # 占位 RFID tag 前缀，最终格式含柜号/层/格位
     rfid_upload_require_success: false                                  # false 时 HTTP 200 即成功；true 时要求响应体包含 success=true
