@@ -1,11 +1,16 @@
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
+from launch.actions import (
+    DeclareLaunchArgument,
+    ExecuteProcess,
+    IncludeLaunchDescription,
+    TimerAction,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 import os
 
 
@@ -14,6 +19,11 @@ RIGHT_CAMERA_DEVICE_DEFAULT = (
 )
 LEFT_CAMERA_DEVICE_DEFAULT = (
     '/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1.2:1.0-video-index0'
+)
+
+INIT_CAMERA_SCRIPT = os.path.join(
+    get_package_prefix('agv_inventory_system'),
+    'lib', 'agv_inventory_system', 'init_camera_controls.sh'
 )
 
 
@@ -52,11 +62,18 @@ def generate_launch_description():
         description='C100 左相机稳定 by-path 设备路径'
     )
 
+    enable_camera_controls_init_arg = DeclareLaunchArgument(
+        'enable_camera_controls_init',
+        default_value='true',
+        description='相机启动后是否自动初始化 v4l2 参数'
+    )
+
     launch_nav2 = LaunchConfiguration('launch_nav2')
     enable_inventory_operation_gui = LaunchConfiguration('enable_inventory_operation_gui')
     inventory_params_file = LaunchConfiguration('inventory_params_file')
     c100_right_video_device = LaunchConfiguration('c100_right_video_device')
     c100_left_video_device = LaunchConfiguration('c100_left_video_device')
+    enable_camera_controls_init = LaunchConfiguration('enable_camera_controls_init')
     nav2_launch_file = os.path.join(
         get_package_share_directory('wheeltec_nav2'),
         'launch',
@@ -123,6 +140,22 @@ def generate_launch_description():
     c100_right_camera_timer = TimerAction(
         period=10.0,
         actions=[c100_right_camera_node]
+    )
+
+    # v4l2 参数初始化：两个相机都已启动后统一执行，延迟 15 秒
+    init_camera_controls_action = ExecuteProcess(
+        cmd=[
+            'bash', INIT_CAMERA_SCRIPT,
+            LaunchConfiguration('c100_right_video_device'),
+            LaunchConfiguration('c100_left_video_device'),
+        ],
+        output='screen',
+    )
+
+    init_camera_controls_timer = TimerAction(
+        period=15.0,
+        actions=[init_camera_controls_action],
+        condition=IfCondition(enable_camera_controls_init),
     )
 
     number_recognizer_node = Node(
@@ -195,10 +228,12 @@ def generate_launch_description():
         inventory_params_file_arg,
         c100_right_video_device_arg,
         c100_left_video_device_arg,
+        enable_camera_controls_init_arg,
         nav2_launch,
         corridor_follower_node,
         c100_left_camera_node,
         c100_right_camera_timer,
+        init_camera_controls_timer,
         number_recognizer_node,
         distance_estimator_node,
         gap_detector_node,
