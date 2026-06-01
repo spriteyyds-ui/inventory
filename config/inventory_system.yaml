@@ -72,7 +72,7 @@ number_recognizer_node:
     min_digit_area: 50                                                  # 数字候选最小轮廓面积，单位 px^2；调大会去除小噪点，调小保留远处小数字
     max_digit_area: 5000                                                # 数字候选最大轮廓面积，单位 px^2；调小过滤大块边框，调大允许近距离大数字
     min_digit_area_ratio: 0.0001                                        # 数字候选面积相对 A4 区域的最小比例；调大会过滤碎片，调小保留远处数字
-    max_digit_area_ratio: 0.35                                          # 数字候选面积相对 A4 区域的最大比例；调小过滤边框块，调大允许近距离数字
+    max_digit_area_ratio: 0.50                                          # 数字候选面积相对 A4 区域的最大比例；调小过滤边框块，调大允许近距离数字
     min_digit_width: 6                                                  # 数字候选最小宽度，单位 px；调大会过滤细噪声，调小更容易保留数字 1
     min_digit_height: 10                                                # 数字候选最小高度，单位 px；调大会过滤横向碎片，调小保留远处小数字
     max_digit_width: 0                                                  # 数字候选最大宽度，单位 px；0 表示不限制，设小可过滤整页边框
@@ -156,12 +156,12 @@ number_recognizer_node:
     circle_marker_bright_threshold: 190                                 # 圆内白色数字灰度阈值；灰度大于该值视作亮色数字候选
     circle_marker_use_otsu: true                                        # 是否融合 Otsu 自适应阈值，提高光照变化下的圆和数字提取稳定性
     circle_marker_min_area_ratio: 0.03                                  # 深色圆候选面积占 panel 面积的最小比例
-    circle_marker_max_area_ratio: 0.55                                  # 深色圆候选面积占 panel 面积的最大比例
+    circle_marker_max_area_ratio: 0.80                                  # 深色圆候选面积占 panel 面积的最大比例
     circle_marker_min_circularity: 0.50                                 # 深色圆候选最小圆度，4*pi*area/perimeter^2
     circle_marker_aspect_min: 0.70                                      # 深色圆候选 bbox 宽高比下限
     circle_marker_aspect_max: 1.35                                      # 深色圆候选 bbox 宽高比上限
     circle_marker_digit_min_area_ratio: 0.001                           # 圆内数字候选面积占圆内区域面积的最小比例
-    circle_marker_digit_max_area_ratio: 0.30                            # 圆内数字候选面积占圆内区域面积的最大比例
+    circle_marker_digit_max_area_ratio: 0.80                            # 圆内数字候选面积占圆内区域面积的最大比例
     circle_marker_digit_padding_ratio: 0.22                             # 圆内数字裁剪扩边比例；调大保留更多笔画边缘
     circle_marker_max_digits: 2                                         # 圆形标靶内最多识别数字位数；柜号 1-36 需要最多 2 位
     circle_marker_min_number: 1                                         # 圆形标靶接受的最小柜号
