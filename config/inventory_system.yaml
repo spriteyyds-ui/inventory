@@ -137,6 +137,7 @@ number_recognizer_node:
     classifier_input_size: 64                                           # 分类器网络输入尺寸，单位 px；需与模型训练尺寸一致
     prefer_cuda: false                                                  # 是否优先使用 CUDA 推理后端；开启可提速但依赖硬件和运行库
 
+    circle_marker_debug_log_enabled: true                               # 圆形标靶失败或无效时是否打印提取和分类诊断；开启便于定位 num=? conf=0
     circle_marker_use_color: false                                      # 圆形标靶第一版是否使用颜色信息；false 表示仅使用灰度结构识别
     circle_marker_panel_gaussian_kernel: 5                              # marker panel 检测高斯模糊核尺寸，单位 px；通常取奇数
     circle_marker_panel_morph_kernel_size: 5                            # marker panel 检测形态学闭运算核尺寸，单位 px

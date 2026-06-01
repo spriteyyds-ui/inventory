@@ -47,6 +47,48 @@ void put_label(cv::Mat & image, const std::string & text, const cv::Point & orig
   cv::putText(image, text, origin, cv::FONT_HERSHEY_SIMPLEX, 0.48, color, 1, cv::LINE_AA);
 }
 
+void draw_title(cv::Mat & image, const std::string & title)
+{
+  if (image.empty()) {
+    return;
+  }
+  cv::rectangle(
+    image,
+    cv::Rect(0, 0, std::min(image.cols, 260), std::min(image.rows, 26)),
+    cv::Scalar(0, 0, 0),
+    cv::FILLED);
+  cv::putText(
+    image,
+    title,
+    cv::Point(6, 18),
+    cv::FONT_HERSHEY_SIMPLEX,
+    0.48,
+    cv::Scalar(0, 255, 255),
+    1,
+    cv::LINE_AA);
+}
+
+double non_white_ratio(const cv::Mat & image, int & non_white_pixels, int & total_pixels)
+{
+  non_white_pixels = 0;
+  total_pixels = 0;
+  if (image.empty()) {
+    return 0.0;
+  }
+
+  cv::Mat gray;
+  if (image.type() != CV_8UC1) {
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+  } else {
+    gray = image;
+  }
+  cv::Mat non_white;
+  cv::threshold(gray, non_white, 254, 255, cv::THRESH_BINARY_INV);
+  non_white_pixels = cv::countNonZero(non_white);
+  total_pixels = std::max(1, gray.rows * gray.cols);
+  return static_cast<double>(non_white_pixels) / static_cast<double>(total_pixels);
+}
+
 }  // namespace
 
 CircleMarkerRecognizer::CircleMarkerRecognizer(const CircleMarkerParams & params)
@@ -107,13 +149,16 @@ bool CircleMarkerRecognizer::recognize(
     result.circle_roi = result.panel.warped_bgr(bounded_circle).clone();
   }
 
-  if (!extractDigits(result.panel.warped_bgr, result)) {
+  result.extract_digits_success = extractDigits(result.panel.warped_bgr, result);
+  result.classifier_input_ready = !result.digit_images.empty();
+  if (!result.extract_digits_success) {
     result.debug_digits = composeDebugDigits(result);
     result.visualization = drawVisualization(bgr, result);
     return false;
   }
 
   const SequenceClassification seq = classifier.classify_sequence(result.digit_images);
+  result.classification = seq;
   if (!seq.success || seq.number.empty()) {
     result.error_message = seq.error_message.empty() ? "圆内数字分类失败" : seq.error_message;
     result.confidence = seq.min_confidence;
@@ -586,6 +631,15 @@ bool CircleMarkerRecognizer::extractDigits(const cv::Mat & panel_bgr, CircleMark
   }
 
   result.digit_images = std::move(normalized_digits);
+  result.digit_debug.clear();
+  result.digit_debug.reserve(result.digit_images.size());
+  for (const auto & digit_image : result.digit_images) {
+    CircleMarkerDigitDebugInfo info;
+    info.width = digit_image.cols;
+    info.height = digit_image.rows;
+    info.non_white_ratio = non_white_ratio(digit_image, info.non_white_pixels, info.total_pixels);
+    result.digit_debug.push_back(info);
+  }
   result.digit_boxes = std::move(final_boxes);
   if (!result.digit_boxes.empty()) {
     result.digit_union_bbox = result.digit_boxes.front();
@@ -694,28 +748,38 @@ cv::Mat CircleMarkerRecognizer::composeDebugDigits(const CircleMarkerResult & re
 {
   std::vector<cv::Mat> panels;
   if (!result.circle_mask.empty()) {
-    panels.push_back(ensure_bgr(result.circle_mask));
+    cv::Mat circle_mask = ensure_bgr(result.circle_mask);
+    draw_title(circle_mask, "circle_mask");
+    panels.push_back(circle_mask);
   }
   if (!result.circle_roi.empty()) {
-    panels.push_back(ensure_bgr(result.circle_roi));
+    cv::Mat circle_roi = ensure_bgr(result.circle_roi);
+    draw_title(circle_roi, "circle_roi");
+    panels.push_back(circle_roi);
   }
   if (!result.digit_mask.empty()) {
     cv::Mat digit_vis = ensure_bgr(result.digit_mask);
     for (const auto & box : result.digit_boxes) {
       cv::rectangle(digit_vis, box, cv::Scalar(0, 255, 0), 1);
     }
+    draw_title(digit_vis, "digit_mask");
     panels.push_back(digit_vis);
   }
   if (!result.digit_images.empty()) {
     const int tile = std::max(16, result.digit_images.front().cols);
     const int margin = 6;
-    cv::Mat montage(tile + 2 * margin + 16, static_cast<int>(result.digit_images.size()) * (tile + margin) + margin,
+    const int title_h = 26;
+    cv::Mat montage(title_h + tile + 2 * margin + 18,
+      static_cast<int>(result.digit_images.size()) * (tile + margin) + margin,
       CV_8UC1, cv::Scalar(230));
+    draw_title(montage, "classifier_input");
     for (std::size_t i = 0; i < result.digit_images.size(); ++i) {
       cv::Mat resized;
       cv::resize(result.digit_images[i], resized, cv::Size(tile, tile), 0.0, 0.0, cv::INTER_NEAREST);
-      resized.copyTo(montage(cv::Rect(margin + static_cast<int>(i) * (tile + margin), margin, tile, tile)));
-      put_label(montage, "digit", cv::Point(margin + static_cast<int>(i) * (tile + margin), tile + margin + 12), cv::Scalar(20));
+      const int x = margin + static_cast<int>(i) * (tile + margin);
+      const int y = title_h + margin;
+      resized.copyTo(montage(cv::Rect(x, y, tile, tile)));
+      put_label(montage, "input", cv::Point(x, title_h + tile + margin + 14), cv::Scalar(20));
     }
     panels.push_back(ensure_bgr(montage));
   }

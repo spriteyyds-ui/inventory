@@ -139,6 +139,8 @@ private:
     distance_overlay_timeout_sec_ = declare_parameter<double>("distance_overlay_timeout_sec", 0.8);
     enable_union_fallback_classification_ =
       declare_parameter<bool>("enable_union_fallback_classification", true);
+    circle_marker_debug_log_enabled_ =
+      declare_parameter<bool>("circle_marker_debug_log_enabled", true);
 
     cabinet_id_min_ = declare_parameter<int>("cabinet_id_min", 1);
     cabinet_id_max_ = declare_parameter<int>("cabinet_id_max", 36);
@@ -715,6 +717,8 @@ private:
         distance_overlay_timeout_sec_ = p.as_double();
       } else if (name == "enable_union_fallback_classification") {
         enable_union_fallback_classification_ = p.as_bool();
+      } else if (name == "circle_marker_debug_log_enabled") {
+        circle_marker_debug_log_enabled_ = p.as_bool();
       } else if (name == "cabinet_id_min") {
         cabinet_id_min_ = p.as_int();
       } else if (name == "cabinet_id_max") {
@@ -1310,6 +1314,92 @@ private:
       cv::LINE_AA);
   }
 
+  void log_circle_marker_diagnostics(
+    const agv_inventory_system::CircleMarkerResult & circle_result,
+    bool recognized,
+    bool valid,
+    bool conf_ok)
+  {
+    if (!circle_marker_debug_log_enabled_ && recognized && valid) {
+      return;
+    }
+
+    const rclcpp::Time now = this->now();
+    if (last_circle_marker_debug_log_.nanoseconds() != 0 &&
+      (now - last_circle_marker_debug_log_).seconds() < 1.0)
+    {
+      return;
+    }
+    last_circle_marker_debug_log_ = now;
+
+    const auto & seq = circle_result.classification;
+    RCLCPP_INFO(
+      get_logger(),
+      "CIRCLE_DEBUG: extract_ok=%d classifier_input_ready=%d digit_images=%zu "
+      "recognized=%d result_success=%d result_valid=%d node_valid=%d conf_ok=%d "
+      "raw_number=%s raw_conf=%.3f seq_success=%d seq_items=%zu err=%s seq_err=%s",
+      circle_result.extract_digits_success ? 1 : 0,
+      circle_result.classifier_input_ready ? 1 : 0,
+      circle_result.digit_images.size(),
+      recognized ? 1 : 0,
+      circle_result.success ? 1 : 0,
+      circle_result.valid ? 1 : 0,
+      valid ? 1 : 0,
+      conf_ok ? 1 : 0,
+      seq.number.c_str(),
+      seq.min_confidence,
+      seq.success ? 1 : 0,
+      seq.items.size(),
+      circle_result.error_message.c_str(),
+      seq.error_message.c_str());
+
+    for (std::size_t i = 0; i < circle_result.digit_debug.size(); ++i) {
+      const auto & info = circle_result.digit_debug[i];
+      RCLCPP_INFO(
+        get_logger(),
+        "CIRCLE_INPUT[%zu]: size=%dx%d non_white=%d/%d ratio=%.4f",
+        i,
+        info.width,
+        info.height,
+        info.non_white_pixels,
+        info.total_pixels,
+        info.non_white_ratio);
+    }
+
+    for (std::size_t i = 0; i < seq.items.size(); ++i) {
+      const auto & item = seq.items[i];
+      std::vector<std::pair<int, float>> top;
+      top.reserve(item.probabilities.size());
+      for (std::size_t j = 0; j < item.probabilities.size(); ++j) {
+        top.emplace_back(static_cast<int>(j), item.probabilities[j]);
+      }
+      std::sort(
+        top.begin(), top.end(),
+        [](const auto & a, const auto & b) {
+          return a.second > b.second;
+        });
+      while (top.size() < 3U) {
+        top.emplace_back(-1, 0.0F);
+      }
+
+      RCLCPP_INFO(
+        get_logger(),
+        "CIRCLE_CLASS[%zu]: success=%d top1=%d conf=%.3f "
+        "top3=(%d:%.3f,%d:%.3f,%d:%.3f) err=%s",
+        i,
+        item.success ? 1 : 0,
+        item.digit,
+        item.confidence,
+        top[0].first,
+        top[0].second,
+        top[1].first,
+        top[1].second,
+        top[2].first,
+        top[2].second,
+        item.error_message.c_str());
+    }
+  }
+
   void runCircleMarker(
     const sensor_msgs::msg::Image::SharedPtr & msg,
     const cv::Mat & image,
@@ -1360,6 +1450,7 @@ private:
 
     const bool conf_ok = circle_result.confidence >= static_cast<float>(min_confidence_);
     const bool valid = recognized && circle_result.valid && conf_ok;
+    log_circle_marker_diagnostics(circle_result, recognized, valid, conf_ok);
     if (valid) {
       attempts_ = 0;
     } else if (max_attempts_ > 0 && attempts_ >= max_attempts_) {
@@ -2111,6 +2202,7 @@ private:
   double attempt_interval_{0.1};
   double distance_overlay_timeout_sec_{0.8};
   bool enable_union_fallback_classification_{true};
+  bool circle_marker_debug_log_enabled_{true};
 
   int cabinet_id_min_{1};
   int cabinet_id_max_{36};
@@ -2133,6 +2225,7 @@ private:
   int attempts_{0};
   rclcpp::Time last_attempt_time_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_candidate_debug_log_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_circle_marker_debug_log_{0, 0, RCL_ROS_TIME};
   double latest_tracking_distance_{std::numeric_limits<double>::quiet_NaN()};
   rclcpp::Time latest_tracking_distance_stamp_{0, 0, RCL_ROS_TIME};
 
