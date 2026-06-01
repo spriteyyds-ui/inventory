@@ -293,8 +293,11 @@ public:
     close_gap_wait_sec_ = declare_parameter<double>("close_gap_wait_sec", 3.0);
     plc_http_enabled_ = declare_parameter<bool>("plc_http_enabled", false);
     plc_server_url_ =
-      declare_parameter<std::string>("plc_server_url", "http://<PLC_GATEWAY_HOST>:8100");
-    plc_open_endpoint_ = declare_parameter<std::string>("plc_open_endpoint", "/open");
+      declare_parameter<std::string>("plc_server_url", "https://58.154.205.27:8099");
+    plc_open_endpoint_ =
+      declare_parameter<std::string>("plc_open_endpoint", "/http-control-plc/car_open");
+    plc_open_endpoint_ =
+      declare_parameter<std::string>("plc_open_path", plc_open_endpoint_);
     plc_open_query_param_ = declare_parameter<std::string>("plc_open_query_param", "shelfId");
     plc_close_endpoint_ = declare_parameter<std::string>("plc_close_endpoint", "/close");
     plc_stop_endpoint_ = declare_parameter<std::string>("plc_stop_endpoint", "/stop");
@@ -317,7 +320,10 @@ public:
     plc_call_stop_on_error_ = declare_parameter<bool>("plc_call_stop_on_error", false);
     rfid_upload_enabled_ = declare_parameter<bool>("rfid_upload_enabled", true);
     rfid_upload_url_ =
-      declare_parameter<std::string>("rfid_upload_url", "http://127.0.0.1:8100/upload_inventory");
+      declare_parameter<std::string>(
+      "rfid_upload_url",
+      "https://58.154.205.27:8099/RobotInspection/inventoryAudit");
+    rfid_upload_verify_tls_ = declare_parameter<bool>("rfid_upload_verify_tls", false);
     rfid_upload_timeout_sec_ = declare_parameter<double>("rfid_upload_timeout_sec", 3.0);
     rfid_upload_retry_count_ = declare_parameter<int>("rfid_upload_retry_count", 2);
     rfid_upload_fail_policy_ =
@@ -327,6 +333,18 @@ public:
       declare_parameter<std::string>("rfid_placeholder_prefix", "RFID_PLACEHOLDER");
     rfid_upload_require_success_ =
       declare_parameter<bool>("rfid_upload_require_success", false);
+    rfid_reader_mode_ = declare_parameter<std::string>("rfid_reader_mode", "hid_keyboard");
+    rfid_hid_device_path_ = declare_parameter<std::string>("rfid_hid_device_path", "auto");
+    rfid_hid_grab_device_ = declare_parameter<bool>("rfid_hid_grab_device", true);
+    rfid_hid_scan_timeout_sec_ = declare_parameter<double>("rfid_hid_scan_timeout_sec", 5.0);
+    rfid_hid_inter_char_timeout_ms_ =
+      declare_parameter<int>("rfid_hid_inter_char_timeout_ms", 200);
+    rfid_hid_max_tags_per_location_ =
+      declare_parameter<int>("rfid_hid_max_tags_per_location", 10);
+    rfid_hid_allow_empty_result_ =
+      declare_parameter<bool>("rfid_hid_allow_empty_result", false);
+    rfid_hid_fallback_to_placeholder_ =
+      declare_parameter<bool>("rfid_hid_fallback_to_placeholder", true);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -1201,9 +1219,40 @@ private:
   static std::string make_inventory_location_rfid(int cabinet_id, int layer, int grid)
   {
     std::ostringstream oss;
-    oss << "shelf_" << std::setw(2) << std::setfill('0') << cabinet_id
+    oss << "shelf_" << cabinet_id
         << "_" << layer << "_" << grid;
     return oss.str();
+  }
+
+  static std::string make_inventory_placeholder_rfid(
+    const std::string & prefix,
+    int cabinet_id,
+    int layer,
+    int grid)
+  {
+    const std::string safe_prefix = prefix.empty() ? "RFID_PLACEHOLDER" : prefix;
+    std::ostringstream oss;
+    oss << safe_prefix << "_" << cabinet_id
+        << "_" << layer << "_" << grid << "_001";
+    return oss.str();
+  }
+
+  static const char * inventory_scan_output_source_label(
+    agv_inventory_system::InventoryScanOutputSource source)
+  {
+    switch (source) {
+      case agv_inventory_system::InventoryScanOutputSource::HID_SUCCESS:
+        return "hid_success";
+      case agv_inventory_system::InventoryScanOutputSource::HID_EMPTY_SUCCESS:
+        return "hid_empty_success";
+      case agv_inventory_system::InventoryScanOutputSource::HID_FALLBACK_PLACEHOLDER:
+        return "hid_fallback_placeholder";
+      case agv_inventory_system::InventoryScanOutputSource::HID_FAILED:
+        return "hid_failed";
+      case agv_inventory_system::InventoryScanOutputSource::PLACEHOLDER_MODE:
+      default:
+        return "placeholder";
+    }
   }
 
   bool finish_return_mode_is_map_origin() const
@@ -1357,8 +1406,25 @@ private:
     }
   }
 
+  void clear_inventory_upload_batch(const std::string & reason)
+  {
+    if (inventory_upload_batch_.empty()) {
+      inventory_upload_batch_finalized_ = false;
+      return;
+    }
+    RCLCPP_WARN(
+      get_logger(),
+      "[mission_manager][RFID][batch] clear reason=%s item_count=%zu",
+      reason.c_str(),
+      inventory_upload_batch_.size());
+    inventory_upload_batch_.clear();
+    inventory_upload_batch_locations_.clear();
+    inventory_upload_batch_finalized_ = false;
+  }
+
   void fail_in_gap_scan_runtime(InGapScanRuntimeMode mode, const std::string & reason)
   {
+    clear_inventory_upload_batch("error");
     if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
       fail_full_inventory(reason);
     } else {
@@ -1560,6 +1626,16 @@ private:
     scanner_config.scan_timeout_sec = std::max(scanner_config.scan_duration_sec, scan_timeout_sec_);
     scanner_config.scan_retry_count = std::max(0, scan_retry_count_);
     scanner_config.scan_result_timeout_sec = std::max(0.0, scan_result_timeout_sec_);
+    scanner_config.rfid_reader_mode = rfid_reader_mode_;
+    scanner_config.rfid_hid_device_path = rfid_hid_device_path_;
+    scanner_config.rfid_hid_grab_device = rfid_hid_grab_device_;
+    scanner_config.rfid_hid_scan_timeout_sec = std::max(0.1, rfid_hid_scan_timeout_sec_);
+    scanner_config.rfid_hid_inter_char_timeout_ms =
+      std::max(1, rfid_hid_inter_char_timeout_ms_);
+    scanner_config.rfid_hid_max_tags_per_location =
+      std::max(0, rfid_hid_max_tags_per_location_);
+    scanner_config.rfid_hid_allow_empty_result = rfid_hid_allow_empty_result_;
+    scanner_config.rfid_hid_fallback_to_placeholder = rfid_hid_fallback_to_placeholder_;
     inventory_scanner_.configure(scanner_config);
 
     lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
@@ -1595,6 +1671,7 @@ private:
     web_params.plc_retry_count = plc_retry_count_;
     web_params.rfid_upload_enabled = rfid_upload_enabled_;
     web_params.rfid_upload_url = rfid_upload_url_;
+    web_params.rfid_upload_verify_tls = rfid_upload_verify_tls_;
     web_params.rfid_upload_timeout_sec = rfid_upload_timeout_sec_;
     web_params.rfid_upload_retry_count = rfid_upload_retry_count_;
     web_params.rfid_upload_fail_policy = rfid_upload_fail_policy_;
@@ -1714,16 +1791,27 @@ private:
       plc_call_stop_on_error_ ? "true" : "false");
     RCLCPP_INFO(
       get_logger(),
-      "RFID上传配置: enabled=%s url=%s timeout=%.2f retry_count=%d fail_policy=%s "
-      "placeholder=%s prefix=%s require_success=%s",
+      "RFID上传配置: enabled=%s url=%s verify_tls=%s timeout=%.2f retry_count=%d fail_policy=%s "
+      "placeholder=%s prefix=%s require_success=%s reader_mode=%s hid_device=%s "
+      "hid_grab=%s hid_timeout=%.2f hid_inter_char_ms=%d hid_max_tags=%d "
+      "hid_allow_empty=%s hid_fallback=%s",
       rfid_upload_enabled_ ? "true" : "false",
       rfid_upload_url_.c_str(),
+      rfid_upload_verify_tls_ ? "true" : "false",
       rfid_upload_timeout_sec_,
       rfid_upload_retry_count_,
       rfid_upload_fail_policy_.c_str(),
       rfid_placeholder_enabled_ ? "true" : "false",
       rfid_placeholder_prefix_.c_str(),
-      rfid_upload_require_success_ ? "true" : "false");
+      rfid_upload_require_success_ ? "true" : "false",
+      rfid_reader_mode_.c_str(),
+      rfid_hid_device_path_.empty() ? "<empty>" : rfid_hid_device_path_.c_str(),
+      rfid_hid_grab_device_ ? "true" : "false",
+      rfid_hid_scan_timeout_sec_,
+      rfid_hid_inter_char_timeout_ms_,
+      rfid_hid_max_tags_per_location_,
+      rfid_hid_allow_empty_result_ ? "true" : "false",
+      rfid_hid_fallback_to_placeholder_ ? "true" : "false");
     RCLCPP_INFO(
       get_logger(),
       "侧排盘库配置: enabled=%s name=%s first_gap=%s first_seq=%s "
@@ -2531,6 +2619,7 @@ private:
     set_gap_detector_enabled(false);
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
+    clear_inventory_upload_batch("cancel");
     reset_single_cabinet_scan_runtime();
     publish_gap_context();
     clear_current_target_cabinet();
@@ -5072,12 +5161,12 @@ private:
       plc_open_wait_required_ = true;
       publish_plc_log(
         "open request success target_cabinet=" + std::to_string(cabinet_id) +
-        " HTTP 2xx only means request-layer delivered; response body is log-only");
+        " HTTP 200 only means request-layer delivered; response body is log-only");
       return true;
     }
 
     const std::string reason =
-      "/open 请求层失败: HTTP 非 2xx、连接失败或超时 target_cabinet=" +
+      "/open 请求层失败: HTTP 非 200、连接失败或超时 target_cabinet=" +
       std::to_string(cabinet_id);
     if (plc_continue_without_plc()) {
       RCLCPP_WARN(get_logger(), "[mission_manager][PLC] %s", reason.c_str());
@@ -5657,6 +5746,7 @@ private:
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
+    clear_inventory_upload_batch("error");
     reset_single_cabinet_scan_runtime();
     reset_between_side_auto_charge_runtime();
     mission_error_reason_ = reason;
@@ -6638,6 +6728,10 @@ private:
       publish_full_inventory_log(
         "exit gap done target=" + std::to_string(finished_target) +
         " next_target=-1 same_side=false");
+      if (!flush_inventory_upload_batch_for_mission_complete("all_cabinets_complete")) {
+        fail_full_inventory("RFID final batch upload failed at all_cabinets_complete");
+        return;
+      }
       publish_full_inventory_log("all targets completed, execute finish_return_mode=" + finish_return_mode_);
       (void)start_finish_action(
         "[FULL_INVENTORY] all targets completed, execute finish_return_mode",
@@ -6880,7 +6974,6 @@ private:
     single_cabinet_grid_move_step_ = agv_inventory_system::ScanStep{};
     single_cabinet_grid_move_start_pose_ = Pose2D{};
     inventory_scanner_.reset();
-    uploaded_inventory_locations_.clear();
     reset_lift_runtime();
   }
 
@@ -6902,7 +6995,6 @@ private:
     single_cabinet_scan_active_ = true;
     single_cabinet_scan_step_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     inventory_scanner_.reset();
-    uploaded_inventory_locations_.clear();
     reset_lift_runtime();
     if (mode == InGapScanRuntimeMode::FULL_INVENTORY) {
       const int initial_depth = std::max(1, current_target_depth_index_);
@@ -7064,6 +7156,176 @@ private:
     return true;
   }
 
+  bool cache_inventory_result_for_upload(
+    const agv_inventory_system::ScanStep & step,
+    InGapScanRuntimeMode mode)
+  {
+    const int level = step.layer_index > 0 ? step.layer_index : 1;
+    const int grid = step.depth_index > 0 ? step.depth_index : 1;
+    const std::string location_rfid =
+      make_inventory_location_rfid(step.cabinet_id, level, grid);
+    const auto & scan_output = inventory_scanner_.last_scan_output();
+
+    std::vector<std::string> rfids;
+    if (scan_output.use_real_rfids_result) {
+      rfids = scan_output.rfids;
+    } else if (rfid_placeholder_enabled_) {
+      rfids.push_back(
+        make_inventory_placeholder_rfid(
+          rfid_placeholder_prefix_,
+          step.cabinet_id,
+          level,
+          grid));
+    } else {
+      RCLCPP_ERROR(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] placeholder disabled but no real RFID reader payload "
+        "cabinet=%d level=%d grid=%d locationRfid=%s source=%s",
+        in_gap_scan_mode_label(mode),
+        step.cabinet_id,
+        level,
+        grid,
+        location_rfid.c_str(),
+        inventory_scan_output_source_label(scan_output.source));
+      return false;
+    }
+
+    if (inventory_upload_batch_locations_.find(location_rfid) !=
+      inventory_upload_batch_locations_.end())
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] duplicate locationRfid, overwrite cached result "
+        "cabinet=%d level=%d grid=%d locationRfid=%s rfid_count=%zu",
+        in_gap_scan_mode_label(mode),
+        step.cabinet_id,
+        level,
+        grid,
+        location_rfid.c_str(),
+        rfids.size());
+      for (auto & item : inventory_upload_batch_) {
+        if (item.location_rfid == location_rfid) {
+          item.rfids = rfids;
+          break;
+        }
+      }
+    } else {
+      agv_inventory_system::InventoryUploadItem item;
+      item.location_rfid = location_rfid;
+      item.rfids = rfids;
+      inventory_upload_batch_.push_back(item);
+      inventory_upload_batch_locations_.insert(location_rfid);
+    }
+
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][%s][RFID][batch] cached locationRfid=%s rfid_count=%zu "
+      "batch_count=%zu source=%s fallback=%s result=%s",
+      in_gap_scan_mode_label(mode),
+      location_rfid.c_str(),
+      rfids.size(),
+      inventory_upload_batch_.size(),
+      inventory_scan_output_source_label(scan_output.source),
+      scan_output.fallback_to_placeholder ? "true" : "false",
+      inventory_scanner_.last_scan_result().c_str());
+    return true;
+  }
+
+  bool flush_inventory_upload_batch(InGapScanRuntimeMode mode, const std::string & reason)
+  {
+    if (inventory_upload_batch_finalized_) {
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] final upload already handled, skip reason=%s",
+        in_gap_scan_mode_label(mode),
+        reason.c_str());
+      return true;
+    }
+
+    if (inventory_upload_batch_.empty()) {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] empty at mission complete, skip upload "
+        "reason=%s upload_enabled=%s reader_mode=%s placeholder=%s allow_hid_empty=%s",
+        in_gap_scan_mode_label(mode),
+        reason.c_str(),
+        rfid_upload_enabled_ ? "true" : "false",
+        rfid_reader_mode_.c_str(),
+        rfid_placeholder_enabled_ ? "true" : "false",
+        rfid_hid_allow_empty_result_ ? "true" : "false");
+      inventory_upload_batch_finalized_ = true;
+      return true;
+    }
+
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][%s][RFID][batch] all requested cabinets complete; "
+      "prepare final RFID batch upload item_count=%zu url=%s reason=%s",
+      in_gap_scan_mode_label(mode),
+      inventory_upload_batch_.size(),
+      rfid_upload_url_.c_str(),
+      reason.c_str());
+
+    if (!rfid_upload_enabled_) {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] upload disabled, drop cached item_count=%zu",
+        in_gap_scan_mode_label(mode),
+        inventory_upload_batch_.size());
+      clear_inventory_upload_batch("upload disabled");
+      inventory_upload_batch_finalized_ = true;
+      return true;
+    }
+
+    const bool success =
+      web_api_client_.reportInventoryResults(inventory_upload_batch_, reason);
+    if (success) {
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] upload success item_count=%zu url=%s",
+        in_gap_scan_mode_label(mode),
+        inventory_upload_batch_.size(),
+        rfid_upload_url_.c_str());
+      clear_inventory_upload_batch("upload_done");
+      inventory_upload_batch_finalized_ = true;
+      return true;
+    }
+
+    RCLCPP_ERROR(
+      get_logger(),
+      "[mission_manager][%s][RFID][batch] upload failed item_count=%zu url=%s fail_policy=%s",
+      in_gap_scan_mode_label(mode),
+      inventory_upload_batch_.size(),
+      rfid_upload_url_.c_str(),
+      rfid_upload_fail_policy_.c_str());
+    if (rfid_upload_fail_policy_ == "continue_without_upload") {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][%s][RFID][batch] continue_without_upload, drop cached data after failure "
+        "item_count=%zu",
+        in_gap_scan_mode_label(mode),
+        inventory_upload_batch_.size());
+      clear_inventory_upload_batch("upload_failed_continue");
+      inventory_upload_batch_finalized_ = true;
+      return true;
+    }
+
+    clear_inventory_upload_batch("upload_failed_error");
+    return false;
+  }
+
+  InGapScanRuntimeMode current_inventory_upload_mode() const
+  {
+    return full_inventory_active_ ?
+      InGapScanRuntimeMode::FULL_INVENTORY :
+      InGapScanRuntimeMode::SINGLE_CABINET;
+  }
+
+  bool flush_inventory_upload_batch_for_mission_complete(const std::string & reason)
+  {
+    return flush_inventory_upload_batch(current_inventory_upload_mode(), reason);
+  }
+
   bool check_lift_step_finished(
     const agv_inventory_system::ScanStep & step,
     InGapScanRuntimeMode mode)
@@ -7159,36 +7421,15 @@ private:
           " depth=" + std::to_string(step.depth_index));
         return false;
       }
-      const int level = step.layer_index > 0 ? step.layer_index : 1;
-      const int grid = step.depth_index > 0 ? step.depth_index : 1;
-      const std::string location_rfid =
-        make_inventory_location_rfid(step.cabinet_id, level, grid);
-      if (uploaded_inventory_locations_.find(location_rfid) != uploaded_inventory_locations_.end()) {
-        RCLCPP_WARN(
-          get_logger(),
-          "[mission_manager][%s][scan_runtime] skip duplicate inventory upload "
-          "cabinet=%d level=%d grid=%d locationRfid=%s",
-          in_gap_scan_mode_label(mode),
-          step.cabinet_id,
-          level,
-          grid,
-          location_rfid.c_str());
-      } else {
-        if (!web_api_client_.reportInventoryResult(
-            step.cabinet_id,
-            level,
-            grid,
-            inventory_scanner_.last_scan_result()))
-        {
-          fail_in_gap_scan_runtime(
-            mode,
-            "扫描结果上报失败: cabinet=" + std::to_string(step.cabinet_id) +
-            " level=" + std::to_string(level) +
-            " grid=" + std::to_string(grid) +
-            " locationRfid=" + location_rfid);
-          return false;
-        }
-        uploaded_inventory_locations_.insert(location_rfid);
+      if (!cache_inventory_result_for_upload(step, mode)) {
+        const int level = step.layer_index > 0 ? step.layer_index : 1;
+        const int grid = step.depth_index > 0 ? step.depth_index : 1;
+        fail_in_gap_scan_runtime(
+          mode,
+          "缓存扫描结果失败: cabinet=" + std::to_string(step.cabinet_id) +
+          " level=" + std::to_string(level) +
+          " grid=" + std::to_string(grid));
+        return false;
       }
     } else {
       if (!check_lift_step_finished(step, mode)) {
@@ -7520,7 +7761,9 @@ private:
     if (single_cabinet_scan_step_index_ >= single_cabinet_scan_steps_.size()) {
       publish_in_gap_scan_log(
         mode,
-        "in-gap runtime sequence complete cabinet=" + std::to_string(cabinet_id));
+        "in-gap runtime sequence complete cabinet=" + std::to_string(cabinet_id) +
+        " batch cached item_count=" + std::to_string(inventory_upload_batch_.size()) +
+        " not uploading until all requested cabinets complete");
       reset_single_cabinet_scan_runtime();
       return true;
     }
@@ -8185,6 +8428,7 @@ private:
     reset_nav_route_runtime();
     reset_wait_gap_runtime();
     reset_entry_gap_runtime();
+    clear_inventory_upload_batch("cancel");
     reset_single_cabinet_scan_runtime();
     set_corridor_mode(false, false);
     request_recognizer_enable(false);
@@ -8199,6 +8443,7 @@ private:
   void fail_single_cabinet_motion(const std::string & reason)
   {
     publish_single_cabinet_log("failed: " + reason);
+    clear_inventory_upload_batch("error");
     stop_single_cabinet_motion_controls();
     reset_single_cabinet_scan_runtime();
     mission_active_ = false;
@@ -8245,6 +8490,7 @@ private:
       message = "单柜盘库未启用";
       return false;
     }
+    clear_inventory_upload_batch("new_mission");
 
     std::string gap_id = agv_inventory_system::trim(request.target_gap);
     std::vector<int> scan_cabinets = scan_cabinets_from_request(request);
@@ -8351,6 +8597,7 @@ private:
       response->message = "任务已在运行";
       return;
     }
+    clear_inventory_upload_batch("new_mission");
 
     std::string load_reason;
     inventory_runtime_config_loaded_ = load_inventory_runtime_config(load_reason);
@@ -10143,6 +10390,11 @@ private:
       }
 
       case State::DONE: {
+        if (!flush_inventory_upload_batch_for_mission_complete("all_cabinets_complete")) {
+          mission_error_reason_ = "RFID final batch upload failed at mission complete";
+          set_state(State::ERROR, mission_error_reason_);
+          break;
+        }
         (void)web_api_client_.reportRobotStatus("DONE");
         if (full_inventory_active_) {
           publish_full_inventory_log("done, back to IDLE");
@@ -10683,8 +10935,8 @@ private:
   std::string web_status_endpoint_{"/api/robot/status"};
   std::string web_result_endpoint_{"/api/inventory/result"};
   bool plc_http_enabled_{false};
-  std::string plc_server_url_{"http://<PLC_GATEWAY_HOST>:8100"};
-  std::string plc_open_endpoint_{"/open"};
+  std::string plc_server_url_{"https://58.154.205.27:8099"};
+  std::string plc_open_endpoint_{"/http-control-plc/car_open"};
   std::string plc_open_query_param_{"shelfId"};
   std::string plc_close_endpoint_{"/close"};
   std::string plc_stop_endpoint_{"/stop"};
@@ -10699,13 +10951,22 @@ private:
   bool plc_call_close_on_mission_done_{false};
   bool plc_call_stop_on_error_{false};
   bool rfid_upload_enabled_{true};
-  std::string rfid_upload_url_{"http://127.0.0.1:8100/upload_inventory"};
+  std::string rfid_upload_url_{"https://58.154.205.27:8099/RobotInspection/inventoryAudit"};
+  bool rfid_upload_verify_tls_{false};
   double rfid_upload_timeout_sec_{3.0};
   int rfid_upload_retry_count_{2};
   std::string rfid_upload_fail_policy_{"error"};
   bool rfid_placeholder_enabled_{true};
   std::string rfid_placeholder_prefix_{"RFID_PLACEHOLDER"};
   bool rfid_upload_require_success_{false};
+  std::string rfid_reader_mode_{"hid_keyboard"};
+  std::string rfid_hid_device_path_{"auto"};
+  bool rfid_hid_grab_device_{true};
+  double rfid_hid_scan_timeout_sec_{5.0};
+  int rfid_hid_inter_char_timeout_ms_{200};
+  int rfid_hid_max_tags_per_location_{10};
+  bool rfid_hid_allow_empty_result_{false};
+  bool rfid_hid_fallback_to_placeholder_{true};
   PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
   int plc_open_wait_target_cabinet_{-1};
   bool plc_open_wait_required_{false};
@@ -10737,7 +10998,9 @@ private:
   SingleCabinetExitPhase single_cabinet_exit_phase_{SingleCabinetExitPhase::STRAIGHT_REVERSE};
   std::vector<agv_inventory_system::ScanStep> single_cabinet_scan_steps_;
   std::size_t single_cabinet_scan_step_index_{0};
-  std::set<std::string> uploaded_inventory_locations_;
+  std::vector<agv_inventory_system::InventoryUploadItem> inventory_upload_batch_;
+  std::set<std::string> inventory_upload_batch_locations_;
+  bool inventory_upload_batch_finalized_{false};
   int single_cabinet_scan_cabinet_{-1};
   bool single_cabinet_scan_active_{false};
   rclcpp::Time single_cabinet_scan_step_start_time_{0, 0, RCL_ROS_TIME};
