@@ -45,11 +45,11 @@ USE_TEST_SCAN_RESULT = False
 
 TEST_SCAN_RESULT = [
     {
-        "locationRfid": "shelf_01_1_1",
+        "locationRfid": "shelf_1_1_1",
         "rfids": ["18A1778857359570", "2A1776341138789"],
     },
     {
-        "locationRfid": "shelf_01_1_2",
+        "locationRfid": "shelf_1_1_2",
         "rfids": ["RFID_TAG_99999"],
     },
 ]

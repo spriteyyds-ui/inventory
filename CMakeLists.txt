@@ -121,6 +121,7 @@ target_link_libraries(gap_detector_node ${cpp_typesupport_target})
 add_library(inventory_scan_modules STATIC
   src/scan_sequence_generator.cpp
   src/scan_sequence_executor.cpp
+  src/hid_scanner_reader.cpp
   src/inventory_scanner.cpp
   src/web_api_client.cpp
 )

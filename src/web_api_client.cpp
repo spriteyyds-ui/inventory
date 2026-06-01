@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 namespace agv_inventory_system
 {
@@ -78,14 +79,58 @@ namespace agv_inventory_system
              body.find("\"success\": true") != std::string::npos;
     }
 
-    bool is_http_success(long http_code)
-    {
-      return http_code >= 200 && http_code < 300;
-    }
-
     bool is_http_ok(long http_code)
     {
       return http_code == 200;
+    }
+
+    std::string extract_json_string_field(const std::string & body, const std::string & field)
+    {
+      const std::string key = "\"" + field + "\"";
+      const std::size_t key_pos = body.find(key);
+      if (key_pos == std::string::npos)
+      {
+        return "";
+      }
+      const std::size_t colon_pos = body.find(':', key_pos + key.size());
+      if (colon_pos == std::string::npos)
+      {
+        return "";
+      }
+      std::size_t value_start = colon_pos + 1U;
+      while (value_start < body.size() &&
+        std::isspace(static_cast<unsigned char>(body[value_start])) != 0)
+      {
+        ++value_start;
+      }
+      if (value_start >= body.size() || body[value_start] != '"')
+      {
+        return "";
+      }
+      ++value_start;
+      std::string value;
+      bool escaped = false;
+      for (std::size_t i = value_start; i < body.size(); ++i)
+      {
+        const char ch = body[i];
+        if (escaped)
+        {
+          value.push_back(ch);
+          escaped = false;
+          continue;
+        }
+        if (ch == '\\')
+        {
+          escaped = true;
+          continue;
+        }
+        if (ch == '"')
+        {
+          break;
+        }
+        value.push_back(ch);
+      }
+      return value;
     }
 
     std::string normalize_fail_policy(std::string value)
@@ -105,16 +150,9 @@ namespace agv_inventory_system
       return normalize_fail_policy(params.rfid_upload_fail_policy) == "continue_without_upload";
     }
 
-    std::string format_two_digits(int value)
-    {
-      std::ostringstream oss;
-      oss << std::setw(2) << std::setfill('0') << value;
-      return oss.str();
-    }
-
     std::string build_location_rfid(int cabinet_id, int layer, int depth)
     {
-      return "shelf_" + format_two_digits(cabinet_id) + "_" + std::to_string(layer) + "_" +
+      return "shelf_" + std::to_string(cabinet_id) + "_" + std::to_string(layer) + "_" +
              std::to_string(depth);
     }
 
@@ -124,8 +162,52 @@ namespace agv_inventory_system
         int layer,
         int depth)
     {
-      return prefix + "_" + format_two_digits(cabinet_id) + "_" + std::to_string(layer) + "_" +
+      return prefix + "_" + std::to_string(cabinet_id) + "_" + std::to_string(layer) + "_" +
              std::to_string(depth) + "_001";
+    }
+
+    std::string escape_json_string(const std::string &value);
+
+    std::string build_inventory_results_body(
+        const std::vector<InventoryUploadItem> &items)
+    {
+      std::ostringstream body;
+      body << "{\"scanCells\":[";
+      for (std::size_t item_index = 0; item_index < items.size(); ++item_index)
+      {
+        if (item_index > 0)
+        {
+          body << ",";
+        }
+        const auto & item = items[item_index];
+        body << "{\"locationRfid\":\"" << escape_json_string(item.location_rfid)
+             << "\",\"rfids\":[";
+        for (std::size_t i = 0; i < item.rfids.size(); ++i)
+        {
+          if (i > 0)
+          {
+            body << ",";
+          }
+          body << "\"" << escape_json_string(item.rfids[i]) << "\"";
+        }
+        body << "]}";
+      }
+      body << "]}";
+      return body.str();
+    }
+
+    std::string join_rfids_for_log(const std::vector<std::string> &rfids)
+    {
+      std::ostringstream oss;
+      for (std::size_t i = 0; i < rfids.size(); ++i)
+      {
+        if (i > 0)
+        {
+          oss << ",";
+        }
+        oss << rfids[i];
+      }
+      return oss.str();
     }
 
     std::string escape_json_string(const std::string &value)
@@ -320,10 +402,6 @@ namespace agv_inventory_system
         params_.rfid_placeholder_prefix.empty() ? "RFID_PLACEHOLDER" : params_.rfid_placeholder_prefix;
     const std::string rfid =
         build_placeholder_rfid(placeholder_prefix, cabinet_id, safe_layer, safe_depth);
-    const std::string body =
-        "[{\"locationRfid\":\"" + escape_json_string(location_rfid) +
-        "\",\"rfids\":[\"" + escape_json_string(rfid) + "\"]}]";
-
     std::cout << "[web_api_client][RFID] upload result placeholder=true"
               << " cabinet=" << cabinet_id
               << " level=" << safe_layer
@@ -333,7 +411,10 @@ namespace agv_inventory_system
               << " result_summary=\"" << summarize_body(result) << "\""
               << " url=" << params_.rfid_upload_url << std::endl;
 
-    const bool uploaded = requestHttpPostJson("RFID inventory result", params_.rfid_upload_url, body);
+    InventoryUploadItem item;
+    item.location_rfid = location_rfid;
+    item.rfids = std::vector<std::string>{rfid};
+    const bool uploaded = reportInventoryResults(std::vector<InventoryUploadItem>{item}, result);
     if (uploaded)
     {
       return true;
@@ -346,6 +427,112 @@ namespace agv_inventory_system
                 << " level=" << safe_layer
                 << " grid=" << safe_depth
                 << " locationRfid=" << location_rfid << std::endl;
+      return true;
+    }
+
+    return false;
+  }
+
+  bool WebApiClient::reportInventoryResult(
+      int cabinet_id,
+      int layer,
+      int depth,
+      const std::vector<std::string> &rfids,
+      const std::string &result) const
+  {
+    const int safe_layer = layer > 0 ? layer : 1;
+    const int safe_depth = depth > 0 ? depth : 1;
+    const std::string location_rfid = build_location_rfid(cabinet_id, safe_layer, safe_depth);
+
+    if (!params_.rfid_upload_enabled)
+    {
+      std::cout << "[web_api_client][RFID] upload disabled, skip real reader result"
+                << " cabinet=" << cabinet_id
+                << " level=" << safe_layer
+                << " grid=" << safe_depth
+                << " locationRfid=" << location_rfid
+                << " rfid_count=" << rfids.size()
+                << " result_summary=\"" << summarize_body(result) << "\"" << std::endl;
+      return true;
+    }
+
+    if (params_.rfid_upload_url.empty())
+    {
+      std::cout << "[web_api_client][RFID] ERROR rfid_upload_url is empty"
+                << " cabinet=" << cabinet_id
+                << " level=" << safe_layer
+                << " grid=" << safe_depth
+                << " locationRfid=" << location_rfid
+                << " rfid_count=" << rfids.size() << std::endl;
+      if (continue_without_upload(params_))
+      {
+        std::cout << "[web_api_client][RFID] WARNING continue_without_upload after empty upload URL"
+                  << " locationRfid=" << location_rfid << std::endl;
+        return true;
+      }
+      return false;
+    }
+
+    std::cout << "[web_api_client][RFID] upload result placeholder=false"
+              << " cabinet=" << cabinet_id
+              << " level=" << safe_layer
+              << " grid=" << safe_depth
+              << " locationRfid=" << location_rfid
+              << " rfid_count=" << rfids.size()
+              << " rfids=\"" << join_rfids_for_log(rfids) << "\""
+              << " result_summary=\"" << summarize_body(result) << "\""
+              << " url=" << params_.rfid_upload_url << std::endl;
+
+    InventoryUploadItem item;
+    item.location_rfid = location_rfid;
+    item.rfids = rfids;
+    const bool uploaded = reportInventoryResults(std::vector<InventoryUploadItem>{item}, result);
+    if (uploaded)
+    {
+      return true;
+    }
+
+    if (continue_without_upload(params_))
+    {
+      std::cout << "[web_api_client][RFID] WARNING upload failed but continue_without_upload is set"
+                << " cabinet=" << cabinet_id
+                << " level=" << safe_layer
+                << " grid=" << safe_depth
+                << " locationRfid=" << location_rfid << std::endl;
+      return true;
+    }
+
+    return false;
+  }
+
+  bool WebApiClient::reportInventoryResults(
+      const std::vector<InventoryUploadItem> &items,
+      const std::string &result) const
+  {
+    if (!params_.rfid_upload_enabled)
+    {
+      std::cout << "[web_api_client][RFID] batch upload disabled, skip result"
+                << " item_count=" << items.size()
+                << " result_summary=\"" << summarize_body(result) << "\"" << std::endl;
+      return true;
+    }
+
+    if (params_.rfid_upload_url.empty())
+    {
+      std::cout << "[web_api_client][RFID] ERROR rfid_upload_url is empty"
+                << " item_count=" << items.size() << std::endl;
+      return false;
+    }
+
+    const std::string body = build_inventory_results_body(items);
+    std::cout << "[web_api_client][RFID] batch upload result"
+              << " item_count=" << items.size()
+              << " result_summary=\"" << summarize_body(result) << "\""
+              << " url=" << params_.rfid_upload_url << std::endl;
+
+    const bool uploaded = requestHttpPostJson("RFID inventory result batch", params_.rfid_upload_url, body);
+    if (uploaded)
+    {
       return true;
     }
 
@@ -399,7 +586,7 @@ namespace agv_inventory_system
       curl_easy_cleanup(curl);
 
       const std::string body_summary = summarize_body(response_body);
-      if (result == CURLE_OK && is_http_success(http_code))
+      if (result == CURLE_OK && is_http_ok(http_code))
       {
         if (params_.plc_require_body_success && !response_body_reports_success(response_body))
         {
@@ -495,11 +682,14 @@ namespace agv_inventory_system
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response_body);
       curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
       curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, error_buffer);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, params_.rfid_upload_verify_tls ? 1L : 0L);
+      curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, params_.rfid_upload_verify_tls ? 2L : 0L);
 
       std::cout << "[web_api_client][RFID] " << action
                 << " attempt=" << attempt << "/" << total_attempts
                 << " method=POST url=" << url
                 << " timeout_sec=" << timeout_sec
+                << " verify_tls=" << (params_.rfid_upload_verify_tls ? "true" : "false")
                 << " request_summary=\"" << request_summary << "\"" << std::endl;
 
       const CURLcode result = curl_easy_perform(curl);
@@ -512,12 +702,18 @@ namespace agv_inventory_system
       {
         if (params_.rfid_upload_require_success && !response_body_reports_success(response_body))
         {
-          std::cout << "[web_api_client][RFID] WARNING " << action
+        std::cout << "[web_api_client][RFID] WARNING " << action
                     << " body success required but success=true was not found"
                     << " attempt=" << attempt << "/" << total_attempts
                     << " http_code=" << http_code
                     << " request_summary=\"" << request_summary << "\""
                     << " body_summary=\"" << body_summary << "\"" << std::endl;
+          const std::string message = extract_json_string_field(response_body, "message");
+          if (!message.empty())
+          {
+            std::cout << "[web_api_client][RFID] WARNING " << action
+                      << " response message=\"" << message << "\"" << std::endl;
+          }
           continue;
         }
 
@@ -525,6 +721,14 @@ namespace agv_inventory_system
                   << " success http_code=" << http_code
                   << " request_summary=\"" << request_summary << "\""
                   << " body_summary=\"" << body_summary << "\"" << std::endl;
+        if (response_body_reports_failure(response_body))
+        {
+          const std::string message = extract_json_string_field(response_body, "message");
+          std::cout << "[web_api_client][RFID] WARNING " << action
+                    << " body reports success=false"
+                    << " message=\"" << message << "\""
+                    << " body_summary=\"" << body_summary << "\"" << std::endl;
+        }
         return true;
       }
 

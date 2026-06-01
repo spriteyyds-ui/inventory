@@ -36,7 +36,7 @@ number_recognizer_node:
 
     recognition_target_style: circle_marker                             # 识别目标样式：circle_marker 为圆形标靶；legacy_a4_digit 为旧 A4 黑字模式
     enable_on_start: true                                               # 启动后是否默认开启识别；设为 false 可等任务管理器明确使能
-    min_confidence: 0.80                                                # 整体识别有效的最低置信度比例；调大会更严格，调小更容易接受低置信结果
+    min_confidence: 0.70                                                # 整体识别有效的最低置信度比例；调大会更严格，调小更容易接受低置信结果
     max_attempts: 20                                                    # 本地连续失败计数上限，单位 次；调大会延长重试，调小更快复位
     attempt_interval: 0.1                                               # 两次推理尝试的最小间隔，单位 s；调大会降低算力占用但响应更慢
     distance_overlay_timeout_sec: 0.8                                   # 距离叠加消息最大有效时间，单位 s；调大会更容忍旧距离，调小显示更实时
@@ -328,8 +328,8 @@ mission_manager_node:
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
     entry_center_offset_m: 0.0                                          # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
     entry_right_target_yaw_rad: 1.6608                                  # 右侧进缝固定目标 yaw，单位 rad；map +Y，现场 4 号柜应向右转入缝
-    entry_left_target_yaw_rad: -1.5008                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
-    entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
+    entry_left_target_yaw_rad: -1.4008                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
+    entry_align_yaw_tolerance_rad: 0.005                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
     entry_turn_timeout_sec: 60.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
@@ -420,16 +420,17 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: false                                             # 是否启用小车端 PLC Flask 网关 HTTP 开柜；关闭时完全保留原流程
-    plc_server_url: "https://172.26.165.218:8099"                       # 当前 Java/PLC HTTP 服务地址；plc_http_enabled=false 时不会发送请求
-    plc_open_endpoint: "/http-control-plc/car_open"                     # 当前 Java/PLC 开柜接口
+    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_server_url: "https://58.154.205.27:8099"                        # 当前 Java/PLC HTTP 服务地址
+    plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
+    plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
     plc_open_query_param: "shelfId"                                     # 当前 Java/PLC 开柜参数名；最终请求为 endpoint?shelfId=<柜号>
     plc_close_endpoint: "/close"                                        # PLC Flask 网关全关接口预留；默认不自动调用
     plc_stop_endpoint: "/stop"                                          # PLC Flask 网关全停止接口预留；默认不自动调用，不等同底盘急停
     plc_hello_endpoint: "/hello"                                        # PLC Flask 网关连通性接口预留；本轮不自动调用
     plc_verify_tls: false                                               # 当前 HTTPS 测试默认不校验证书；正式部署建议开启并配置可信证书
     plc_require_body_success: false                                     # false 时只要求 HTTP 2xx；true 时要求 body 明确包含 success=true
-    plc_request_timeout_sec: 10.0                                       # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
+    plc_request_timeout_sec: 3.0                                        # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
     plc_retry_count: 1                                                  # PLC HTTP 请求失败后的重试次数，单位 次
     plc_fail_policy: "error"                                            # PLC open 失败策略：error 或 continue_without_plc
     plc_supported_cabinets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] # 首版支持 PLC 控制的柜号；19-36 不映射
@@ -437,14 +438,23 @@ mission_manager_node:
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
 
-    rfid_upload_enabled: true                                           # 是否在每个盘库格位扫描完成后上传 RFID/扫码结果
-    rfid_upload_url: "http://127.0.0.1:8100/upload_inventory"           # RFID 盘库结果 HTTP POST 地址；显式配置，不从 web_base_url 推导
+    rfid_upload_enabled: true                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
+    rfid_upload_url: "https://58.154.205.27:8099/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
+    rfid_upload_verify_tls: false                                      # RFID HTTPS 上传是否校验证书；false 等效 curl -k，仅影响 RFID POST
     rfid_upload_timeout_sec: 3.0                                        # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
     rfid_upload_retry_count: 2                                          # RFID 上传失败后的重试次数，单位 次
-    rfid_upload_fail_policy: "continue_without_upload"                                    # RFID 上传失败策略：error 或 continue_without_upload
+    rfid_upload_fail_policy: "error"                                    # RFID 上传失败策略：error 或 continue_without_upload
     rfid_placeholder_enabled: true                                      # 当前无真实 reader 数据时是否生成占位 RFID tag
     rfid_placeholder_prefix: "RFID_PLACEHOLDER"                         # 占位 RFID tag 前缀，最终格式含柜号/层/格位
     rfid_upload_require_success: false                                  # false 时 HTTP 200 即成功；true 时要求响应体包含 success=true
+    rfid_reader_mode: "hid_keyboard"                                    # RFID/扫码数据来源：placeholder 或 hid_keyboard；默认启用真实 HID 扫码枪
+    rfid_hid_device_path: "auto"                                        # HID 扫码枪 input 设备路径；auto 会按 STM32 Custm HID 自动发现，避免写死 eventX
+    rfid_hid_grab_device: true                                          # 是否 EVIOCGRAB 独占扫码枪，避免输入到终端/GUI
+    rfid_hid_scan_timeout_sec: 5.0                                      # 单个格位 HID 扫码接收窗口总超时，单位 s
+    rfid_hid_inter_char_timeout_ms: 200                                 # 无 Enter 时，字符间隔超过该值则结束一条 tag
+    rfid_hid_max_tags_per_location: 10                                  # 单个格位最多接收多少条 tag；重复 tag 会去重
+    rfid_hid_allow_empty_result: false                                  # true 时 HID 成功但无 tag 也上传空 rfids
+    rfid_hid_fallback_to_placeholder: true                              # HID 路径/权限/超时失败时是否回退占位 RFID
 
     scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
     scan_duration_sec: 2.0                                              # 单次扫描动作持续时间，单位 s；调大会采集更久但任务变慢
@@ -522,7 +532,7 @@ mission_manager_node:
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
     full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
-    full_inventory_same_side_recognition_delay_distance_m: 1.0          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
+    full_inventory_same_side_recognition_delay_distance_m: 1.2          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
