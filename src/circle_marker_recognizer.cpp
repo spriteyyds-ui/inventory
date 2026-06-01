@@ -525,6 +525,7 @@ bool CircleMarkerRecognizer::extractDigits(const cv::Mat & panel_bgr, CircleMark
 
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(result.digit_mask.clone(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+  result.digit_contour_count = static_cast<int>(contours.size());
   if (contours.empty()) {
     result.error_message = "圆内未检测到白色数字候选";
     return false;
@@ -534,20 +535,53 @@ bool CircleMarkerRecognizer::extractDigits(const cv::Mat & panel_bgr, CircleMark
   const double min_area = circle_area * std::clamp(params_.digit_min_area_ratio, 0.0, 1.0);
   const double max_area = circle_area * std::clamp(params_.digit_max_area_ratio, 0.001, 1.0);
   std::vector<cv::Rect> boxes;
+  result.digit_candidate_debug.clear();
+  result.digit_candidate_debug.reserve(contours.size());
+  result.digit_candidate_rejected_count = 0;
 
-  for (const auto & contour : contours) {
+  for (std::size_t i = 0; i < contours.size(); ++i) {
+    const auto & contour = contours[i];
+    CircleMarkerDigitCandidateDebugInfo info;
+    info.contour_index = static_cast<int>(i);
     const double area = std::abs(cv::contourArea(contour));
+    info.contour_area = area;
+    cv::Rect box = cv::boundingRect(contour);
+    info.bbox = box;
+    info.bbox_area = static_cast<double>(box.area());
+    info.area_ratio = area / circle_area;
+    info.height_ratio =
+      static_cast<double>(box.height) / static_cast<double>(std::max(1, result.circle_bbox.height));
+    info.width_ratio =
+      static_cast<double>(box.width) / static_cast<double>(std::max(1, result.circle_bbox.width));
+    info.aspect_ratio =
+      static_cast<double>(box.width) / static_cast<double>(std::max(1, box.height));
     if (area < min_area || area > max_area) {
+      info.reject_reason = area < min_area ? "area_ratio too small" : "area_ratio too large";
+      result.digit_candidate_rejected_count += 1;
+      result.digit_candidate_debug.push_back(info);
       continue;
     }
-    cv::Rect box = cv::boundingRect(contour);
     if (box.width < 2 || box.height < 4) {
+      if (box.width <= 0 || box.height <= 0) {
+        info.reject_reason = "bbox invalid";
+      } else if (box.height < 4) {
+        info.reject_reason = "height_ratio too small";
+      } else {
+        info.reject_reason = "width_ratio too small";
+      }
+      result.digit_candidate_rejected_count += 1;
+      result.digit_candidate_debug.push_back(info);
       continue;
     }
     const double aspect = static_cast<double>(box.width) / static_cast<double>(box.height);
     if (aspect < 0.08 || aspect > 2.5) {
+      info.reject_reason = "aspect_ratio invalid";
+      result.digit_candidate_rejected_count += 1;
+      result.digit_candidate_debug.push_back(info);
       continue;
     }
+    info.accepted = true;
+    result.digit_candidate_debug.push_back(info);
     boxes.push_back(box);
   }
 

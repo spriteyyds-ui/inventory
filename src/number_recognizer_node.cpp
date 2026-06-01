@@ -1366,6 +1366,39 @@ private:
         info.non_white_ratio);
     }
 
+    const int accepted_candidates =
+      std::max(0, circle_result.digit_contour_count - circle_result.digit_candidate_rejected_count);
+    RCLCPP_INFO(
+      get_logger(),
+      "CIRCLE_DIGIT_CONTOURS: contours=%d rejected=%d accepted=%d digit_images=%zu",
+      circle_result.digit_contour_count,
+      circle_result.digit_candidate_rejected_count,
+      accepted_candidates,
+      circle_result.digit_images.size());
+
+    for (const auto & info : circle_result.digit_candidate_debug) {
+      const std::string decision = info.accepted ?
+        "accept" :
+        std::string("reject: ") + info.reject_reason;
+      RCLCPP_INFO(
+        get_logger(),
+        "CIRCLE_DIGIT_CANDIDATE[%d]: bbox=%d,%d,%d,%d contour_area=%.1f "
+        "bbox_area=%.1f area_ratio=%.5f height_ratio=%.5f width_ratio=%.5f "
+        "aspect_ratio=%.5f %s",
+        info.contour_index,
+        info.bbox.x,
+        info.bbox.y,
+        info.bbox.width,
+        info.bbox.height,
+        info.contour_area,
+        info.bbox_area,
+        info.area_ratio,
+        info.height_ratio,
+        info.width_ratio,
+        info.aspect_ratio,
+        decision.c_str());
+    }
+
     for (std::size_t i = 0; i < seq.items.size(); ++i) {
       const auto & item = seq.items[i];
       std::vector<std::pair<int, float>> top;

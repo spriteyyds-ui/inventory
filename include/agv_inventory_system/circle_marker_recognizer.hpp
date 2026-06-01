@@ -72,6 +72,20 @@ struct CircleMarkerDigitDebugInfo
   double non_white_ratio{0.0};
 };
 
+struct CircleMarkerDigitCandidateDebugInfo
+{
+  int contour_index{0};
+  cv::Rect bbox;
+  double contour_area{0.0};
+  double bbox_area{0.0};
+  double area_ratio{0.0};
+  double height_ratio{0.0};
+  double width_ratio{0.0};
+  double aspect_ratio{0.0};
+  bool accepted{false};
+  std::string reject_reason;
+};
+
 struct CircleMarkerResult
 {
   bool success{false};
@@ -92,6 +106,9 @@ struct CircleMarkerResult
   std::vector<cv::Rect> digit_boxes;
   std::vector<cv::Mat> digit_images;
   std::vector<CircleMarkerDigitDebugInfo> digit_debug;
+  int digit_contour_count{0};
+  int digit_candidate_rejected_count{0};
+  std::vector<CircleMarkerDigitCandidateDebugInfo> digit_candidate_debug;
 
   cv::Mat debug_panel;
   cv::Mat debug_digits;
