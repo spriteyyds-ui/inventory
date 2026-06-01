@@ -63,6 +63,15 @@ struct MarkerPanelDetection
   cv::Mat debug_image;
 };
 
+struct CircleMarkerDigitDebugInfo
+{
+  int width{0};
+  int height{0};
+  int non_white_pixels{0};
+  int total_pixels{0};
+  double non_white_ratio{0.0};
+};
+
 struct CircleMarkerResult
 {
   bool success{false};
@@ -70,6 +79,9 @@ struct CircleMarkerResult
   std::string number;
   float confidence{0.0F};
   std::string error_message;
+  bool extract_digits_success{false};
+  bool classifier_input_ready{false};
+  SequenceClassification classification;
 
   MarkerPanelDetection panel;
   cv::Rect circle_bbox;
@@ -79,6 +91,7 @@ struct CircleMarkerResult
   cv::Mat digit_mask;
   std::vector<cv::Rect> digit_boxes;
   std::vector<cv::Mat> digit_images;
+  std::vector<CircleMarkerDigitDebugInfo> digit_debug;
 
   cv::Mat debug_panel;
   cv::Mat debug_digits;
