@@ -879,6 +879,12 @@ private:
     MOVING_TO_GRID_CENTER,
   };
 
+  enum class EntryMotionMode
+  {
+    FORWARD_ENTRY,
+    REVERSE_ENTRY,
+  };
+
   enum class StopAutoChargeDepartPhase
   {
     IDLE,
@@ -952,6 +958,7 @@ private:
     double speed_scale{1.0};
     bool blocked{false};
     std::string active_side{"left"};
+    std::string motion_direction{"front"};
     std::string block_reason{"NONE"};
   };
 
@@ -1127,9 +1134,13 @@ private:
 
   static bool in_deg_range(double value_deg, double start_deg, double end_deg)
   {
-    return
-      value_deg >= std::min(start_deg, end_deg) &&
-      value_deg <= std::max(start_deg, end_deg);
+    value_deg = normalize_deg(value_deg);
+    start_deg = normalize_deg(start_deg);
+    end_deg = normalize_deg(end_deg);
+    if (start_deg <= end_deg) {
+      return value_deg >= start_deg && value_deg <= end_deg;
+    }
+    return value_deg >= start_deg || value_deg <= end_deg;
   }
 
   static double yaw_from_quaternion(const geometry_msgs::msg::Quaternion & q)
@@ -1299,6 +1310,17 @@ private:
   static std::string search_direction_to_string(SearchDirection direction)
   {
     return direction == SearchDirection::BACKWARD ? "backward" : "forward";
+  }
+
+  static EntryMotionMode resolve_entry_motion_mode(SearchDirection direction)
+  {
+    return direction == SearchDirection::BACKWARD ?
+           EntryMotionMode::REVERSE_ENTRY : EntryMotionMode::FORWARD_ENTRY;
+  }
+
+  static std::string entry_motion_mode_to_string(EntryMotionMode mode)
+  {
+    return mode == EntryMotionMode::REVERSE_ENTRY ? "REVERSE_ENTRY" : "FORWARD_ENTRY";
   }
 
   static bool try_parse_search_direction(std::string direction, SearchDirection & parsed)
@@ -3004,16 +3026,92 @@ private:
     safe_exit_gap_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
-  double safe_exit_gap_distance() const
+  void clear_safe_exit_gap_recovery_context()
   {
-    const double measured = std::isfinite(single_cabinet_last_entering_straight_distance_) ?
-      single_cabinet_last_entering_straight_distance_ : 0.0;
+    safe_exit_gap_context_valid_ = false;
+    safe_exit_gap_maybe_inside_gap_ = false;
+    safe_exit_gap_distance_m_ = 0.0;
+    safe_exit_gap_yaw_rad_ = 0.0;
+    safe_exit_gap_yaw_valid_ = false;
+    safe_exit_gap_context_source_state_.clear();
+    safe_exit_gap_context_stamp_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+  }
+
+  void record_safe_exit_gap_yaw_context(const std::string & source_state)
+  {
+    safe_exit_gap_context_valid_ = true;
+    safe_exit_gap_context_source_state_ = source_state;
+    safe_exit_gap_context_stamp_ = this->now();
+    if (target_gap_yaw_valid_ && std::isfinite(target_gap_yaw_)) {
+      safe_exit_gap_yaw_rad_ = normalize_angle(target_gap_yaw_);
+      safe_exit_gap_yaw_valid_ = true;
+    }
+  }
+
+  void update_safe_exit_gap_recovery_context(
+    double entering_distance,
+    bool maybe_inside_gap,
+    const std::string & source_state)
+  {
+    safe_exit_gap_context_valid_ = true;
+    safe_exit_gap_maybe_inside_gap_ = safe_exit_gap_maybe_inside_gap_ || maybe_inside_gap;
+    safe_exit_gap_context_source_state_ = source_state;
+    safe_exit_gap_context_stamp_ = this->now();
+    if (std::isfinite(entering_distance)) {
+      safe_exit_gap_distance_m_ = std::max(
+        safe_exit_gap_distance_m_,
+        std::max(0.0, entering_distance));
+    }
+    if (target_gap_yaw_valid_ && std::isfinite(target_gap_yaw_)) {
+      safe_exit_gap_yaw_rad_ = normalize_angle(target_gap_yaw_);
+      safe_exit_gap_yaw_valid_ = true;
+    }
+  }
+
+  bool safe_exit_gap_recovery_context_available() const
+  {
+    return safe_exit_gap_context_valid_ && safe_exit_gap_maybe_inside_gap_;
+  }
+
+  double safe_exit_gap_distance(std::string & source) const
+  {
     const double fallback = std::isfinite(single_cabinet_exit_distance_m_) ?
       single_cabinet_exit_distance_m_ : 1.20;
-    const double base = measured > 0.05 ? measured : fallback;
+    double base = fallback;
+    source = "fallback_config";
+    if (safe_exit_gap_context_valid_ &&
+      std::isfinite(safe_exit_gap_distance_m_) &&
+      safe_exit_gap_distance_m_ > 0.05)
+    {
+      base = safe_exit_gap_distance_m_;
+      source = "recovery_context";
+    } else {
+      const double measured = std::isfinite(single_cabinet_last_entering_straight_distance_) ?
+        single_cabinet_last_entering_straight_distance_ : 0.0;
+      if (measured > 0.05) {
+        base = measured;
+        source = "last_entering_distance";
+      }
+    }
     const double extra = std::isfinite(safe_exit_gap_extra_clearance_m_) ?
       std::max(0.0, safe_exit_gap_extra_clearance_m_) : 0.30;
     return std::max(0.05, base + extra);
+  }
+
+  double safe_exit_gap_yaw(const Pose2D & current, std::string & source) const
+  {
+    if (safe_exit_gap_context_valid_ && safe_exit_gap_yaw_valid_ &&
+      std::isfinite(safe_exit_gap_yaw_rad_))
+    {
+      source = "recovery_context";
+      return normalize_angle(safe_exit_gap_yaw_rad_);
+    }
+    if (target_gap_yaw_valid_ && std::isfinite(target_gap_yaw_)) {
+      source = "target_gap_yaw";
+      return normalize_angle(target_gap_yaw_);
+    }
+    source = "current_yaw";
+    return normalize_angle(current.yaw);
   }
 
   bool begin_safe_exit_gap_flow(std::string & message)
@@ -3038,9 +3136,10 @@ private:
       return false;
     }
 
-    const double target_distance = safe_exit_gap_distance();
-    const double target_yaw =
-      std::isfinite(target_gap_yaw_) ? normalize_angle(target_gap_yaw_) : normalize_angle(current.yaw);
+    std::string distance_source;
+    const double target_distance = safe_exit_gap_distance(distance_source);
+    std::string yaw_source;
+    const double target_yaw = safe_exit_gap_yaw(current, yaw_source);
     stop_all_inventory_controls_for_safe_action("安全出缝准备");
     safe_exit_gap_start_distance_ = odom_cumulative_distance_;
     safe_exit_gap_target_distance_ = target_distance;
@@ -3052,7 +3151,13 @@ private:
     full_inventory_active_ = false;
     pending_interrupt_request_ = PendingInterruptRequest::NONE;
     set_state(State::SAFE_EXIT_GAP, "开始安全出缝");
-    message = "已停止盘库相关动作，开始低速倒退安全出缝。";
+    message =
+      "已停止盘库相关动作，开始低速倒退安全出缝。distance_source=" + distance_source +
+      " target_distance=" + format_fixed(target_distance, 3) +
+      " yaw_source=" + yaw_source +
+      " target_yaw=" + format_fixed(target_yaw, 4) +
+      " context_state=" + (safe_exit_gap_context_source_state_.empty() ?
+      "none" : safe_exit_gap_context_source_state_);
     publish_state_text(message);
     publish_log(message);
     return true;
@@ -3063,12 +3168,13 @@ private:
     publish_stop();
     robot_inside_gap_ = false;
     reset_safe_exit_gap_runtime();
+    clear_safe_exit_gap_recovery_context();
     mission_active_ = false;
     inventory_flow_active_ = false;
     single_cabinet_motion_active_ = false;
     full_inventory_active_ = false;
     pending_interrupt_request_ = PendingInterruptRequest::NONE;
-    set_state(State::IDLE, "SAFE_IN_CORRIDOR，安全出缝完成，系统待机");
+    set_state(State::IDLE, "safe_exit_gap completed: SAFE_IN_CORRIDOR，系统待机");
     publish_state_text("安全出缝完成，当前已在通道安全位置。");
   }
 
@@ -4146,6 +4252,25 @@ private:
     return best;
   }
 
+  static double shifted_scan_sector_deg(double sector_deg, EntryMotionMode motion_mode)
+  {
+    if (motion_mode != EntryMotionMode::REVERSE_ENTRY) {
+      return sector_deg;
+    }
+    return normalize_deg(sector_deg + 180.0);
+  }
+
+  double min_motion_direction_scan_range(
+    const sensor_msgs::msg::LaserScan & scan,
+    double sector_start_deg,
+    double sector_end_deg) const
+  {
+    return min_scan_range_in_sector(
+      scan,
+      shifted_scan_sector_deg(sector_start_deg, entry_motion_mode_),
+      shifted_scan_sector_deg(sector_end_deg, entry_motion_mode_));
+  }
+
   bool median_lateral_scan_distance_in_sector(
     const sensor_msgs::msg::LaserScan & scan,
     double sector_start_deg,
@@ -4305,6 +4430,8 @@ private:
   {
     EnteringSafetyEval eval;
     eval.active_side = current_entry_side_;
+    eval.motion_direction =
+      entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ? "rear" : "front";
 
     if (use_scan_safety_) {
       if (!latest_scan_ || (this->now() - latest_scan_stamp_).seconds() > max_scan_age_sec_) {
@@ -4314,17 +4441,17 @@ private:
         return eval;
       }
 
-      eval.front_min_dist = min_scan_range_in_sector(
+      eval.front_min_dist = min_motion_direction_scan_range(
         *latest_scan_, enter_front_sector_start_deg_, enter_front_sector_end_deg_);
       if (current_entry_side_ == "right") {
-        eval.front_side_min_dist = min_scan_range_in_sector(
+        eval.front_side_min_dist = min_motion_direction_scan_range(
           *latest_scan_, enter_front_right_sector_start_deg_, enter_front_right_sector_end_deg_);
-        eval.side_min_dist = min_scan_range_in_sector(
+        eval.side_min_dist = min_motion_direction_scan_range(
           *latest_scan_, enter_right_side_sector_start_deg_, enter_right_side_sector_end_deg_);
       } else {
-        eval.front_side_min_dist = min_scan_range_in_sector(
+        eval.front_side_min_dist = min_motion_direction_scan_range(
           *latest_scan_, enter_front_left_sector_start_deg_, enter_front_left_sector_end_deg_);
-        eval.side_min_dist = min_scan_range_in_sector(
+        eval.side_min_dist = min_motion_direction_scan_range(
           *latest_scan_, enter_left_side_sector_start_deg_, enter_left_side_sector_end_deg_);
       }
       eval.front_left_min_dist = eval.front_side_min_dist;
@@ -4342,9 +4469,16 @@ private:
         eval.blocked = true;
         eval.speed_scale = 0.0;
         if (eval.front_min_dist < enter_stop_distance_) {
-          eval.block_reason = "BLOCKED_FRONT";
+          eval.block_reason =
+            entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ? "BLOCKED_REAR" : "BLOCKED_FRONT";
         } else if (eval.front_side_min_dist < enter_stop_distance_) {
-          eval.block_reason = current_entry_side_ == "right" ? "BLOCKED_FRONT_RIGHT" : "BLOCKED_FRONT_LEFT";
+          if (entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY) {
+            eval.block_reason =
+              current_entry_side_ == "right" ? "BLOCKED_REAR_RIGHT" : "BLOCKED_REAR_LEFT";
+          } else {
+            eval.block_reason =
+              current_entry_side_ == "right" ? "BLOCKED_FRONT_RIGHT" : "BLOCKED_FRONT_LEFT";
+          }
         } else {
           eval.block_reason = current_entry_side_ == "right" ? "BLOCKED_RIGHT_SIDE" : "BLOCKED_LEFT_SIDE";
         }
@@ -5722,6 +5856,7 @@ private:
     }
 
     full_inventory_sequence_ = sequence;
+    clear_safe_exit_gap_recovery_context();
     full_inventory_active_ = true;
     full_inventory_index_ = 0;
     full_inventory_current_target_ = -1;
@@ -7938,6 +8073,7 @@ private:
   {
     publish_stop();
     robot_inside_gap_ = false;
+    clear_safe_exit_gap_recovery_context();
     single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     single_cabinet_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
@@ -8683,6 +8819,7 @@ private:
         return false;
       }
 
+      clear_safe_exit_gap_recovery_context();
       gap_request_queue_ = {plan};
       current_gap_request_index_ = 0;
       mission_error_reason_.clear();
@@ -8715,6 +8852,7 @@ private:
     }
 
     reset_single_cabinet_side_row_context();
+    clear_safe_exit_gap_recovery_context();
     InventoryGapPlan plan;
     plan.gap_id = single_cabinet_motion_target_gap_;
     plan.scan_cabinets = {single_cabinet_motion_target_cabinet_};
@@ -8837,6 +8975,7 @@ private:
 
     targets_ = targets;
     current_target_index_ = 0;
+    clear_safe_exit_gap_recovery_context();
 
     std::string reason;
     if (!load_configs_and_prepare_current_target(reason)) {
@@ -9101,14 +9240,18 @@ private:
       return;
     }
 
-    if (!robot_inside_gap_ && !is_in_gap_or_gap_motion_state()) {
+    if (!robot_inside_gap_ && !is_in_gap_or_gap_motion_state() &&
+      !safe_exit_gap_recovery_context_available())
+    {
       stop_all_inventory_controls_for_safe_action("收到安全出缝指令但当前不在缝隙内");
       mission_active_ = false;
       inventory_flow_active_ = false;
       pending_interrupt_request_ = PendingInterruptRequest::NONE;
       set_state(State::IDLE, "当前不在缝隙内，已停车并停止任务");
-      response->success = true;
-      response->message = "当前不在缝隙内，已停车并停止任务。";
+      response->success = false;
+      response->message = "当前不在缝内，且缺少可用的出缝恢复上下文，未执行出缝动作。";
+      publish_state_text(response->message);
+      publish_log(response->message);
       return;
     }
 
@@ -9188,9 +9331,11 @@ private:
   void reset_entry_gap_runtime()
   {
     entry_gap_phase_ = EntryGapPhase::IDLE;
+    entry_motion_mode_ = EntryMotionMode::FORWARD_ENTRY;
     entry_gap_phase_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     entry_turn_start_yaw_ = 0.0;
     target_gap_yaw_ = 0.0;
+    target_gap_yaw_valid_ = false;
     straight_start_pose_ = Pose2D{};
     entry_last_traveled_ = 0.0;
     entry_turn_completed_ = false;
@@ -9497,20 +9642,30 @@ private:
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     entry_turn_start_yaw_ = yaw_control.yaw;
+    double base_entry_yaw = 0.0;
     if (current_entry_side_ == "right") {
-      target_gap_yaw_ = normalize_angle(entry_right_target_yaw_rad_);
+      base_entry_yaw = normalize_angle(entry_right_target_yaw_rad_);
     } else if (current_entry_side_ == "left") {
-      target_gap_yaw_ = normalize_angle(entry_left_target_yaw_rad_);
+      base_entry_yaw = normalize_angle(entry_left_target_yaw_rad_);
     } else {
       fail_entering_gap("entry_side 非法，无法确定固定 map Y 入缝目标 yaw: " + current_entry_side_);
       return;
     }
+    entry_motion_mode_ = resolve_entry_motion_mode(current_gap_plan_.search_direction);
+    target_gap_yaw_ = entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ?
+      normalize_angle(base_entry_yaw + M_PI) : base_entry_yaw;
+    target_gap_yaw_valid_ = true;
+    record_safe_exit_gap_yaw_context("ENTERING_GAP_PREPARE");
     RCLCPP_INFO(
       get_logger(),
       "[mission_manager][entering_gap] fixed map-y target yaw entry_side=%s "
-      "target_gap_yaw=%.4f entry_right_target_yaw_rad=%.4f entry_left_target_yaw_rad=%.4f "
+      "entry_motion_mode=%s gap_search_direction=%s base_entry_yaw=%.4f target_gap_yaw=%.4f "
+      "entry_right_target_yaw_rad=%.4f entry_left_target_yaw_rad=%.4f "
       "target_yaw_source=fixed_map_y yaw_frame=%s current_yaw=%.4f yaw_error=%.4f pose_note=%s",
       current_entry_side_.c_str(),
+      entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+      search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      base_entry_yaw,
       target_gap_yaw_,
       entry_right_target_yaw_rad_,
       entry_left_target_yaw_rad_,
@@ -9520,6 +9675,9 @@ private:
       yaw_control.pose_note.c_str());
     publish_motion_log(
       "[entering_gap] fixed map-y target yaw entry_side=" + current_entry_side_ +
+      " entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+      " gap_search_direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
+      " base_entry_yaw=" + format_fixed(base_entry_yaw, 4) +
       " target_gap_yaw=" + format_fixed(target_gap_yaw_, 4) +
       " entry_right_target_yaw_rad=" + format_fixed(entry_right_target_yaw_rad_, 4) +
       " entry_left_target_yaw_rad=" + format_fixed(entry_left_target_yaw_rad_, 4) +
@@ -9532,6 +9690,9 @@ private:
       EntryGapPhase::ENTERING_TURN,
       "entry_turn_start_yaw=" + std::to_string(entry_turn_start_yaw_) +
       " target_gap_yaw=" + std::to_string(target_gap_yaw_) +
+      " base_entry_yaw=" + std::to_string(base_entry_yaw) +
+      " entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+      " gap_search_direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
       " target_yaw_source=fixed_map_y" +
       " yaw_frame=" + yaw_control.yaw_frame +
       " current_yaw=" + format_fixed(yaw_control.yaw, 4) +
@@ -9870,9 +10031,7 @@ private:
     if (!straight_start_pose_.valid) {
       return 0.0;
     }
-    return
-      (current.x - straight_start_pose_.x) * std::cos(target_gap_yaw_) +
-      (current.y - straight_start_pose_.y) * std::sin(target_gap_yaw_);
+    return std::hypot(current.x - straight_start_pose_.x, current.y - straight_start_pose_.y);
   }
 
   double entry_turn_timeout_sec() const
@@ -9913,15 +10072,16 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "entering_gap: phase=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
+      "entering_gap: phase=%s entry_motion_mode=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
       "yaw_frame=%s current_yaw=%.3f yaw_error=%.3f pose_note=%s "
       "angular.z=%.3f straight_start_pose=(%s) "
       "traveled=%.3f target_straight_distance=%.3f turn_done=%d straight_done=%d "
       "entry_side=%s left_side_dist=%.3f right_side_dist=%.3f control_side_dist=%.3f "
       "side_error=%.3f yaw_hold_cmd=%.3f side_distance_cmd=%.3f final_angular_cmd=%.3f "
       "side_hold_status=%s side_points[left=%zu,right=%zu] safety_stop=%d safety_reason=%s "
-      "front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f",
+      "motion_direction=%s front=%.3f front_side=%.3f side_dist=%.3f speed_scale=%.2f",
       entry_gap_phase_to_string(entry_gap_phase_).c_str(),
+      entry_motion_mode_to_string(entry_motion_mode_).c_str(),
       entry_turn_start_yaw_,
       target_gap_yaw_,
       yaw_frame.c_str(),
@@ -9947,6 +10107,7 @@ private:
       side_hold.right_valid_points,
       entry_stopped_by_safety_ ? 1 : 0,
       safety.block_reason.c_str(),
+      safety.motion_direction.c_str(),
       safety.front_min_dist,
       safety.front_side_min_dist,
       safety.side_min_dist,
@@ -10095,6 +10256,11 @@ private:
         straight_start_pose_.yaw = yaw_control.yaw;
         entry_last_traveled_ = 0.0;
         traveled = 0.0;
+        update_safe_exit_gap_recovery_context(
+          0.0,
+          true,
+          entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ?
+          "MOVING_TO_GRID_CENTER_START_REVERSE_ENTRY" : "MOVING_TO_GRID_CENTER_START_FORWARD_ENTRY");
         log_entering_gap_status(
           safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false,
           yaw_control.yaw_frame, yaw_control.pose_note);
@@ -10125,6 +10291,11 @@ private:
           fail_entering_gap("入缝直行里程异常，traveled=" + std::to_string(traveled));
           return;
         }
+        update_safe_exit_gap_recovery_context(
+          traveled,
+          true,
+          entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ?
+          "MOVING_TO_GRID_CENTER_REVERSE_ENTRY" : "MOVING_TO_GRID_CENTER_FORWARD_ENTRY");
 
         const double straight_elapsed = (this->now() - entry_gap_phase_start_).seconds();
         const double straight_timeout = entry_straight_timeout_sec();
@@ -10145,7 +10316,10 @@ private:
           yaw_hold_cmd + side_hold.side_distance_cmd,
           -angular_limit,
           angular_limit);
-        const double straight_linear_cmd = std::abs(entry_straight_speed_) * safety.speed_scale;
+        const double entry_linear_sign =
+          entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ? -1.0 : 1.0;
+        const double straight_linear_cmd =
+          entry_linear_sign * std::abs(entry_straight_speed_) * safety.speed_scale;
 
         if (straight_elapsed > straight_timeout) {
           side_hold.final_angular_cmd = limited_angular * safety.speed_scale;
@@ -10158,6 +10332,7 @@ private:
             "[mission_manager][MOVING_TO_GRID_CENTER] 入缝直行超时 elapsed=%.2f timeout=%.2f "
             "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
             "cmd.linear.x=0.000 planned_linear=%.3f speed_scale=%.2f estimated_speed=%.3f "
+            "entry_motion_mode=%s motion_direction=%s "
             "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
             "yaw_frame=%s pose_note=%s side_distance_cmd=%.3f side_hold_status=%s",
             straight_elapsed,
@@ -10168,6 +10343,8 @@ private:
             straight_linear_cmd,
             safety.speed_scale,
             estimated_speed,
+            entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+            safety.motion_direction.c_str(),
             odom_current.x,
             odom_current.y,
             yaw_control.yaw,
@@ -10191,6 +10368,10 @@ private:
           if (full_inventory_active_) {
             single_cabinet_last_entering_straight_distance_ =
               std::max(traveled, target_straight_distance_);
+            update_safe_exit_gap_recovery_context(
+              single_cabinet_last_entering_straight_distance_,
+              true,
+              "FULL_INVENTORY_IN_GAP_SCAN");
             set_state(
               State::FULL_INVENTORY_IN_GAP_SCAN,
               "[FULL_INVENTORY] reached depth-grid center, start in-gap scan cabinet=" +
@@ -10198,6 +10379,10 @@ private:
           } else if (single_cabinet_motion_active_) {
             single_cabinet_last_entering_straight_distance_ =
               std::max(traveled, target_straight_distance_);
+            update_safe_exit_gap_recovery_context(
+              single_cabinet_last_entering_straight_distance_,
+              true,
+              "SINGLE_CABINET_IN_GAP_SCAN");
             State scan_state = State::SINGLE_CABINET_IN_GAP_SCAN;
             if (single_cabinet_side_row_active_) {
               if (single_cabinet_side_row_phase_ == SingleCabinetSideRowPhase::FIRST_ADJUSTED_SCAN ||
@@ -10212,6 +10397,10 @@ private:
               scan_state,
               "已直行到目标深度格中心，开始缝内扫描");
           } else {
+            update_safe_exit_gap_recovery_context(
+              std::max(traveled, target_straight_distance_),
+              true,
+              "INVENTORYING");
             set_state(State::INVENTORYING, "已直行到目标深度格中心，盘库流程预留");
           }
           return;
@@ -10235,6 +10424,7 @@ private:
           "[mission_manager][MOVING_TO_GRID_CENTER] elapsed=%.2f timeout=%.2f "
           "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
           "cmd.linear.x=%.3f speed_scale=%.2f estimated_speed=%.3f "
+          "entry_motion_mode=%s motion_direction=%s "
           "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
           "yaw_frame=%s pose_note=%s side_distance_cmd=%.3f side_hold_status=%s",
           straight_elapsed,
@@ -10245,6 +10435,8 @@ private:
           cmd.linear.x,
           safety.speed_scale,
           estimated_speed,
+          entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+          safety.motion_direction.c_str(),
           odom_current.x,
           odom_current.y,
           yaw_control.yaw,
@@ -11236,6 +11428,13 @@ private:
   std::string manual_auto_recharge_cancel_message_;
   rclcpp::Time manual_auto_recharge_cancel_request_time_{0, 0, RCL_ROS_TIME};
   bool robot_inside_gap_{false};
+  bool safe_exit_gap_context_valid_{false};
+  bool safe_exit_gap_maybe_inside_gap_{false};
+  double safe_exit_gap_distance_m_{0.0};
+  double safe_exit_gap_yaw_rad_{0.0};
+  bool safe_exit_gap_yaw_valid_{false};
+  std::string safe_exit_gap_context_source_state_;
+  rclcpp::Time safe_exit_gap_context_stamp_{0, 0, RCL_ROS_TIME};
   double safe_exit_gap_start_distance_{0.0};
   double safe_exit_gap_target_distance_{0.0};
   double safe_exit_gap_target_yaw_{0.0};
@@ -11312,9 +11511,11 @@ private:
   double wait_gap_motion_target_distance_{0.0};
   double wait_gap_motion_direction_{0.0};
   EntryGapPhase entry_gap_phase_{EntryGapPhase::IDLE};
+  EntryMotionMode entry_motion_mode_{EntryMotionMode::FORWARD_ENTRY};
   rclcpp::Time entry_gap_phase_start_{0, 0, RCL_ROS_TIME};
   double entry_turn_start_yaw_{0.0};
   double target_gap_yaw_{0.0};
+  bool target_gap_yaw_valid_{false};
   Pose2D straight_start_pose_;
   double entry_last_traveled_{0.0};
   bool entry_turn_completed_{false};
