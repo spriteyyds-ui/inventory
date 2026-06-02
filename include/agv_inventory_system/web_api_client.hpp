@@ -34,12 +34,21 @@ struct WebApiClientParams
   bool rfid_placeholder_enabled{true};
   std::string rfid_placeholder_prefix{"RFID_PLACEHOLDER"};
   bool rfid_upload_require_success{false};
+  std::string rfid_upload_status_path{"/tmp/agv_inventory_system/rfid_upload_status.json"};
 };
 
 struct InventoryUploadItem
 {
   std::string location_rfid;
   std::vector<std::string> rfids;
+};
+
+struct UploadStatus
+{
+  bool success{false};
+  bool display_success{false};
+  long status_code{0};
+  std::string message;
 };
 
 class WebApiClient
@@ -68,10 +77,22 @@ public:
   bool reportInventoryResults(
     const std::vector<InventoryUploadItem> & items,
     const std::string & result) const;
+  UploadStatus reportInventoryResultsWithStatus(
+    const std::vector<InventoryUploadItem> & items,
+    const std::string & result) const;
+  void writeRfidUploadStatus(
+    bool success,
+    long status_code,
+    const std::string & message,
+    const std::string & source) const;
 
 private:
   bool requestHttpGet(const std::string & action, const std::string & url) const;
   bool requestHttpPostJson(
+    const std::string & action,
+    const std::string & url,
+    const std::string & body) const;
+  UploadStatus requestHttpPostJsonWithStatus(
     const std::string & action,
     const std::string & url,
     const std::string & body) const;

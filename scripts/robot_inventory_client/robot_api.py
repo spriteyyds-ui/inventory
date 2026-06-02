@@ -15,6 +15,11 @@ try:
         USE_TEST_SCAN_RESULT,
     )
     from .ros_inventory_bridge import run_full_inventory_until_done
+    from .status_store import (
+        build_status_response,
+        record_receive_status,
+        record_upload_status,
+    )
     from .upload_client import (
         load_scan_result_file,
         send_error_status,
@@ -30,6 +35,11 @@ except ImportError:
         USE_TEST_SCAN_RESULT,
     )
     from ros_inventory_bridge import run_full_inventory_until_done  # type: ignore
+    from status_store import (  # type: ignore
+        build_status_response,
+        record_receive_status,
+        record_upload_status,
+    )
     from upload_client import (  # type: ignore
         load_scan_result_file,
         send_error_status,
@@ -79,10 +89,29 @@ def _run_full_inventory_job() -> None:
     except Exception as exc:
         reason = str(exc)
         print(f"整体盘库触发或执行失败：{reason}")
+        record_upload_status(
+            False,
+            f"任务异常未上传: {reason}",
+            source="robot_api",
+            exception=reason,
+        )
         send_error_status(reason)
     finally:
         _set_running_state(False)
         print("整体盘库后台任务结束，is_running=False")
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "service": "robot_api",
+    }
+
+
+@app.get("/status")
+def status():
+    return build_status_response()
 
 
 @app.post("/robot/control")
@@ -91,13 +120,16 @@ def control_robot(request: ControlRequest):
     global _worker_thread, is_running
 
     if request.status != "1":
+        record_receive_status(False, "仅支持 status=1 开始盘库", "unsupported status")
         raise HTTPException(status_code=400, detail="仅支持 status=1 开始盘库")
 
     with _state_lock:
         if is_running:
+            record_receive_status(False, "盘库已在进行中", "mission already running")
             raise HTTPException(status_code=409, detail="盘库已在进行中")
 
         is_running = True
+        record_receive_status(True, "小车已接收到 status=1，正在触发整体盘库")
 
     _worker_thread = threading.Thread(
         target=_run_full_inventory_job,
