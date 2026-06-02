@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
 import os
+import json
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import deque
 from datetime import datetime
 
@@ -16,7 +22,6 @@ WINDOW_WIDTH = 1180
 WINDOW_HEIGHT = 780
 STATUS_BAR_HEIGHT = 92
 LOG_FRAME_HEIGHT = 205
-SAFETY_FRAME_HEIGHT = 192
 STATUS_TILE_WIDTH = 214
 STATUS_TILE_HEIGHT = 82
 STATUS_MAIN_MAX_CHARS = 18
@@ -27,8 +32,9 @@ COMMAND_MAX_CHARS = 96
 ERROR_MAX_CHARS = 96
 SELECTED_CABINETS_MAX_CHARS = 78
 MAIN_ACTION_BUTTON_HEIGHT_PX = 48
-MAIN_ACTION_BUTTON_FONT = ("TkDefaultFont", 12, "bold")
+MAIN_ACTION_BUTTON_FONT = ("TkDefaultFont", 13, "bold")
 LIFT_BASE_HEIGHT_M = 1.25
+ROBOT_API_STATUS_MAX_CHARS = 40
 
 ACTION_START_INVENTORY = "开始盘库"
 ACTION_FULL_INVENTORY = "全量盘库"
@@ -148,6 +154,14 @@ class InventoryOperationGuiNode(Node):
         self.lift_manual_duration_sec = float(
             self.declare_parameter("lift_manual_duration_sec", 2.0).value)
         self.log_history_size = int(self.declare_parameter("log_history_size", 10).value)
+        self.robot_api_status_url = self.declare_parameter(
+            "robot_api_status_url", "http://127.0.0.1:8000/status").value
+        self.robot_api_health_url = self.declare_parameter(
+            "robot_api_health_url", "http://127.0.0.1:8000/health").value
+        self.robot_api_poll_interval_ms = int(self.declare_parameter(
+            "robot_api_poll_interval_ms", 2000).value)
+        self.robot_api_request_timeout_sec = float(self.declare_parameter(
+            "robot_api_request_timeout_sec", 0.5).value)
 
         self.values = {
             "mission_state": "未知",
@@ -166,6 +180,12 @@ class InventoryOperationGuiNode(Node):
             "lift_total_height": "未知",
             "lift_state": "未知",
             "lift_error": "",
+            "robot_api_service": "未连接",
+            "robot_api_address": self.robot_api_status_url,
+            "robot_api_receive": "暂无",
+            "robot_api_upload": "暂无上传",
+            "robot_api_upload_message": "暂无上传记录",
+            "robot_api_exception": "无",
         }
         self.mission_logs = deque(maxlen=max(1, self.log_history_size))
         self.subscriptions_ = [
@@ -281,6 +301,17 @@ class InventoryOperationGuiApp:
         self.status_tiles = {}
         self.selected_cabinets = []
         self.cabinet_buttons = {}
+        self.robot_api_status_lock = threading.Lock()
+        self.robot_api_status_data = {
+            "service_state": "未连接",
+            "address": self.node.robot_api_status_url,
+            "receive": "暂无",
+            "upload": "暂无上传",
+            "upload_message": "暂无上传记录",
+            "exception": "无",
+        }
+        self.robot_api_poll_running = False
+        self.last_robot_api_poll_ms = 0
         self.selected_cabinets_var = self.tk.StringVar(value="当前选择：无")
         self.target_gap_var = self.tk.StringVar(value="")
         self.command_status = self.tk.StringVar(value="等待操作")
@@ -323,6 +354,10 @@ class InventoryOperationGuiApp:
         operation_frame.grid(row=1, column=0, sticky="nsew", padx=(0, 12))
         operation_frame.columnconfigure(0, weight=1)
         operation_frame.rowconfigure(0, weight=0)
+        operation_frame.rowconfigure(1, weight=0)
+        operation_frame.rowconfigure(2, weight=1, minsize=82)
+        operation_frame.rowconfigure(3, weight=2, minsize=190)
+        operation_frame.rowconfigure(4, weight=0)
 
         cabinet_select_frame = self.ttk.LabelFrame(
             operation_frame, text="目标货柜选择", padding=8, style="Panel.TLabelframe")
@@ -360,8 +395,8 @@ class InventoryOperationGuiApp:
         self.add_var_row(task_input_frame, 0, "当前选择", self.selected_cabinets_var, column=2)
 
         inventory_button_frame = self.ttk.Frame(operation_frame, style="App.TFrame")
-        inventory_button_frame.grid(row=2, column=0, sticky="ew", pady=(4, 14))
-        inventory_button_frame.rowconfigure(0, minsize=MAIN_ACTION_BUTTON_HEIGHT_PX)
+        inventory_button_frame.grid(row=2, column=0, sticky="nsew", pady=(4, 12))
+        inventory_button_frame.rowconfigure(0, weight=1, minsize=64)
         for column_index in range(3):
             inventory_button_frame.columnconfigure(column_index, weight=1, uniform="inventory_action")
         self.start_inventory_button = self.make_action_button(
@@ -379,17 +414,17 @@ class InventoryOperationGuiApp:
 
         safety_frame = self.ttk.LabelFrame(
             operation_frame, text="安全控制 / 回充控制区", padding=10, style="Panel.TLabelframe")
-        safety_frame.grid(row=3, column=0, sticky="ew")
-        safety_frame.configure(height=SAFETY_FRAME_HEIGHT)
-        safety_frame.grid_propagate(False)
+        safety_frame.grid(row=3, column=0, sticky="nsew")
         safety_frame.columnconfigure(0, weight=1)
+        safety_frame.rowconfigure(0, weight=0)
+        safety_frame.rowconfigure(1, weight=1, minsize=72)
+        safety_frame.rowconfigure(2, weight=0)
+        safety_frame.rowconfigure(3, weight=1, minsize=82)
         self.ttk.Label(safety_frame, text="回充控制", style="SectionTitle.TLabel").grid(
             row=0, column=0, sticky="w", pady=(0, 6))
         charge_control_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
-        charge_control_frame.grid(row=1, column=0, sticky="ew", pady=(0, 14))
-        charge_control_frame.configure(height=MAIN_ACTION_BUTTON_HEIGHT_PX)
-        charge_control_frame.grid_propagate(False)
-        charge_control_frame.rowconfigure(0, weight=1, minsize=MAIN_ACTION_BUTTON_HEIGHT_PX)
+        charge_control_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 14))
+        charge_control_frame.rowconfigure(0, weight=1, minsize=72)
         for column_index in range(2):
             charge_control_frame.columnconfigure(column_index, weight=1, uniform="charge_control")
         self.return_to_charge_button = self.make_action_button(
@@ -404,10 +439,8 @@ class InventoryOperationGuiApp:
         self.ttk.Label(safety_frame, text="安全动作", style="SectionTitle.TLabel").grid(
             row=2, column=0, sticky="w", pady=(0, 6))
         safe_action_frame = self.ttk.Frame(safety_frame, style="Card.TFrame")
-        safe_action_frame.grid(row=3, column=0, sticky="ew")
-        safe_action_frame.configure(height=MAIN_ACTION_BUTTON_HEIGHT_PX)
-        safe_action_frame.grid_propagate(False)
-        safe_action_frame.rowconfigure(0, weight=1, minsize=MAIN_ACTION_BUTTON_HEIGHT_PX)
+        safe_action_frame.grid(row=3, column=0, sticky="nsew")
+        safe_action_frame.rowconfigure(0, weight=1, minsize=82)
         for column_index in range(3):
             safe_action_frame.columnconfigure(column_index, weight=1, uniform="safe_action")
         self.safe_exit_gap_button = self.make_action_button(
@@ -422,6 +455,27 @@ class InventoryOperationGuiApp:
             safe_action_frame, ACTION_RETURN_HOME,
             self.request_return_home, "warning", large=True)
         self.return_home_button.grid(row=0, column=2, sticky="nsew")
+
+        robot_api_frame = self.ttk.LabelFrame(
+            operation_frame, text="网页/上传状态", padding=8, style="Panel.TLabelframe")
+        robot_api_frame.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        robot_api_frame.columnconfigure(1, weight=1)
+        robot_api_rows = [
+            ("网页服务", "robot_api_service"),
+            ("服务地址", "robot_api_address"),
+            ("任务接收", "robot_api_receive"),
+            ("扫码上传", "robot_api_upload"),
+            ("上传消息", "robot_api_upload_message"),
+            ("最近异常", "robot_api_exception"),
+        ]
+        for row_index, (label, key) in enumerate(robot_api_rows):
+            self.add_value_row(
+                robot_api_frame,
+                row_index,
+                label,
+                key,
+                max_chars=ROBOT_API_STATUS_MAX_CHARS,
+                value_style="Value.TLabel")
 
         right_frame = self.ttk.Frame(main, style="App.TFrame")
         right_frame.grid(row=1, column=1, sticky="nsew")
@@ -650,9 +704,9 @@ class InventoryOperationGuiApp:
         if large:
             button_options.update({
                 "font": MAIN_ACTION_BUTTON_FONT,
-                "height": 1,
+                "height": 2,
                 "padx": 14,
-                "pady": 8,
+                "pady": 10,
             })
         else:
             button_options["height"] = 2
@@ -894,6 +948,177 @@ class InventoryOperationGuiApp:
         elif self.error_status.get() == "未知":
             self.error_status.set("无")
 
+    def maybe_poll_robot_api_status(self):
+        now_ms = int(time.monotonic() * 1000)
+        interval_ms = max(500, int(self.node.robot_api_poll_interval_ms))
+        if self.robot_api_poll_running:
+            return
+        if now_ms - self.last_robot_api_poll_ms < interval_ms:
+            return
+        self.last_robot_api_poll_ms = now_ms
+        self.robot_api_poll_running = True
+        thread = threading.Thread(
+            target=self.poll_robot_api_status_worker,
+            name="robot-api-status-poller",
+            daemon=True)
+        thread.start()
+
+    def poll_robot_api_status_worker(self):
+        try:
+            status_data = self.fetch_robot_api_status()
+        except Exception as exc:
+            status_data = {
+                "service_state": "未连接",
+                "address": self.node.robot_api_status_url,
+                "receive": "暂无",
+                "upload": "暂无上传",
+                "upload_message": "暂无上传记录",
+                "exception": str(exc),
+            }
+        finally:
+            with self.robot_api_status_lock:
+                self.robot_api_status_data = locals().get("status_data", {
+                    "service_state": "异常",
+                    "address": self.node.robot_api_status_url,
+                    "receive": "暂无",
+                    "upload": "暂无上传",
+                    "upload_message": "暂无上传记录",
+                    "exception": "状态轮询异常",
+                })
+                self.robot_api_poll_running = False
+
+    def fetch_json_url(self, url):
+        request = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(
+                request,
+                timeout=max(0.1, float(self.node.robot_api_request_timeout_sec))) as response:
+            status_code = getattr(response, "status", response.getcode())
+            body = response.read().decode("utf-8", errors="replace")
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("JSON 解析失败: %s" % exc) from exc
+        if not isinstance(data, dict):
+            raise RuntimeError("JSON 响应不是对象")
+        data["_http_status_code"] = status_code
+        return data
+
+    def fetch_robot_api_status(self):
+        address = self.robot_api_display_address()
+        try:
+            data = self.fetch_json_url(self.node.robot_api_status_url)
+            if data.get("ok") is True:
+                return self.format_robot_api_status(data, address)
+            return {
+                "service_state": "异常",
+                "address": address,
+                "receive": "暂无",
+                "upload": "暂无上传",
+                "upload_message": "暂无上传记录",
+                "exception": "status ok=false",
+            }
+        except Exception as status_exc:
+            try:
+                health = self.fetch_json_url(self.node.robot_api_health_url)
+                if health.get("ok") is True:
+                    return {
+                        "service_state": "运行中",
+                        "address": address,
+                        "receive": "暂无",
+                        "upload": "暂无上传",
+                        "upload_message": "暂无上传记录",
+                        "exception": "status异常: %s" % status_exc,
+                    }
+                return {
+                    "service_state": "异常",
+                    "address": address,
+                    "receive": "暂无",
+                    "upload": "暂无上传",
+                    "upload_message": "暂无上传记录",
+                    "exception": "health ok=false",
+                }
+            except Exception as health_exc:
+                return {
+                    "service_state": "未连接",
+                    "address": address,
+                    "receive": "暂无",
+                    "upload": "暂无上传",
+                    "upload_message": "暂无上传记录",
+                    "exception": str(health_exc),
+                }
+
+    def robot_api_display_address(self):
+        parsed = urllib.parse.urlparse(self.node.robot_api_status_url)
+        if parsed.scheme and parsed.netloc:
+            return "%s://%s" % (parsed.scheme, parsed.netloc)
+        return self.node.robot_api_status_url
+
+    def format_robot_api_status(self, data, address):
+        receive_success = data.get("last_receive_success")
+        receive_time = self.short_time(data.get("last_receive_time"))
+        receive_message = data.get("last_receive_message") or ""
+        if receive_success is True:
+            receive = "成功 %s" % receive_time if receive_time else "成功"
+        elif receive_success is False:
+            receive = "失败 %s" % receive_time if receive_time else "失败"
+        else:
+            receive = "暂无"
+        if receive_message and receive not in ("暂无",):
+            receive = "%s %s" % (receive, receive_message)
+
+        upload_success = data.get("last_upload_success")
+        upload_time = self.short_time(data.get("last_upload_time"))
+        upload_status_code = data.get("last_upload_status_code")
+        upload_message = data.get("last_upload_message") or "暂无上传记录"
+        if upload_success is True:
+            upload = "上传成功"
+        elif upload_success is False:
+            upload = "上传失败"
+        else:
+            upload = "暂无上传"
+        if upload_time:
+            upload = "%s %s" % (upload, upload_time)
+        if upload_status_code is not None:
+            upload = "%s HTTP %s" % (upload, upload_status_code)
+
+        exception = data.get("last_exception") or "无"
+        if upload_success is False and upload_message:
+            exception = upload_message
+        return {
+            "service_state": "运行中",
+            "address": address,
+            "receive": self.format_one_line(receive, ROBOT_API_STATUS_MAX_CHARS),
+            "upload": self.format_one_line(upload, ROBOT_API_STATUS_MAX_CHARS),
+            "upload_message": self.format_one_line(upload_message, ROBOT_API_STATUS_MAX_CHARS),
+            "exception": self.format_one_line(exception, ROBOT_API_STATUS_MAX_CHARS),
+        }
+
+    @staticmethod
+    def short_time(value):
+        text = str(value or "")
+        if not text:
+            return ""
+        try:
+            normalized = text.replace("Z", "+00:00")
+            parsed = datetime.fromisoformat(normalized)
+            return parsed.strftime("%H:%M:%S")
+        except ValueError:
+            if len(text) >= 19 and "T" in text:
+                return text[11:19]
+            return text
+
+    def apply_robot_api_status_fields(self):
+        with self.robot_api_status_lock:
+            status_data = dict(self.robot_api_status_data)
+        self.node.values["robot_api_service"] = status_data.get("service_state", "未连接")
+        self.node.values["robot_api_address"] = status_data.get(
+            "address", self.node.robot_api_status_url)
+        self.node.values["robot_api_receive"] = status_data.get("receive", "暂无")
+        self.node.values["robot_api_upload"] = status_data.get("upload", "暂无上传")
+        self.node.values["robot_api_upload_message"] = status_data.get(
+            "upload_message", "暂无上传记录")
+        self.node.values["robot_api_exception"] = status_data.get("exception", "无")
+
     def refresh(self):
         if self.closing:
             return
@@ -905,6 +1130,8 @@ class InventoryOperationGuiApp:
             self.node.get_logger().error("操作总控 GUI 处理 ROS 回调异常: %s" % exc)
 
         self.collect_completed_futures()
+        self.maybe_poll_robot_api_status()
+        self.apply_robot_api_status_fields()
         self.update_fields()
         self.update_log_text()
         self.update_button_states()

@@ -26,6 +26,10 @@ INIT_CAMERA_SCRIPT = os.path.join(
     'lib', 'agv_inventory_system', 'init_camera_controls.sh'
 )
 
+ROBOT_API_SERVER_DIR = (
+    '/home/wheeltec/wheeltec_ros2/src/agv_inventory_system/scripts/robot_inventory_client'
+)
+
 
 def generate_launch_description():
     launch_nav2_arg = DeclareLaunchArgument(
@@ -38,6 +42,24 @@ def generate_launch_description():
         'enable_inventory_operation_gui',
         default_value='true',
         description='是否随盘库系统启动操作总控 GUI'
+    )
+
+    enable_robot_api_server_arg = DeclareLaunchArgument(
+        'enable_robot_api_server',
+        default_value='true',
+        description='是否随盘库系统启动网页接收 FastAPI 服务'
+    )
+
+    robot_api_host_arg = DeclareLaunchArgument(
+        'robot_api_host',
+        default_value='0.0.0.0',
+        description='网页接收 FastAPI 服务监听地址'
+    )
+
+    robot_api_port_arg = DeclareLaunchArgument(
+        'robot_api_port',
+        default_value='8000',
+        description='网页接收 FastAPI 服务监听端口'
     )
 
     inventory_params_file_arg = DeclareLaunchArgument(
@@ -70,6 +92,9 @@ def generate_launch_description():
 
     launch_nav2 = LaunchConfiguration('launch_nav2')
     enable_inventory_operation_gui = LaunchConfiguration('enable_inventory_operation_gui')
+    enable_robot_api_server = LaunchConfiguration('enable_robot_api_server')
+    robot_api_host = LaunchConfiguration('robot_api_host')
+    robot_api_port = LaunchConfiguration('robot_api_port')
     inventory_params_file = LaunchConfiguration('inventory_params_file')
     c100_right_video_device = LaunchConfiguration('c100_right_video_device')
     c100_left_video_device = LaunchConfiguration('c100_left_video_device')
@@ -83,6 +108,24 @@ def generate_launch_description():
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(nav2_launch_file),
         condition=IfCondition(launch_nav2)
+    )
+
+    robot_api_server_process = ExecuteProcess(
+        cmd=[
+            'bash',
+            '-lc',
+            [
+                'source /opt/ros/humble/setup.bash && '
+                'source /home/wheeltec/wheeltec_ros2/install/setup.bash && '
+                'exec python3 -m uvicorn robot_api:app --host ',
+                robot_api_host,
+                ' --port ',
+                robot_api_port,
+            ],
+        ],
+        cwd=ROBOT_API_SERVER_DIR,
+        output='screen',
+        condition=IfCondition(enable_robot_api_server),
     )
 
     corridor_follower_node = Node(
@@ -225,10 +268,14 @@ def generate_launch_description():
     return LaunchDescription([
         launch_nav2_arg,
         enable_inventory_operation_gui_arg,
+        enable_robot_api_server_arg,
+        robot_api_host_arg,
+        robot_api_port_arg,
         inventory_params_file_arg,
         c100_right_video_device_arg,
         c100_left_video_device_arg,
         enable_camera_controls_init_arg,
+        robot_api_server_process,
         nav2_launch,
         corridor_follower_node,
         c100_left_camera_node,

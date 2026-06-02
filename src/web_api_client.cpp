@@ -2,7 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <curl/curl.h>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -84,6 +88,23 @@ namespace agv_inventory_system
       return http_code == 200;
     }
 
+    std::string timestamp_now_iso()
+    {
+      const auto now = std::chrono::system_clock::now();
+      const std::time_t time = std::chrono::system_clock::to_time_t(now);
+
+      std::tm tm{};
+#if defined(_WIN32)
+      gmtime_s(&tm, &time);
+#else
+      gmtime_r(&time, &tm);
+#endif
+
+      std::ostringstream oss;
+      oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%SZ");
+      return oss.str();
+    }
+
     std::string extract_json_string_field(const std::string & body, const std::string & field)
     {
       const std::string key = "\"" + field + "\"";
@@ -131,6 +152,38 @@ namespace agv_inventory_system
         value.push_back(ch);
       }
       return value;
+    }
+
+    bool is_likely_json_object(const std::string & body)
+    {
+      for (const char ch : body)
+      {
+        if (std::isspace(static_cast<unsigned char>(ch)) != 0)
+        {
+          continue;
+        }
+        return ch == '{';
+      }
+      return false;
+    }
+
+    std::string status_message_from_response(const std::string & body, bool success)
+    {
+      const std::string message = extract_json_string_field(body, "message");
+      if (!message.empty())
+      {
+        return message;
+      }
+      const std::string msg = extract_json_string_field(body, "msg");
+      if (!msg.empty())
+      {
+        return msg;
+      }
+      if (success)
+      {
+        return "success=true";
+      }
+      return summarize_body(body);
     }
 
     std::string normalize_fail_policy(std::string value)
@@ -509,19 +562,27 @@ namespace agv_inventory_system
       const std::vector<InventoryUploadItem> &items,
       const std::string &result) const
   {
+    const UploadStatus status = reportInventoryResultsWithStatus(items, result);
+    return status.success;
+  }
+
+  UploadStatus WebApiClient::reportInventoryResultsWithStatus(
+      const std::vector<InventoryUploadItem> &items,
+      const std::string &result) const
+  {
     if (!params_.rfid_upload_enabled)
     {
       std::cout << "[web_api_client][RFID] batch upload disabled, skip result"
                 << " item_count=" << items.size()
                 << " result_summary=\"" << summarize_body(result) << "\"" << std::endl;
-      return true;
+      return UploadStatus{true, false, 0, "上传已跳过: rfid_upload_enabled=false"};
     }
 
     if (params_.rfid_upload_url.empty())
     {
       std::cout << "[web_api_client][RFID] ERROR rfid_upload_url is empty"
                 << " item_count=" << items.size() << std::endl;
-      return false;
+      return UploadStatus{false, false, 0, "rfid_upload_url is empty"};
     }
 
     const std::string body = build_inventory_results_body(items);
@@ -530,13 +591,7 @@ namespace agv_inventory_system
               << " result_summary=\"" << summarize_body(result) << "\""
               << " url=" << params_.rfid_upload_url << std::endl;
 
-    const bool uploaded = requestHttpPostJson("RFID inventory result batch", params_.rfid_upload_url, body);
-    if (uploaded)
-    {
-      return true;
-    }
-
-    return false;
+    return requestHttpPostJsonWithStatus("RFID inventory result batch", params_.rfid_upload_url, body);
   }
 
   bool WebApiClient::requestHttpGet(const std::string &action, const std::string &url) const
@@ -641,9 +696,18 @@ namespace agv_inventory_system
       const std::string &url,
       const std::string &body) const
   {
+    const UploadStatus status = requestHttpPostJsonWithStatus(action, url, body);
+    return status.success;
+  }
+
+  UploadStatus WebApiClient::requestHttpPostJsonWithStatus(
+      const std::string &action,
+      const std::string &url,
+      const std::string &body) const
+  {
     if (!ensure_curl_global_init())
     {
-      return false;
+      return UploadStatus{false, false, 0, "curl_global_init failed"};
     }
 
     const int retry_count = std::max(0, params_.rfid_upload_retry_count);
@@ -651,6 +715,7 @@ namespace agv_inventory_system
     const double timeout_sec =
         params_.rfid_upload_timeout_sec > 0.0 ? params_.rfid_upload_timeout_sec : 3.0;
     const std::string request_summary = summarize_body(body);
+    UploadStatus last_status{false, false, 0, "未发送上传请求"};
 
     for (int attempt = 1; attempt <= total_attempts; ++attempt)
     {
@@ -661,6 +726,7 @@ namespace agv_inventory_system
                   << " curl_easy_init failed attempt=" << attempt
                   << "/" << total_attempts
                   << " request_summary=\"" << request_summary << "\"" << std::endl;
+        last_status = UploadStatus{false, false, 0, "curl_easy_init failed"};
         continue;
       }
 
@@ -700,9 +766,38 @@ namespace agv_inventory_system
       const std::string body_summary = summarize_body(response_body);
       if (result == CURLE_OK && is_http_ok(http_code))
       {
+        const bool body_reports_failure = response_body_reports_failure(response_body);
+        const bool body_reports_success = response_body_reports_success(response_body);
+        const bool likely_json = is_likely_json_object(response_body);
+        const bool display_success = !body_reports_failure && body_reports_success;
+        const std::string status_message =
+          status_message_from_response(response_body, display_success);
+        last_status = UploadStatus{display_success, display_success, http_code, status_message};
+
+        if (!likely_json)
+        {
+          last_status = UploadStatus{
+            !params_.rfid_upload_require_success,
+            false,
+            http_code,
+            "响应解析失败: response is not JSON"};
+          std::cout << "[web_api_client][RFID] WARNING " << action
+                    << " response body is not JSON"
+                    << " attempt=" << attempt << "/" << total_attempts
+                    << " http_code=" << http_code
+                    << " body_summary=\"" << body_summary << "\"" << std::endl;
+          if (params_.rfid_upload_require_success)
+          {
+            continue;
+          }
+          return last_status;
+        }
+
         if (params_.rfid_upload_require_success && !response_body_reports_success(response_body))
         {
-        std::cout << "[web_api_client][RFID] WARNING " << action
+          last_status.success = false;
+          last_status.display_success = false;
+          std::cout << "[web_api_client][RFID] WARNING " << action
                     << " body success required but success=true was not found"
                     << " attempt=" << attempt << "/" << total_attempts
                     << " http_code=" << http_code
@@ -729,13 +824,19 @@ namespace agv_inventory_system
                     << " message=\"" << message << "\""
                     << " body_summary=\"" << body_summary << "\"" << std::endl;
         }
-        return true;
+        if (body_reports_failure)
+        {
+          last_status.success = !params_.rfid_upload_require_success;
+          last_status.display_success = false;
+        }
+        return last_status;
       }
 
       if (result != CURLE_OK)
       {
         const std::string error_text =
             error_buffer[0] != '\0' ? std::string(error_buffer) : curl_easy_strerror(result);
+        last_status = UploadStatus{false, false, http_code, error_text};
         std::cout << "[web_api_client][RFID] WARNING " << action
                   << " transport failed attempt=" << attempt << "/" << total_attempts
                   << " curl_code=" << static_cast<int>(result)
@@ -746,6 +847,11 @@ namespace agv_inventory_system
       }
       else
       {
+        last_status = UploadStatus{
+          false,
+          false,
+          http_code,
+          "HTTP 非 200: " + std::to_string(http_code)};
         std::cout << "[web_api_client][RFID] WARNING " << action
                   << " unsuccessful response attempt=" << attempt << "/" << total_attempts
                   << " http_code=" << http_code
@@ -757,7 +863,70 @@ namespace agv_inventory_system
     std::cout << "[web_api_client][RFID] ERROR " << action
               << " failed after attempts=" << total_attempts
               << " request_summary=\"" << request_summary << "\"" << std::endl;
-    return false;
+    return last_status;
+  }
+
+  void WebApiClient::writeRfidUploadStatus(
+      bool success,
+      long status_code,
+      const std::string &message,
+      const std::string &source) const
+  {
+    if (params_.rfid_upload_status_path.empty())
+    {
+      return;
+    }
+
+    try
+    {
+      const std::filesystem::path status_path(params_.rfid_upload_status_path);
+      const auto parent = status_path.parent_path();
+      if (!parent.empty())
+      {
+        std::filesystem::create_directories(parent);
+      }
+
+      const std::filesystem::path temp_path =
+          status_path.string() + ".tmp";
+      std::ofstream output(temp_path, std::ios::out | std::ios::trunc);
+      if (!output)
+      {
+        std::cout << "[web_api_client][RFID] WARNING upload status write open failed path="
+                  << temp_path.string() << std::endl;
+        return;
+      }
+
+      output << "{"
+             << "\"last_upload_success\":" << (success ? "true" : "false")
+             << ",\"last_upload_time\":\"" << escape_json_string(timestamp_now_iso()) << "\""
+             << ",\"last_upload_message\":\"" << escape_json_string(message) << "\""
+             << ",\"last_upload_status_code\":";
+      if (status_code > 0)
+      {
+        output << status_code;
+      }
+      else
+      {
+        output << "null";
+      }
+      output << ",\"last_upload_source\":\"" << escape_json_string(source) << "\""
+             << "}\n";
+      output.close();
+      if (!output)
+      {
+        std::cout << "[web_api_client][RFID] WARNING upload status write failed path="
+                  << temp_path.string() << std::endl;
+        return;
+      }
+
+      std::filesystem::rename(temp_path, status_path);
+    }
+    catch (const std::exception &exc)
+    {
+      std::cout << "[web_api_client][RFID] WARNING upload status write exception path="
+                << params_.rfid_upload_status_path
+                << " error=\"" << exc.what() << "\"" << std::endl;
+    }
   }
 
   bool WebApiClient::isLocalMode() const

@@ -15,6 +15,7 @@ try:
         JAVA_VERIFY_TLS,
         UPLOAD_TIMEOUT_SECONDS,
     )
+    from .status_store import record_upload_status
 except ImportError:
     from config import (  # type: ignore
         FAILED_UPLOAD_DIR,
@@ -23,6 +24,7 @@ except ImportError:
         JAVA_VERIFY_TLS,
         UPLOAD_TIMEOUT_SECONDS,
     )
+    from status_store import record_upload_status  # type: ignore
 
 
 ScanResult = List[Dict[str, Any]]
@@ -130,10 +132,91 @@ def send_scan_result(scan_result: ScanResult) -> bool:
             verify=JAVA_VERIFY_TLS,
         )
         print(f"Java 扫描结果响应：{response.status_code} {response.text}")
-        response.raise_for_status()
+        status_code = response.status_code
+        response_text = response.text
+        if status_code != 200:
+            reason = f"HTTP 非 200: {status_code}"
+            record_upload_status(
+                False,
+                reason,
+                status_code=status_code,
+                source="robot_api",
+                exception=reason,
+            )
+            save_failed_scan_result(scan_result, reason)
+            return False
+
+        try:
+            response_data = response.json()
+        except ValueError as exc:
+            reason = f"响应解析失败: {exc}"
+            record_upload_status(
+                False,
+                reason,
+                status_code=status_code,
+                source="robot_api",
+                exception=reason,
+            )
+            save_failed_scan_result(scan_result, reason)
+            return False
+
+        if not isinstance(response_data, dict):
+            reason = "响应解析失败: JSON 顶层不是对象"
+            record_upload_status(
+                False,
+                reason,
+                status_code=status_code,
+                source="robot_api",
+                exception=reason,
+            )
+            save_failed_scan_result(scan_result, reason)
+            return False
+
+        success_value = response_data.get("success")
+        message_value = response_data.get("message")
+        if message_value is None:
+            message_value = response_data.get("msg")
+        message = str(message_value) if message_value is not None else "success=true"
+
+        if success_value is False:
+            reason = message or "服务器业务失败 success=false"
+            record_upload_status(
+                False,
+                reason,
+                status_code=status_code,
+                source="robot_api",
+                exception=reason,
+            )
+            save_failed_scan_result(scan_result, reason)
+            return False
+        if success_value is not True:
+            reason = message if message_value is not None else "响应缺少 success=true"
+            record_upload_status(
+                False,
+                reason,
+                status_code=status_code,
+                source="robot_api",
+                exception=reason,
+            )
+            save_failed_scan_result(scan_result, reason)
+            return False
+
+        record_upload_status(
+            True,
+            message,
+            status_code=status_code,
+            source="robot_api",
+        )
         return True
     except requests.RequestException as exc:
         reason = str(exc)
         print(f"发送扫描结果失败：{reason}")
+        record_upload_status(
+            False,
+            reason,
+            status_code=None,
+            source="robot_api",
+            exception=reason,
+        )
         save_failed_scan_result(scan_result, reason)
         return False

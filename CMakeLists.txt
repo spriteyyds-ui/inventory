@@ -123,6 +123,7 @@ add_library(inventory_scan_modules STATIC
   src/scan_sequence_executor.cpp
   src/hid_scanner_reader.cpp
   src/inventory_scanner.cpp
+  src/rfid_scan_log_writer.cpp
   src/web_api_client.cpp
 )
 target_include_directories(inventory_scan_modules PUBLIC ${CURL_INCLUDE_DIRS})
@@ -192,6 +193,7 @@ install(PROGRAMS
   scripts/inventory_auto_recharger.py
   scripts/lift_relay_controller.py
   scripts/lift_relay_diagnostic_node.py
+  scripts/test_hid_scanner_save.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
