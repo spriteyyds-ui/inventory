@@ -31,8 +31,6 @@ struct WebApiClientParams
   double rfid_upload_timeout_sec{3.0};
   int rfid_upload_retry_count{2};
   std::string rfid_upload_fail_policy{"error"};
-  bool rfid_placeholder_enabled{true};
-  std::string rfid_placeholder_prefix{"RFID_PLACEHOLDER"};
   bool rfid_upload_require_success{false};
   std::string rfid_upload_status_path{"/tmp/agv_inventory_system/rfid_upload_status.json"};
 };

@@ -209,16 +209,6 @@ namespace agv_inventory_system
              std::to_string(depth);
     }
 
-    std::string build_placeholder_rfid(
-        const std::string &prefix,
-        int cabinet_id,
-        int layer,
-        int depth)
-    {
-      return prefix + "_" + std::to_string(cabinet_id) + "_" + std::to_string(layer) + "_" +
-             std::to_string(depth) + "_001";
-    }
-
     std::string escape_json_string(const std::string &value);
 
     std::string build_inventory_results_body(
@@ -404,86 +394,7 @@ namespace agv_inventory_system
       int depth,
       const std::string &result) const
   {
-    const int safe_layer = layer > 0 ? layer : 1;
-    const int safe_depth = depth > 0 ? depth : 1;
-    const std::string location_rfid = build_location_rfid(cabinet_id, safe_layer, safe_depth);
-
-    if (!params_.rfid_upload_enabled)
-    {
-      std::cout << "[web_api_client][RFID] upload disabled, skip result"
-                << " cabinet=" << cabinet_id
-                << " level=" << safe_layer
-                << " grid=" << safe_depth
-                << " locationRfid=" << location_rfid
-                << " result_summary=\"" << summarize_body(result) << "\"" << std::endl;
-      return true;
-    }
-
-    if (!params_.rfid_placeholder_enabled)
-    {
-      std::cout << "[web_api_client][RFID] ERROR placeholder=false but no real RFID reader payload is available"
-                << " cabinet=" << cabinet_id
-                << " level=" << safe_layer
-                << " grid=" << safe_depth
-                << " locationRfid=" << location_rfid << std::endl;
-      if (continue_without_upload(params_))
-      {
-        std::cout << "[web_api_client][RFID] WARNING continue_without_upload after missing RFID payload"
-                  << " locationRfid=" << location_rfid << std::endl;
-        return true;
-      }
-      return false;
-    }
-
-    if (params_.rfid_upload_url.empty())
-    {
-      std::cout << "[web_api_client][RFID] ERROR rfid_upload_url is empty"
-                << " cabinet=" << cabinet_id
-                << " level=" << safe_layer
-                << " grid=" << safe_depth
-                << " locationRfid=" << location_rfid << std::endl;
-      if (continue_without_upload(params_))
-      {
-        std::cout << "[web_api_client][RFID] WARNING continue_without_upload after empty upload URL"
-                  << " locationRfid=" << location_rfid << std::endl;
-        return true;
-      }
-      return false;
-    }
-
-    const std::string placeholder_prefix =
-        params_.rfid_placeholder_prefix.empty() ? "RFID_PLACEHOLDER" : params_.rfid_placeholder_prefix;
-    const std::string rfid =
-        build_placeholder_rfid(placeholder_prefix, cabinet_id, safe_layer, safe_depth);
-    std::cout << "[web_api_client][RFID] upload result placeholder=true"
-              << " cabinet=" << cabinet_id
-              << " level=" << safe_layer
-              << " grid=" << safe_depth
-              << " locationRfid=" << location_rfid
-              << " rfid=" << rfid
-              << " result_summary=\"" << summarize_body(result) << "\""
-              << " url=" << params_.rfid_upload_url << std::endl;
-
-    InventoryUploadItem item;
-    item.location_rfid = location_rfid;
-    item.rfids = std::vector<std::string>{rfid};
-    const bool uploaded = reportInventoryResults(std::vector<InventoryUploadItem>{item}, result);
-    if (uploaded)
-    {
-      return true;
-    }
-
-    if (continue_without_upload(params_))
-    {
-      std::cout << "[web_api_client][RFID] WARNING upload failed but continue_without_upload is set"
-                << " cabinet=" << cabinet_id
-                << " level=" << safe_layer
-                << " grid=" << safe_depth
-                << " locationRfid=" << location_rfid << std::endl;
-      return true;
-    }
-
-    return false;
+    return reportInventoryResult(cabinet_id, layer, depth, std::vector<std::string>{}, result);
   }
 
   bool WebApiClient::reportInventoryResult(
@@ -526,7 +437,7 @@ namespace agv_inventory_system
       return false;
     }
 
-    std::cout << "[web_api_client][RFID] upload result placeholder=false"
+    std::cout << "[web_api_client][RFID] upload result source=active_report_serial"
               << " cabinet=" << cabinet_id
               << " level=" << safe_layer
               << " grid=" << safe_depth
