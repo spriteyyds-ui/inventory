@@ -1,9 +1,8 @@
 #ifndef WHEELTEC_INVENTORY_SYSTEM__INVENTORY_SCANNER_HPP_
 #define WHEELTEC_INVENTORY_SYSTEM__INVENTORY_SCANNER_HPP_
 
-#include "agv_inventory_system/hid_scanner_reader.hpp"
-
 #include <chrono>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -17,29 +16,27 @@ struct InventoryScannerConfig
   double scan_timeout_sec{5.0};
   int scan_retry_count{0};
   double scan_result_timeout_sec{2.0};
-  std::string rfid_reader_mode{"hid_keyboard"};
-  std::string rfid_hid_device_path{"auto"};
-  bool rfid_hid_grab_device{true};
-  double rfid_hid_scan_timeout_sec{5.0};
-  int rfid_hid_inter_char_timeout_ms{200};
-  int rfid_hid_max_tags_per_location{10};
-  bool rfid_hid_allow_empty_result{false};
-  bool rfid_hid_fallback_to_placeholder{true};
+  bool rfid_reader_enabled{true};
+  std::string rfid_reader_mode{"active_report_serial"};
+  std::string rfid_serial_device{"/dev/ttyUSB0"};
+  int rfid_serial_baud{9600};
+  double rfid_scan_duration_sec{5.0};
+  std::string rfid_frame_header{"1100EE00"};
+  int rfid_frame_length{18};
+  int rfid_epc_offset{4};
+  int rfid_epc_length{12};
 };
 
 enum class InventoryScanOutputSource
 {
-  PLACEHOLDER_MODE,
-  HID_SUCCESS,
-  HID_EMPTY_SUCCESS,
-  HID_FALLBACK_PLACEHOLDER,
-  HID_FAILED
+  ACTIVE_REPORT_SERIAL_SUCCESS,
+  ACTIVE_REPORT_SERIAL_EMPTY,
+  ACTIVE_REPORT_SERIAL_FAILED
 };
 
 struct InventoryScanOutput
 {
-  InventoryScanOutputSource source{InventoryScanOutputSource::PLACEHOLDER_MODE};
-  bool use_real_rfids_result{false};
+  InventoryScanOutputSource source{InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_EMPTY};
   bool fallback_to_placeholder{false};
   std::vector<std::string> rfids;
   std::string message;
@@ -65,18 +62,21 @@ private:
   using Clock = std::chrono::steady_clock;
 
   static std::string normalize_reader_mode(std::string mode);
-  void finish_placeholder_scan(const std::string & status);
-  void finish_hid_scan_success(const std::vector<std::string> & tags);
-  void finish_hid_scan_failure(const std::string & reason);
-  void activate_hid_fallback(const std::string & reason);
+  bool start_active_report_serial_reader(std::string & error_message);
+  bool configure_active_report_serial_port(std::string & error_message);
+  bool poll_active_report_serial_once(std::string & error_message);
+  void parse_active_report_serial_buffer();
+  void finish_active_report_serial_scan(bool reader_ok, const std::string & reason);
+  void close_active_report_serial_device();
+  void reset_active_report_serial_reader();
   void clear_scan_output();
 
   InventoryScannerConfig config_;
   bool active_{false};
   bool finished_{false};
   bool success_{false};
-  bool hid_scan_active_{false};
-  bool placeholder_fallback_active_{false};
+  bool active_report_serial_active_{false};
+  int active_report_serial_fd_{-1};
   int cabinet_id_{0};
   int row_{0};
   int level_{0};
@@ -84,7 +84,9 @@ private:
   std::string last_result_;
   Clock::time_point start_time_{};
   InventoryScanOutput last_output_;
-  HidScannerReader hid_reader_;
+  std::vector<unsigned char> active_report_serial_buffer_;
+  std::vector<std::string> active_report_serial_epcs_;
+  std::set<std::string> active_report_serial_seen_epcs_;
 };
 
 }  // namespace agv_inventory_system

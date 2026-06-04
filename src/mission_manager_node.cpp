@@ -340,23 +340,18 @@ public:
       declare_parameter<std::string>(
       "rfid_upload_status_path",
       "/tmp/agv_inventory_system/rfid_upload_status.json");
-    rfid_placeholder_enabled_ = declare_parameter<bool>("rfid_placeholder_enabled", true);
-    rfid_placeholder_prefix_ =
-      declare_parameter<std::string>("rfid_placeholder_prefix", "RFID_PLACEHOLDER");
     rfid_upload_require_success_ =
       declare_parameter<bool>("rfid_upload_require_success", false);
-    rfid_reader_mode_ = declare_parameter<std::string>("rfid_reader_mode", "hid_keyboard");
-    rfid_hid_device_path_ = declare_parameter<std::string>("rfid_hid_device_path", "auto");
-    rfid_hid_grab_device_ = declare_parameter<bool>("rfid_hid_grab_device", true);
-    rfid_hid_scan_timeout_sec_ = declare_parameter<double>("rfid_hid_scan_timeout_sec", 5.0);
-    rfid_hid_inter_char_timeout_ms_ =
-      declare_parameter<int>("rfid_hid_inter_char_timeout_ms", 200);
-    rfid_hid_max_tags_per_location_ =
-      declare_parameter<int>("rfid_hid_max_tags_per_location", 10);
-    rfid_hid_allow_empty_result_ =
-      declare_parameter<bool>("rfid_hid_allow_empty_result", false);
-    rfid_hid_fallback_to_placeholder_ =
-      declare_parameter<bool>("rfid_hid_fallback_to_placeholder", true);
+    rfid_reader_enabled_ = declare_parameter<bool>("rfid_reader_enabled", true);
+    rfid_reader_mode_ =
+      declare_parameter<std::string>("rfid_reader_mode", "active_report_serial");
+    rfid_serial_device_ = declare_parameter<std::string>("rfid_serial_device", "/dev/ttyUSB0");
+    rfid_serial_baud_ = declare_parameter<int>("rfid_serial_baud", 9600);
+    rfid_scan_duration_sec_ = declare_parameter<double>("rfid_scan_duration_sec", 5.0);
+    rfid_frame_header_ = declare_parameter<std::string>("rfid_frame_header", "1100EE00");
+    rfid_frame_length_ = declare_parameter<int>("rfid_frame_length", 18);
+    rfid_epc_offset_ = declare_parameter<int>("rfid_epc_offset", 4);
+    rfid_epc_length_ = declare_parameter<int>("rfid_epc_length", 12);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -1247,34 +1242,18 @@ private:
     return oss.str();
   }
 
-  static std::string make_inventory_placeholder_rfid(
-    const std::string & prefix,
-    int cabinet_id,
-    int layer,
-    int grid)
-  {
-    const std::string safe_prefix = prefix.empty() ? "RFID_PLACEHOLDER" : prefix;
-    std::ostringstream oss;
-    oss << safe_prefix << "_" << cabinet_id
-        << "_" << layer << "_" << grid << "_001";
-    return oss.str();
-  }
-
   static const char * inventory_scan_output_source_label(
     agv_inventory_system::InventoryScanOutputSource source)
   {
     switch (source) {
-      case agv_inventory_system::InventoryScanOutputSource::HID_SUCCESS:
-        return "hid_success";
-      case agv_inventory_system::InventoryScanOutputSource::HID_EMPTY_SUCCESS:
-        return "hid_empty_success";
-      case agv_inventory_system::InventoryScanOutputSource::HID_FALLBACK_PLACEHOLDER:
-        return "hid_fallback_placeholder";
-      case agv_inventory_system::InventoryScanOutputSource::HID_FAILED:
-        return "hid_failed";
-      case agv_inventory_system::InventoryScanOutputSource::PLACEHOLDER_MODE:
+      case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_SUCCESS:
+        return "active_report_serial_success";
+      case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_EMPTY:
+        return "active_report_serial_empty";
+      case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_FAILED:
+        return "active_report_serial_failed";
       default:
-        return "placeholder";
+        return "active_report_serial";
     }
   }
 
@@ -1282,24 +1261,18 @@ private:
     agv_inventory_system::InventoryScanOutputSource source)
   {
     switch (source) {
-      case agv_inventory_system::InventoryScanOutputSource::HID_SUCCESS:
-        return "hid_keyboard";
-      case agv_inventory_system::InventoryScanOutputSource::HID_EMPTY_SUCCESS:
-        return "hid_empty";
-      case agv_inventory_system::InventoryScanOutputSource::HID_FALLBACK_PLACEHOLDER:
-        return "hid_fallback_placeholder";
-      case agv_inventory_system::InventoryScanOutputSource::HID_FAILED:
-        return "hid_failed";
-      case agv_inventory_system::InventoryScanOutputSource::PLACEHOLDER_MODE:
+      case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_SUCCESS:
+      case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_EMPTY:
+      case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_FAILED:
       default:
-        return "placeholder";
+        return "active_report_serial";
     }
   }
 
   static bool inventory_scan_output_source_succeeded(
     agv_inventory_system::InventoryScanOutputSource source)
   {
-    return source != agv_inventory_system::InventoryScanOutputSource::HID_FAILED;
+    return source == agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_SUCCESS;
   }
 
   bool finish_return_mode_is_map_origin() const
@@ -1321,6 +1294,17 @@ private:
   static std::string entry_motion_mode_to_string(EntryMotionMode mode)
   {
     return mode == EntryMotionMode::REVERSE_ENTRY ? "REVERSE_ENTRY" : "FORWARD_ENTRY";
+  }
+
+  double apply_entry_motion_direction(double speed_abs) const
+  {
+    const double speed = std::abs(speed_abs);
+    return entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ? -speed : speed;
+  }
+
+  double apply_exit_motion_direction(double speed_abs) const
+  {
+    return -apply_entry_motion_direction(speed_abs);
   }
 
   static bool try_parse_search_direction(std::string direction, SearchDirection & parsed)
@@ -1689,16 +1673,15 @@ private:
     scanner_config.scan_timeout_sec = std::max(scanner_config.scan_duration_sec, scan_timeout_sec_);
     scanner_config.scan_retry_count = std::max(0, scan_retry_count_);
     scanner_config.scan_result_timeout_sec = std::max(0.0, scan_result_timeout_sec_);
+    scanner_config.rfid_reader_enabled = rfid_reader_enabled_;
     scanner_config.rfid_reader_mode = rfid_reader_mode_;
-    scanner_config.rfid_hid_device_path = rfid_hid_device_path_;
-    scanner_config.rfid_hid_grab_device = rfid_hid_grab_device_;
-    scanner_config.rfid_hid_scan_timeout_sec = std::max(0.1, rfid_hid_scan_timeout_sec_);
-    scanner_config.rfid_hid_inter_char_timeout_ms =
-      std::max(1, rfid_hid_inter_char_timeout_ms_);
-    scanner_config.rfid_hid_max_tags_per_location =
-      std::max(0, rfid_hid_max_tags_per_location_);
-    scanner_config.rfid_hid_allow_empty_result = rfid_hid_allow_empty_result_;
-    scanner_config.rfid_hid_fallback_to_placeholder = rfid_hid_fallback_to_placeholder_;
+    scanner_config.rfid_serial_device = rfid_serial_device_;
+    scanner_config.rfid_serial_baud = rfid_serial_baud_;
+    scanner_config.rfid_scan_duration_sec = std::max(0.1, rfid_scan_duration_sec_);
+    scanner_config.rfid_frame_header = rfid_frame_header_;
+    scanner_config.rfid_frame_length = std::max(1, rfid_frame_length_);
+    scanner_config.rfid_epc_offset = std::max(0, rfid_epc_offset_);
+    scanner_config.rfid_epc_length = std::max(0, rfid_epc_length_);
     inventory_scanner_.configure(scanner_config);
 
     lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
@@ -1716,10 +1699,6 @@ private:
     rfid_log_config.path = rfid_local_log_path_;
     rfid_log_config.write_batch_summary = rfid_local_log_write_batch_summary_;
     rfid_scan_log_writer_.configure(rfid_log_config);
-    if (rfid_placeholder_prefix_.empty()) {
-      rfid_placeholder_prefix_ = "RFID_PLACEHOLDER";
-    }
-
     agv_inventory_system::WebApiClientParams web_params;
     web_params.web_client_mode = web_client_mode_;
     web_params.web_base_url = web_base_url_;
@@ -1743,8 +1722,6 @@ private:
     web_params.rfid_upload_timeout_sec = rfid_upload_timeout_sec_;
     web_params.rfid_upload_retry_count = rfid_upload_retry_count_;
     web_params.rfid_upload_fail_policy = rfid_upload_fail_policy_;
-    web_params.rfid_placeholder_enabled = rfid_placeholder_enabled_;
-    web_params.rfid_placeholder_prefix = rfid_placeholder_prefix_;
     web_params.rfid_upload_require_success = rfid_upload_require_success_;
     web_params.rfid_upload_status_path = rfid_upload_status_path_;
     web_api_client_.setParams(web_params);
@@ -1861,9 +1838,9 @@ private:
     RCLCPP_INFO(
       get_logger(),
       "RFID上传配置: enabled=%s url=%s verify_tls=%s timeout=%.2f retry_count=%d fail_policy=%s "
-      "placeholder=%s prefix=%s require_success=%s reader_mode=%s hid_device=%s "
-      "hid_grab=%s hid_timeout=%.2f hid_inter_char_ms=%d hid_max_tags=%d "
-      "hid_allow_empty=%s hid_fallback=%s local_log=%s local_log_path=%s "
+      "require_success=%s reader_enabled=%s reader_mode=%s "
+      "serial_device=%s serial_baud=%d serial_scan_duration=%.2f frame_header=%s "
+      "frame_length=%d epc_offset=%d epc_length=%d local_log=%s local_log_path=%s "
       "local_log_summary=%s status_path=%s",
       rfid_upload_enabled_ ? "true" : "false",
       rfid_upload_url_.c_str(),
@@ -1871,17 +1848,16 @@ private:
       rfid_upload_timeout_sec_,
       rfid_upload_retry_count_,
       rfid_upload_fail_policy_.c_str(),
-      rfid_placeholder_enabled_ ? "true" : "false",
-      rfid_placeholder_prefix_.c_str(),
       rfid_upload_require_success_ ? "true" : "false",
+      rfid_reader_enabled_ ? "true" : "false",
       rfid_reader_mode_.c_str(),
-      rfid_hid_device_path_.empty() ? "<empty>" : rfid_hid_device_path_.c_str(),
-      rfid_hid_grab_device_ ? "true" : "false",
-      rfid_hid_scan_timeout_sec_,
-      rfid_hid_inter_char_timeout_ms_,
-      rfid_hid_max_tags_per_location_,
-      rfid_hid_allow_empty_result_ ? "true" : "false",
-      rfid_hid_fallback_to_placeholder_ ? "true" : "false",
+      rfid_serial_device_.empty() ? "<empty>" : rfid_serial_device_.c_str(),
+      rfid_serial_baud_,
+      rfid_scan_duration_sec_,
+      rfid_frame_header_.empty() ? "<empty>" : rfid_frame_header_.c_str(),
+      rfid_frame_length_,
+      rfid_epc_offset_,
+      rfid_epc_length_,
       rfid_local_log_enabled_ ? "true" : "false",
       rfid_local_log_path_.empty() ? "<empty>" : rfid_local_log_path_.c_str(),
       rfid_local_log_write_batch_summary_ ? "true" : "false",
@@ -7353,29 +7329,7 @@ private:
       make_inventory_location_rfid(step.cabinet_id, level, grid);
     const auto & scan_output = inventory_scanner_.last_scan_output();
 
-    std::vector<std::string> rfids;
-    if (scan_output.use_real_rfids_result) {
-      rfids = scan_output.rfids;
-    } else if (rfid_placeholder_enabled_) {
-      rfids.push_back(
-        make_inventory_placeholder_rfid(
-          rfid_placeholder_prefix_,
-          step.cabinet_id,
-          level,
-          grid));
-    } else {
-      RCLCPP_ERROR(
-        get_logger(),
-        "[mission_manager][%s][RFID][batch] placeholder disabled but no real RFID reader payload "
-        "cabinet=%d level=%d grid=%d locationRfid=%s source=%s",
-        in_gap_scan_mode_label(mode),
-        step.cabinet_id,
-        level,
-        grid,
-        location_rfid.c_str(),
-        inventory_scan_output_source_label(scan_output.source));
-      return false;
-    }
+    std::vector<std::string> rfids = scan_output.rfids;
 
     if (inventory_upload_batch_locations_.find(location_rfid) !=
       inventory_upload_batch_locations_.end())
@@ -7413,7 +7367,7 @@ private:
       rfids.size(),
       inventory_upload_batch_.size(),
       inventory_scan_output_source_label(scan_output.source),
-      scan_output.fallback_to_placeholder ? "true" : "false",
+      "false",
       inventory_scanner_.last_scan_result().c_str());
     write_rfid_scan_cell_cached_log(
       mode,
@@ -7454,7 +7408,7 @@ private:
     record.rfids = rfids;
     record.reader_mode = rfid_reader_mode_;
     record.source = rfid_local_log_source_label(scan_output.source);
-    record.fallback_to_placeholder = scan_output.fallback_to_placeholder;
+    record.fallback_to_placeholder = false;
     record.scan_success = inventory_scan_output_source_succeeded(scan_output.source);
     record.batch_item_count = inventory_upload_batch_.size();
 
@@ -7520,13 +7474,14 @@ private:
       RCLCPP_WARN(
         get_logger(),
         "[mission_manager][%s][RFID][batch] empty at mission complete, skip upload "
-        "reason=%s upload_enabled=%s reader_mode=%s placeholder=%s allow_hid_empty=%s",
+        "reason=%s upload_enabled=%s reader_mode=%s "
+        "serial_device=%s scan_duration=%.2f",
         in_gap_scan_mode_label(mode),
         reason.c_str(),
         rfid_upload_enabled_ ? "true" : "false",
         rfid_reader_mode_.c_str(),
-        rfid_placeholder_enabled_ ? "true" : "false",
-        rfid_hid_allow_empty_result_ ? "true" : "false");
+        rfid_serial_device_.empty() ? "<empty>" : rfid_serial_device_.c_str(),
+        rfid_scan_duration_sec_);
       inventory_upload_batch_finalized_ = true;
       return true;
     }
@@ -7853,7 +7808,9 @@ private:
         "深度格移动速度非法: " + std::to_string(single_cabinet_grid_move_speed_));
       return false;
     }
-    const double signed_speed = delta_depth > 0 ? speed_abs : -speed_abs;
+    const bool moving_deeper = delta_depth > 0;
+    const double signed_speed = moving_deeper ?
+      apply_entry_motion_direction(speed_abs) : -apply_entry_motion_direction(speed_abs);
 
     if (!single_cabinet_grid_move_active_ || !single_cabinet_grid_move_step_matches(step)) {
       std::string reason;
@@ -7879,7 +7836,7 @@ private:
         get_logger(),
         "[mission_manager][%s][grid_move] step_index=%zu/%zu cabinet=%d layer=%d "
         "previous_depth=%d target_depth=%d delta_depth=%d target_distance=%.2f "
-        "speed=%.3f timeout=%.2f",
+        "entry_motion_mode=%s moving_deeper=%d speed=%.3f timeout=%.2f",
         in_gap_scan_mode_label(mode),
         single_cabinet_scan_step_index_,
         single_cabinet_scan_steps_.size(),
@@ -7889,6 +7846,8 @@ private:
         step.depth_index,
         delta_depth,
         single_cabinet_grid_move_target_distance_,
+        entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+        moving_deeper ? 1 : 0,
         single_cabinet_grid_move_cmd_speed_,
         single_cabinet_grid_move_timeout_sec_);
       RCLCPP_INFO(
@@ -7906,6 +7865,8 @@ private:
         " previous_depth=" + std::to_string(single_cabinet_grid_previous_depth_) +
         " target_depth=" + std::to_string(step.depth_index) +
         " delta_depth=" + std::to_string(delta_depth) +
+        " entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+        " moving_deeper=" + std::string(moving_deeper ? "true" : "false") +
         " target_distance=" + format_fixed(single_cabinet_grid_move_target_distance_, 2) +
         " speed=" + format_fixed(single_cabinet_grid_move_cmd_speed_, 3) +
         " step_index=" + std::to_string(single_cabinet_scan_step_index_));
@@ -7979,11 +7940,11 @@ private:
       return true;
     }
 
-    if (single_cabinet_grid_move_cmd_speed_ > 0.0) {
+    if (moving_deeper) {
       const auto safety = evaluate_entering_safety();
       if (safety.blocked) {
         publish_stop();
-        fail_in_gap_scan_runtime(mode, "深度格前进被安全策略阻塞: " + safety.block_reason);
+        fail_in_gap_scan_runtime(mode, "深度格深入被安全策略阻塞: " + safety.block_reason);
         return false;
       }
     } else {
@@ -7992,7 +7953,7 @@ private:
         publish_stop();
         fail_in_gap_scan_runtime(
           mode,
-          "深度格后退被超声波安全策略阻塞 range=" + std::to_string(ultrasonic_range));
+          "深度格回浅被超声波安全策略阻塞 range=" + std::to_string(ultrasonic_range));
         return false;
       }
     }
@@ -8005,9 +7966,11 @@ private:
       get_logger(),
       *get_clock(),
       1000,
-      "[mission_manager][%s][grid_move] moving step_index=%zu/%zu cabinet=%d "
+      "[mission_manager][%s][grid_move][publish_cmd_vel] cmd_vel_source=GRID_MOVE "
+      "step_index=%zu/%zu cabinet=%d "
       "previous_depth=%d target_depth=%d delta_depth=%d traveled=%.2f target=%.2f "
-      "elapsed=%.2f",
+      "elapsed=%.2f entry_motion_mode=%s moving_deeper=%d signed_speed=%.3f "
+      "published_cmd_linear_x=%.3f",
       in_gap_scan_mode_label(mode),
       single_cabinet_scan_step_index_,
       single_cabinet_scan_steps_.size(),
@@ -8017,7 +7980,11 @@ private:
       delta_depth,
       traveled,
       single_cabinet_grid_move_target_distance_,
-      elapsed);
+      elapsed,
+      entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+      moving_deeper ? 1 : 0,
+      single_cabinet_grid_move_cmd_speed_,
+      cmd.linear.x);
     return false;
   }
 
@@ -8317,21 +8284,26 @@ private:
       }
 
       geometry_msgs::msg::Twist cmd;
-      cmd.linear.x = -speed;
+      const double exit_linear_cmd = apply_exit_motion_direction(speed);
+      cmd.linear.x = exit_linear_cmd;
       cmd.angular.z = 0.0;
-      cmd_pub_->publish(cmd);
       RCLCPP_INFO_THROTTLE(
         get_logger(),
         *get_clock(),
         1000,
-        "[mission_manager][single_cabinet][exit_gap] phase=%s traveled=%.2f target_distance=%.2f "
-        "cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
-        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
-        traveled,
-        single_cabinet_exit_target_distance_,
+        "[mission_manager][single_cabinet][exit_gap] cmd_vel_source=NORMAL_EXIT_GAP "
+        "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
+        "published_cmd_angular_z=%.3f exit_distance=%.2f traveled=%.2f "
+        "safety_stop=false safety_reason=none phase=%s elapsed=%.2f",
+        entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+        exit_linear_cmd,
         cmd.linear.x,
         cmd.angular.z,
+        single_cabinet_exit_target_distance_,
+        traveled,
+        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
         elapsed);
+      cmd_pub_->publish(cmd);
       return;
     }
 
@@ -10054,7 +10026,9 @@ private:
     bool straight_done,
     const EntrySideHoldEval & side_hold,
     const std::string & yaw_frame = "odom_fallback",
-    const std::string & pose_note = "not provided")
+    const std::string & pose_note = "not provided",
+    double entry_linear_cmd = 0.0,
+    double final_linear_cmd = 0.0)
   {
     std::ostringstream straight_start_text;
     if (straight_start_pose_.valid) {
@@ -10074,7 +10048,7 @@ private:
       1000,
       "entering_gap: phase=%s entry_motion_mode=%s entry_turn_start_yaw=%.3f target_gap_yaw=%.3f "
       "yaw_frame=%s current_yaw=%.3f yaw_error=%.3f pose_note=%s "
-      "angular.z=%.3f straight_start_pose=(%s) "
+      "entry_linear_cmd=%.3f final_linear_cmd=%.3f angular.z=%.3f straight_start_pose=(%s) "
       "traveled=%.3f target_straight_distance=%.3f turn_done=%d straight_done=%d "
       "entry_side=%s left_side_dist=%.3f right_side_dist=%.3f control_side_dist=%.3f "
       "side_error=%.3f yaw_hold_cmd=%.3f side_distance_cmd=%.3f final_angular_cmd=%.3f "
@@ -10088,6 +10062,8 @@ private:
       current.yaw,
       yaw_error,
       pose_note.c_str(),
+      entry_linear_cmd,
+      final_linear_cmd,
       angular_z,
       straight_start.c_str(),
       traveled,
@@ -10123,12 +10099,14 @@ private:
     bool turn_done,
     bool straight_done,
     const std::string & yaw_frame = "odom_fallback",
-    const std::string & pose_note = "not provided")
+    const std::string & pose_note = "not provided",
+    double entry_linear_cmd = 0.0,
+    double final_linear_cmd = 0.0)
   {
     EntrySideHoldEval side_hold;
     log_entering_gap_status(
       safety, current, yaw_error, angular_z, traveled, turn_done, straight_done,
-      side_hold, yaw_frame, pose_note);
+      side_hold, yaw_frame, pose_note, entry_linear_cmd, final_linear_cmd);
   }
 
   void handle_entering_gap_state()
@@ -10316,22 +10294,22 @@ private:
           yaw_hold_cmd + side_hold.side_distance_cmd,
           -angular_limit,
           angular_limit);
-        const double entry_linear_sign =
-          entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ? -1.0 : 1.0;
-        const double straight_linear_cmd =
-          entry_linear_sign * std::abs(entry_straight_speed_) * safety.speed_scale;
+        const double entry_linear_cmd = apply_entry_motion_direction(entry_straight_speed_);
+        const double final_linear_cmd = entry_linear_cmd * safety.speed_scale;
+        const double stop_linear_cmd = 0.0;
 
         if (straight_elapsed > straight_timeout) {
           side_hold.final_angular_cmd = limited_angular * safety.speed_scale;
           log_entering_gap_status(
             safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false, side_hold,
-            yaw_control.yaw_frame, yaw_control.pose_note);
+            yaw_control.yaw_frame, yaw_control.pose_note, entry_linear_cmd, stop_linear_cmd);
           publish_stop();
           RCLCPP_ERROR(
             get_logger(),
             "[mission_manager][MOVING_TO_GRID_CENTER] 入缝直行超时 elapsed=%.2f timeout=%.2f "
             "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
-            "cmd.linear.x=0.000 planned_linear=%.3f speed_scale=%.2f estimated_speed=%.3f "
+            "entry_linear_cmd=%.3f final_linear_cmd=%.3f cmd.linear.x=0.000 "
+            "speed_scale=%.2f estimated_speed=%.3f "
             "entry_motion_mode=%s motion_direction=%s "
             "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
             "yaw_frame=%s pose_note=%s side_distance_cmd=%.3f side_hold_status=%s",
@@ -10340,7 +10318,8 @@ private:
             target_straight_distance_,
             traveled,
             entry_straight_speed_,
-            straight_linear_cmd,
+            entry_linear_cmd,
+            stop_linear_cmd,
             safety.speed_scale,
             estimated_speed,
             entry_motion_mode_to_string(entry_motion_mode_).c_str(),
@@ -10409,43 +10388,51 @@ private:
         entry_last_traveled_ = traveled;
 
         geometry_msgs::msg::Twist cmd;
-        cmd.linear.x = straight_linear_cmd;
+        cmd.linear.x = final_linear_cmd;
         cmd.angular.z = limited_angular * safety.speed_scale;
         angular_z = cmd.angular.z;
         side_hold.final_angular_cmd = angular_z;
-        cmd_pub_->publish(cmd);
-        log_entering_gap_status(
-          safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false, side_hold,
-          yaw_control.yaw_frame, yaw_control.pose_note);
         RCLCPP_INFO_THROTTLE(
           get_logger(),
           *get_clock(),
           1000,
-          "[mission_manager][MOVING_TO_GRID_CENTER] elapsed=%.2f timeout=%.2f "
+          "[mission_manager][MOVING_TO_GRID_CENTER][publish_cmd_vel] entering_gap_phase=%s "
+          "entry_motion_mode=%s entry_linear_cmd=%.3f final_linear_cmd=%.3f "
+          "published_cmd_linear_x=%.3f published_cmd_angular_z=%.3f "
+          "target_gap_yaw=%.4f current_yaw=%.4f yaw_error=%.4f safety_speed_scale=%.2f "
+          "safety_stop=%d safety_reason=%s elapsed=%.2f timeout=%.2f "
           "target_straight_distance=%.3f traveled=%.3f entry_straight_speed=%.3f "
-          "cmd.linear.x=%.3f speed_scale=%.2f estimated_speed=%.3f "
-          "entry_motion_mode=%s motion_direction=%s "
-          "current_pose=(x=%.3f,y=%.3f) current_yaw=%.4f target_yaw=%.4f yaw_error=%.4f "
+          "estimated_speed=%.3f motion_direction=%s current_pose=(x=%.3f,y=%.3f) "
           "yaw_frame=%s pose_note=%s side_distance_cmd=%.3f side_hold_status=%s",
+          entry_gap_phase_to_string(entry_gap_phase_).c_str(),
+          entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+          entry_linear_cmd,
+          final_linear_cmd,
+          cmd.linear.x,
+          cmd.angular.z,
+          target_gap_yaw_,
+          yaw_control.yaw,
+          yaw_error,
+          safety.speed_scale,
+          safety.blocked ? 1 : 0,
+          safety.block_reason.c_str(),
           straight_elapsed,
           straight_timeout,
           target_straight_distance_,
           traveled,
           entry_straight_speed_,
-          cmd.linear.x,
-          safety.speed_scale,
           estimated_speed,
-          entry_motion_mode_to_string(entry_motion_mode_).c_str(),
           safety.motion_direction.c_str(),
           odom_current.x,
           odom_current.y,
-          yaw_control.yaw,
-          target_gap_yaw_,
-          yaw_error,
           yaw_control.yaw_frame.c_str(),
           yaw_control.pose_note.c_str(),
           side_hold.side_distance_cmd,
           side_hold.status.c_str());
+        cmd_pub_->publish(cmd);
+        log_entering_gap_status(
+          safety, yaw_log_pose, yaw_error, angular_z, traveled, true, false, side_hold,
+          yaw_control.yaw_frame, yaw_control.pose_note, entry_linear_cmd, cmd.linear.x);
         break;
       }
 
@@ -11316,17 +11303,16 @@ private:
     "/home/wheeltec/wheeltec_ros2/rfid_scan_logs/rfid_scan_records.jsonl"};
   bool rfid_local_log_write_batch_summary_{true};
   std::string rfid_upload_status_path_{"/tmp/agv_inventory_system/rfid_upload_status.json"};
-  bool rfid_placeholder_enabled_{true};
-  std::string rfid_placeholder_prefix_{"RFID_PLACEHOLDER"};
   bool rfid_upload_require_success_{false};
-  std::string rfid_reader_mode_{"hid_keyboard"};
-  std::string rfid_hid_device_path_{"auto"};
-  bool rfid_hid_grab_device_{true};
-  double rfid_hid_scan_timeout_sec_{5.0};
-  int rfid_hid_inter_char_timeout_ms_{200};
-  int rfid_hid_max_tags_per_location_{10};
-  bool rfid_hid_allow_empty_result_{false};
-  bool rfid_hid_fallback_to_placeholder_{true};
+  bool rfid_reader_enabled_{true};
+  std::string rfid_reader_mode_{"active_report_serial"};
+  std::string rfid_serial_device_{"/dev/ttyUSB0"};
+  int rfid_serial_baud_{9600};
+  double rfid_scan_duration_sec_{5.0};
+  std::string rfid_frame_header_{"1100EE00"};
+  int rfid_frame_length_{18};
+  int rfid_epc_offset_{4};
+  int rfid_epc_length_{12};
   PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
   int plc_open_wait_target_cabinet_{-1};
   bool plc_open_wait_required_{false};

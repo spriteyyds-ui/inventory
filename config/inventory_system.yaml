@@ -327,8 +327,8 @@ mission_manager_node:
     left_max_depth_index: 4                                             # 左/上排货柜允许的最大深度索引，单位 层；调大允许更深目标
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
     entry_center_offset_m: 0.0                                          # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
-    entry_right_target_yaw_rad: 1.6608                                  # 右侧进缝固定目标 yaw，单位 rad；map +Y，现场 4 号柜应向右转入缝
-    entry_left_target_yaw_rad: -1.3608                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
+    entry_right_target_yaw_rad: 1.5708                                  # 右侧进缝固定目标 yaw，单位 rad；map +Y，现场 4 号柜应向右转入缝
+    entry_left_target_yaw_rad: -1.5708                                  # 左侧进缝固定目标 yaw，单位 rad；map -Y，现场 8 号柜应向左转入缝
     entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
@@ -420,7 +420,7 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_http_enabled: false                                             # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
     plc_server_url: "https://172.26.130.75:8099"                        # 当前 Java/PLC HTTP 服务地址
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
@@ -432,36 +432,34 @@ mission_manager_node:
     plc_require_body_success: false                                     # false 时只要求 HTTP 2xx；true 时要求 body 明确包含 success=true
     plc_request_timeout_sec: 3.0                                        # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
     plc_retry_count: 1                                                  # PLC HTTP 请求失败后的重试次数，单位 次
-    plc_fail_policy: "error"                                            # PLC open 失败策略：error 或 continue_without_plc
+    plc_fail_policy: "continue_without_plc"                                            # PLC open 失败策略：error 或 continue_without_plc
     plc_supported_cabinets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] # 首版支持 PLC 控制的柜号；19-36 不映射
     plc_open_wait_sec: 5.0                                              # /open 请求层成功后的固定等待时间，单位 s；不等待 PLC 状态反馈
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
 
-    rfid_upload_enabled: true                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
+    rfid_upload_enabled: false                                         # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
     rfid_upload_url: "https://172.26.130.75/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
     rfid_upload_verify_tls: false                                       # RFID HTTPS 上传是否校验证书；false 等效 curl -k，仅影响 RFID POST
     rfid_upload_timeout_sec: 3.0                                        # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
     rfid_upload_retry_count: 2                                          # RFID 上传失败后的重试次数，单位 次
-    rfid_upload_fail_policy: "error"                                    # RFID 上传失败策略：error 或 continue_without_upload
+    rfid_upload_fail_policy: "continue_without_upload"                                    # RFID 上传失败策略：error 或 continue_without_upload
     rfid_local_log_enabled: true                                        # 是否追加保存本地 RFID/扫码 JSONL 记录；写入失败只告警不影响盘库
     rfid_local_log_path: "/home/wheeltec/wheeltec_ros2/rfid_scan_logs/rfid_scan_records.jsonl" # 正式盘库扫码本地记录文件；运行时自动创建父目录
     rfid_local_log_write_batch_summary: true                            # 是否记录最终批量上传 prepare/success/failed/skipped summary
     rfid_upload_status_path: "/tmp/agv_inventory_system/rfid_upload_status.json" # GUI/网页状态接口读取的最近 RFID 上传状态文件；不影响上传业务
-    rfid_placeholder_enabled: true                                      # 当前无真实 reader 数据时是否生成占位 RFID tag
-    rfid_placeholder_prefix: "RFID_PLACEHOLDER"                         # 占位 RFID tag 前缀，最终格式含柜号/层/格位
     rfid_upload_require_success: false                                  # false 时 HTTP 200 即成功；true 时要求响应体包含 success=true
-    rfid_reader_mode: "hid_keyboard"                                    # RFID/扫码数据来源：placeholder 或 hid_keyboard；默认启用真实 HID 扫码枪
-    rfid_hid_device_path: "auto"                                        # HID 扫码枪 input 设备路径；auto 会按 STM32 Custm HID 自动发现，避免写死 eventX
-    rfid_hid_grab_device: true                                          # 是否 EVIOCGRAB 独占扫码枪，避免输入到终端/GUI
-    rfid_hid_scan_timeout_sec: 5.0                                      # 单个格位 HID 扫码接收窗口总超时，单位 s
-    rfid_hid_inter_char_timeout_ms: 200                                 # 无 Enter 时，字符间隔超过该值则结束一条 tag
-    rfid_hid_max_tags_per_location: 10                                  # 单个格位最多接收多少条 tag；重复 tag 会去重
-    rfid_hid_allow_empty_result: false                                  # true 时 HID 成功但无 tag 也上传空 rfids
-    rfid_hid_fallback_to_placeholder: true                              # HID 路径/权限/超时失败时是否回退占位 RFID
-
+    rfid_reader_enabled: true                                           # 是否启用真实 RFID 读写器读取；false 时主动串口模式返回空 rfids
+    rfid_reader_mode: "active_report_serial"                            # RFID 数据来源；正式模式只保留 active_report_serial
+    rfid_serial_device: "/dev/ttyUSB0"                                  # PL2303 RFID 读写器串口；不要配置为 /dev/ttyCH341USB0 继电器串口
+    rfid_serial_baud: 9600                                              # RFID 串口波特率；当前硬件 9600 8N1 无流控
+    rfid_scan_duration_sec: 5.0                                         # 单个格位主动上报读取窗口，单位 s；无 EPC 也继续盘库流程
+    rfid_frame_header: "1100EE00"                                      # 主动上报帧头；仅接受 11 00 EE 00
+    rfid_frame_length: 18                                               # 主动上报帧长度，单位 byte
+    rfid_epc_offset: 4                                                  # EPC 起始位置；最新实测为 frame[4:16]
+    rfid_epc_length: 12                                                 # EPC 长度，单位 byte；尾部 frame[16:18] 仅记录日志
     scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
-    scan_duration_sec: 2.0                                              # 单次扫描动作持续时间，单位 s；调大会采集更久但任务变慢
+    scan_duration_sec: 5.0                                              # 单次扫描动作持续时间，单位 s；主动串口模式建议与 rfid_scan_duration_sec 一致
     scan_timeout_sec: 5.0                                               # 等待扫描完成超时，单位 s；调大会允许扫描设备更慢返回
     scan_retry_count: 0                                                 # 扫描失败重试次数，单位 次；调大会提高成功机会但耗时增加
     scan_result_timeout_sec: 2.0                                        # 等待扫描结果超时，单位 s；调大会更容忍结果延迟
