@@ -5,34 +5,54 @@ routes:
   left_route:
     frame_id: map
     waypoints:
-      - {x: 1.477, y: -0.015, yaw: -0.0134}
-      - {x: 4.063, y: -0.056, yaw: -0.0196}
-      - {x: 5.330, y: -0.054, yaw: -0.0065}
+      - {x: 1.042, y: 0.019, yaw: 0.0054}
+      - {x: 3.044, y: -0.013, yaw: -0.0169}
+      - {x: 5.164, y: 0.002, yaw: -0.0299}
+      - {x: 5.403, y: -0.008, yaw: -0.0239}
 
-      - {x: 5.475, y: -0.038, yaw: 0.2215}
-      - {x: 5.485, y: -0.010, yaw: 0.8652}
-      - {x: 5.474, y: 0.016, yaw: 1.5144}
+      - {x: 5.512, y: 0.027, yaw: 0.2033}
+      - {x: 5.538, y: 0.049, yaw: 0.4328}
+      - {x: 5.535, y: 0.065, yaw: 0.6477}
+      - {x: 5.568, y: 0.108, yaw: 0.8909}
+      - {x: 5.579, y: 0.134, yaw: 1.1125}
+      - {x: 5.599, y: 0.186, yaw: 1.3483}
+      - {x: 5.585, y: 0.189, yaw: 1.5367}
 
-      - {x: 5.436, y: 0.516, yaw: 1.5842}
-      - {x: 5.397, y: 0.639, yaw: 2.3840}
-      - {x: 5.380, y: 0.661, yaw: 2.6097}
-      - {x: 5.343, y: 0.694, yaw: 2.8096}
+      - {x: 5.530, y: 0.453, yaw: 1.7126}
+      - {x: 5.470, y: 0.696, yaw: 1.9120}
+      - {x: 5.432, y: 0.720, yaw: 2.1121}
+      - {x: 5.393, y: 0.735, yaw: 2.2981}
+      - {x: 5.375, y: 0.755, yaw: 2.4763}
+      - {x: 5.359, y: 0.761, yaw: 2.6742}
+      - {x: 5.350, y: 0.748, yaw: 2.8793}
+      - {x: 5.340, y: 0.732, yaw: -2.9606}
 
-      - {x: 5.345, y: 0.680, yaw: -2.960}
       
   right_route:
     frame_id: map
     waypoints:
-      - {x: 2.543, y: -0.092, yaw: -0.0384}
-      - {x: 5.756, y: -0.127, yaw: -0.0199}
+      - {x: 1.056, y: -0.017, yaw: -0.0228}
+      - {x: 3.126, y: -0.085, yaw: -0.0342}
+      - {x: 5.180, y: -0.084, yaw: -0.0504}
+      - {x: 5.679, y: -0.105, yaw: -0.0584}
 
-      - {x: 5.883, y: -0.127, yaw: -0.4267}
-      - {x: 5.889, y: -0.145, yaw: -1.2854}
+      - {x: 5.809, y: -0.133, yaw: -0.2581}
+      - {x: 5.796, y: -0.115, yaw: -0.4621}
+      - {x: 5.774, y: -0.151, yaw: -0.6949}
+      - {x: 5.789, y: -0.167, yaw: -0.9067}
+      - {x: 5.831, y: -0.163, yaw: -1.1042}
+      - {x: 5.833, y: -0.158, yaw: -1.3171}
+      - {x: 5.839, y: -0.159, yaw: -1.5208}
 
-      - {x: 5.834, y: -0.487, yaw: -2.0563}
-      - {x: 5.796, y: -0.508, yaw: -2.4627}
+      - {x: 5.833, y: -0.414, yaw: -1.5684}
+      - {x: 5.830, y: -0.602, yaw: -1.7874}
+      - {x: 5.821, y: -0.612, yaw: -2.0062}
+      - {x: 5.805, y: -0.623, yaw: -2.2091}
+      - {x: 5.773, y: -0.634, yaw: -2.4271}
+      - {x: 5.744, y: -0.643, yaw: -2.6515}
+      - {x: 5.725, y: -0.643, yaw: -2.8532}
+      - {x: 5.693, y: -0.639, yaw: 3.0406}
 
-      - {x: 5.880, y: -0.532, yaw: -3.1416}
 
 side_route_map:
   left: left_route
@@ -48,6 +68,39 @@ cabinet_side_map:
   "7": right
   "8": right
 
+  # "5": left
+  # "6": left
+  # "7": left
+  # "8": left
+  # "9": left
+  # "10": left
+  # "11": left
+  # "12": left
+  # "13": left
+  # "14": left
+  # "15": left
+  # "16": left
+  # "17": left
+  # "18": left
+  # "19": right
+  # "20": right
+  # "21": right
+  # "22": right
+  # "23": right
+  # "24": right
+  # "25": right
+  # "26": right
+  # "27": right
+  # "28": right
+  # "29": right
+  # "30": right
+  # "31": right
+  # "32": right
+  # "33": right
+  # "34": right
+  # "35": right
+  # "36": right
+
 cabinet_entry_side_map:
   "1": right
   "2": right
@@ -58,6 +111,39 @@ cabinet_entry_side_map:
   "7": left
   "8": left
 
+  # "5": right
+  # "6": right
+  # "7": right
+  # "8": right
+  # "9": right
+  # "10": right
+  # "11": right
+  # "12": right
+  # "13": right
+  # "14": right
+  # "15": right
+  # "16": right
+  # "17": right
+  # "18": right
+  # "19": left
+  # "20": left
+  # "21": left
+  # "22": left
+  # "23": left
+  # "24": left
+  # "25": left
+  # "26": left
+  # "27": left
+  # "28": left
+  # "29": left
+  # "30": left
+  # "31": left
+  # "32": left
+  # "33": left
+  # "34": left
+  # "35": left
+  # "36": left
+
 cabinet_gap_search_direction_map:
   "1": backward
   "2": forward
@@ -67,3 +153,31 @@ cabinet_gap_search_direction_map:
   "6": forward
   "7": backward
   "8": forward
+  # "9": backward
+  # "10": forward
+  # "11": backward
+  # "12": forward
+  # "13": backward
+  # "14": forward
+  # "15": backward
+  # "16": forward
+  # "17": backward
+  # "18": forward
+  # "19": backward
+  # "20": forward
+  # "21": backward
+  # "22": forward
+  # "23": backward
+  # "24": forward
+  # "25": backward
+  # "26": forward
+  # "27": backward
+  # "28": forward
+  # "29": backward
+  # "30": forward
+  # "31": backward
+  # "32": forward
+  # "33": backward
+  # "34": forward
+  # "35": backward
+  # "36": forward

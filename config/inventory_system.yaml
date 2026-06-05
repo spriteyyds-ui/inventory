@@ -233,26 +233,25 @@ inventory_auto_recharger:
     status_topic: /inventory/auto_recharge/status                       # 自动回充状态输出；IDLE/STARTING/NAVIGATING/DOCKING/CHARGING/CANCELING/COMPLETE/FAILED/CANCELED
     nav2_active_wait_timeout_sec: 60.0                                  # 收到回充请求后等待 Nav2 active 的超时，单位 s；超时不关闭 Nav2
     nav_feedback_timeout_sec: 120.0                                     # 接近充电桩但长时间未完成导航时的等待阈值，单位 s
-    set_charge_timeout_sec: 2.0                                         # 单次 /set_charge 请求等待响应超时，单位 s；取消回充时也使用
-    set_charge_retry_count: 3                                           # /set_charge 调用重试次数；取消回充失败会按 strict 策略返回失败
-    set_charge_cancel_strict: true                                      # true 表示真实 DOCKING/CHARGING/贴桩 active 下 /set_charge=0 失败时 cancel 返回失败
-    wait_charging_clear_timeout_sec: 5.0                                # /set_charge=0 后等待 robot_charging_flag=false 的超时，单位 s；超时 strict cancel 返回失败
+    set_charge_timeout_sec: 2.0                                         # 单次 /set_charge 请求等待响应超时，单位 s；cancel 会额外限制为一次短等待
+    set_charge_retry_count: 3                                           # /set_charge 调用重试次数；启动/普通停止使用，cancel 不再长时间重试
+    set_charge_cancel_strict: true                                      # 历史兼容参数；cancel 现在 best-effort 快速返回，不再因 /set_charge=0 失败阻塞
+    wait_charging_clear_timeout_sec: 5.0                                # 历史兼容参数；cancel 不再等待 robot_charging_flag 释放，离桩由 mission_manager 负责
     cancel_charge_disconnect_wait_sec: 2.0                              # cancel 最终失败前额外等待 robot_charging_flag=false 的宽限时间，避免话题回调晚到
     cancel_charge_disconnect_poll_interval_sec: 0.05                    # 宽限等待期间检查 robot_charging_flag 的周期，单位 s
-    recharge_depart_enabled: true                                       # cancel 后 robot_charging_flag 仍 true 时是否执行低速离桩动作
-    recharge_depart_speed_mps: 0.04                                     # 离桩速度，保留正负号；系统原生 E/e 使用 linear.x=+0.1，若方向相反改为负值，代码不要 abs()
-    recharge_depart_duration_sec: 10.0                                  # timed 离桩持续时间，单位 s；期间持续发布 cmd_vel，不只发一帧
-    recharge_depart_distance_m: 0.20                                    # 预留离桩目标距离，单位 m；当前自动回充 cancel 先采用 timed depart
-    recharge_depart_timeout_sec: 5.0                                    # 离桩动作最大持续时间，单位 s；实际运行时间取 duration 与 timeout 的较小值
-    recharge_depart_wait_charging_clear_sec: 5.0                        # 离桩后等待 robot_charging_flag=false 的超时，单位 s
-    recharge_depart_require_set_charge_success: false                   # false 时 /set_charge=0 超时仍可低速尝试离桩，之后必须确认 robot_charging_flag=false
+    recharge_depart_enabled: false                                      # 废弃兼容参数；inventory_auto_recharger 不再执行 timed depart
+    recharge_depart_speed_mps: 0.04                                     # 废弃兼容参数；主离桩速度使用 mission_manager_node.stop_auto_charge_depart_speed_mps
+    recharge_depart_duration_sec: 10.0                                  # 废弃兼容参数；Python cancel 主流程不会调用
+    recharge_depart_distance_m: 0.20                                    # 废弃兼容参数；主离桩距离使用 mission_manager_node.stop_auto_charge_depart_distance_m
+    recharge_depart_timeout_sec: 5.0                                    # 废弃兼容参数；Python cancel 主流程不会调用
+    recharge_depart_wait_charging_clear_sec: 5.0                        # 废弃兼容参数；Python cancel 不再等待 charging flag 释放
+    recharge_depart_require_set_charge_success: false                   # 废弃兼容参数；cancel 现在 best-effort 快速返回
     nav_goal_frame: map                                                 # 自动回充导航目标坐标系
     charger_pose_x: 0.21353509531521975                                 # 自动回充导航目标 x 坐标，单位 m
     charger_pose_y: 0.026333288560603657                                # 自动回充导航目标 y 坐标，单位 m
     charger_pose_z: -0.121433301285056                                  # 自动回充导航目标姿态 z
     charger_pose_w: 0.9925995936625266                                  # 自动回充导航目标姿态 w
     robot_BatteryCapacity: 20000                                        # 电池容量参数，保留给原自动回充判断逻辑
-    car_mode: senior_akm                                                # 底盘模式，影响红外对接标志设置
     diff_point: 1.2                                                     # 根据充电桩检测位姿外推导航目标的距离，单位 m
     diff_angle: -15.0                                                   # 根据充电桩检测位姿外推导航目标的角度，单位 deg
 
@@ -289,7 +288,7 @@ mission_manager_node:
     stop_auto_charge_and_depart_service_name: /inventory/stop_auto_charge_and_depart # 停止自动充电并按配置速度符号离桩服务名
     inventory_auto_recharge_start_service_name: /inventory/auto_recharge/start # 盘库内部自动回充节点启动服务名
     inventory_auto_recharge_cancel_service_name: /inventory/auto_recharge/cancel # 盘库内部自动回充节点取消服务名
-    cancel_auto_recharge_service_name: /inventory/cancel_auto_recharge  # 对外取消自动回充服务名；充电/回充标志仍 active 时也会转发到底层 cancel
+    cancel_auto_recharge_service_name: /inventory/cancel_auto_recharge  # 兼容旧入口；当前会重定向到 stop_auto_charge_and_depart 主流程
     auto_recharge_status_topic: /inventory/auto_recharge/status          # 自动回充状态话题；CHARGING/COMPLETE 表示跨侧回充已到位
     auto_recharge_charging_flag_topic: robot_charging_flag               # 充电状态输入话题；true 可作为跨侧回充已到位的辅助判据
     auto_recharge_recharge_flag_topic: robot_recharge_flag               # 底盘回充模式标志输入话题；非 0 表示底盘可能仍在回充控制
@@ -302,11 +301,11 @@ mission_manager_node:
     safe_exit_gap_max_angular_z: 0.15                                   # 安全出缝 yaw 修正角速度限幅，单位 rad/s
     safe_exit_gap_extra_clearance_m: 0.30                               # 安全出缝在入缝实测距离外额外倒退余量，单位 m
     safe_exit_gap_timeout_sec: 30.0                                     # 安全出缝超时，单位 s；超时后停车并保持在缝隙内标志
-    stop_auto_charge_depart_distance_m: 0.5                             # 停止自动充电后二级离桩距离，单位 m；Python cancel 已清 charging flag 时会跳过
-    stop_auto_charge_depart_speed_mps: 0.05                             # 二级离桩速度，保留正负号；系统原生 E/e 为正向，方向相反可改负值
+    stop_auto_charge_depart_distance_m: 0.5                             # 停止自动充电后统一主离桩距离，单位 m；不再依赖 Python cancel 离桩
+    stop_auto_charge_depart_speed_mps: 0.10                             # 二级离桩速度，保留正负号；系统原生 E/e 为正向，方向相反可改负值
     stop_auto_charge_depart_yaw_kp: 0.6                                 # 二级离桩 yaw 保持比例增益
     stop_auto_charge_depart_max_angular_z: 0.15                         # 二级离桩 yaw 修正角速度限幅，单位 rad/s
-    stop_auto_charge_depart_timeout_sec: 20.0                           # 离桩流程单阶段超时，单位 s
+    stop_auto_charge_depart_timeout_sec: 40.0                           # 离桩流程单阶段超时，单位 s
     stop_auto_charge_depart_stop_before_sec: 0.5                        # 自动回充取消成功后、离桩前停车等待时间，单位 s
     stop_auto_charge_depart_stop_after_sec: 0.5                         # 离桩到位后停车等待时间，单位 s
     recognizer_trigger_service: /inventory/trigger_recognition          # 可选识别器触发服务名；用于手动控制识别流程
@@ -385,8 +384,8 @@ mission_manager_node:
     post_gap_detect_advance_timeout_sec: 40.0                           # 检测后额外前进超时，单位 s；调大会允许更慢完成对齐
 
     finish_return_mode: auto_charge                                     # 任务全部完成后的动作；auto_charge 启动自动回充，map_origin 导航到 map 零点
-    between_side_auto_charge_wait_sec: 10.0                             # 跨侧自动回充到位/开始充电后继续等待时间，单位 s
-    between_side_auto_charge_runtime_sec: 120.0                         # 无可读到位状态时的跨侧自动回充固定运行 fallback 时间，单位 s
+    between_side_auto_charge_wait_sec: 30.0                             # 跨侧自动回充到位/开始充电后继续等待时间，单位 s
+    between_side_auto_charge_runtime_sec: 240.0                         # 无可读到位状态时的跨侧自动回充固定运行 fallback 时间，单位 s
     home_pose_frame_id: map                                             # 回零点目标坐标系；通常使用 map
     home_pose_x: 0.0                                                    # 回零点 x 坐标，单位 m
     home_pose_y: 0.0                                                    # 回零点 y 坐标，单位 m
@@ -534,7 +533,7 @@ mission_manager_node:
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
     full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
-    full_inventory_same_side_recognition_delay_distance_m: 1.2          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
+    full_inventory_same_side_recognition_delay_distance_m: 1.0          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
