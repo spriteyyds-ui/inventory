@@ -7,8 +7,8 @@ from pathlib import Path
 ROBOT_ID = "car-001"
 
 # Java backend URLs. Replace Java backend IP before deployment.
-JAVA_STATUS_URL = "https://172.26.130.75:8099/RobotInspection/errorReport"
-JAVA_RESULT_URL = "https://172.26.130.75:8099/RobotInspection/inventoryAudit"
+JAVA_STATUS_URL = "https://192.168.8.31:8099/RobotInspection/errorReport"
+JAVA_RESULT_URL = "https://192.168.8.31:8099/RobotInspection/inventoryAudit"
 
 # Set to False when Java uses a self-signed or otherwise untrusted HTTPS certificate.
 JAVA_VERIFY_TLS = False

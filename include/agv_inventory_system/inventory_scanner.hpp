@@ -21,10 +21,8 @@ struct InventoryScannerConfig
   std::string rfid_serial_device{"/dev/ttyUSB0"};
   int rfid_serial_baud{9600};
   double rfid_scan_duration_sec{5.0};
-  std::string rfid_frame_header{"1100EE00"};
-  int rfid_frame_length{18};
-  int rfid_epc_offset{4};
-  int rfid_epc_length{12};
+  int rfid_frame_min_length{8};
+  int rfid_frame_max_length{64};
 };
 
 enum class InventoryScanOutputSource
@@ -85,8 +83,8 @@ private:
   Clock::time_point start_time_{};
   InventoryScanOutput last_output_;
   std::vector<unsigned char> active_report_serial_buffer_;
-  std::vector<std::string> active_report_serial_epcs_;
-  std::set<std::string> active_report_serial_seen_epcs_;
+  std::vector<std::string> active_report_serial_rfids_;
+  std::set<std::string> active_report_serial_seen_rfids_;
 };
 
 }  // namespace agv_inventory_system
