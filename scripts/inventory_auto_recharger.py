@@ -27,11 +27,14 @@ from visualization_msgs.msg import MarkerArray
 
 
 PI = 3.1415926535897
+ROBOT_MODEL = "S200_diff"
+DOCKING_CHARGEFLAG = 1
 
 
 class InventoryAutoRecharger(Node):
     def __init__(self):
         super().__init__("inventory_auto_recharger")
+        self.robot_model = ROBOT_MODEL
 
         self.start_service_name = self.declare_parameter(
             "start_service_name", "/inventory/auto_recharge/start").value
@@ -56,7 +59,7 @@ class InventoryAutoRecharger(Node):
         self.cancel_charge_disconnect_poll_interval_sec = float(self.declare_parameter(
             "cancel_charge_disconnect_poll_interval_sec", 0.05).value)
         self.recharge_depart_enabled = bool(self.declare_parameter(
-            "recharge_depart_enabled", True).value)
+            "recharge_depart_enabled", False).value)
         self.recharge_depart_speed_mps = float(self.declare_parameter(
             "recharge_depart_speed_mps", 0.04).value)
         self.recharge_depart_duration_sec = float(self.declare_parameter(
@@ -75,13 +78,8 @@ class InventoryAutoRecharger(Node):
         self.charger_pose_z = float(self.declare_parameter("charger_pose_z", -0.121433301285056).value)
         self.charger_pose_w = float(self.declare_parameter("charger_pose_w", 0.9925995936625266).value)
         self.robot["BatteryCapacity"] = int(self.declare_parameter("robot_BatteryCapacity", 20000).value)
-        self.robot["car_mode"] = self.declare_parameter("car_mode", "senior_akm").value
         self.diff_point = float(self.declare_parameter("diff_point", 1.2).value)
         self.diff_angle = float(self.declare_parameter("diff_angle", -15.0).value)
-        if self.robot["car_mode"][0:4] != "mini":
-            self.robot["Type"] = "Plus"
-        else:
-            self.robot["Type"] = "Mini"
 
         self.nav_controller = BasicNavigator()
 
@@ -132,14 +130,12 @@ class InventoryAutoRecharger(Node):
         self.get_logger().info("盘库自动回充节点已启动，等待 /inventory/auto_recharge/start 请求。")
 
     robot = {
-        "Type": "Plus",
         "BatteryCapacity": 5000,
         "Voltage": 25.0,
         "Charging": 0,
         "Charging_current": 0.0,
         "RED": 0,
         "Rotation_Z": 0.0,
-        "car_mode": "mini_mec",
     }
 
     nav_end_z = 0.0
@@ -192,43 +188,30 @@ class InventoryAutoRecharger(Node):
         self.publish_zero_velocity()
         self.publish_status()
 
-        cleanup_ok = self.shutdown_chassis_recharge_mode("取消自动回充")
+        cleanup_ok = self.shutdown_chassis_recharge_mode(
+            "取消自动回充",
+            max_callcount=1,
+            timeout_sec=min(max(0.1, self.set_charge_timeout_sec), 0.5))
 
         if not was_running:
             with self.state_lock:
                 self.stop_requested = False
                 self.cancel_requested = False
 
+        self.publish_zero_velocity()
+        self.publish_recharge_flag_value(0)
+        with self.state_lock:
+            self.cancel_cleanup_in_progress = False
+            self.cancel_response_finalized = True
+        self.set_status("CANCELED")
+        response.success = True
         if cleanup_ok:
-            with self.state_lock:
-                self.cancel_cleanup_in_progress = False
-                self.cancel_response_finalized = True
-            self.set_status("CANCELED")
-            response.success = True
-            if self.last_set_charge_zero_ok:
-                response.message = "取消自动回充成功，已离桩并释放充电状态"
-            else:
-                response.message = (
-                    "取消自动回充 best-effort 成功，已离桩并释放充电状态，"
-                    "但 /set_charge=0 曾失败，请现场复核底盘状态")
-        elif self.set_charge_cancel_strict and self.is_charging_or_recharge_release_pending():
-            with self.state_lock:
-                self.cancel_cleanup_in_progress = False
-                self.cancel_response_finalized = True
-            self.set_status("FAILED")
-            response.success = False
-            response.message = self.cancel_cleanup_failure_message()
+            response.message = "取消自动回充请求已处理完成，底层回充控制已请求停止。"
         else:
-            self.publish_zero_velocity()
-            self.publish_recharge_flag_value(0)
-            with self.state_lock:
-                self.cancel_cleanup_in_progress = False
-                self.cancel_response_finalized = True
-            self.set_status("CANCELED")
-            response.success = True
             response.message = (
-                "取消自动回充 best-effort 成功，当前已非回充/充电状态。")
-        self.get_logger().info(response.message)
+                "取消自动回充请求已处理完成，set_charge_stop_failed，"
+                "底盘可能仍处于自动贴桩模式，请由 mission_manager 执行离桩并现场复核。")
+        self.get_logger().info("cancel service response returned: %s" % response.message)
         return response
 
     def timer_callback(self):
@@ -342,12 +325,14 @@ class InventoryAutoRecharger(Node):
         self.get_logger().error("Nav2 未激活，无法启动自动回充，请确认导航系统已启动。")
         return False
 
-    def set_charge_mode(self, value, max_callcount=None):
+    def set_charge_mode(self, value, max_callcount=None, timeout_sec=None, retry_sleep_sec=0.5):
         if max_callcount is None:
             max_callcount = self.set_charge_retry_count
         max_callcount = max(1, int(max_callcount))
         self.get_logger().info("准备调用 /set_charge，value=%s。" % value)
-        timeout_sec = max(0.1, self.set_charge_timeout_sec)
+        if timeout_sec is None:
+            timeout_sec = self.set_charge_timeout_sec
+        timeout_sec = max(0.1, float(timeout_sec))
         if not self.set_charge.wait_for_service(timeout_sec=timeout_sec):
             self.get_logger().error(
                 "/set_charge 调用失败，底盘可能未进入自动贴桩模式。"
@@ -377,7 +362,8 @@ class InventoryAutoRecharger(Node):
                 self.get_logger().warn(
                     "/set_charge 第 %d 次调用等待响应超时，value=%s。" %
                     (call_index + 1, value))
-            time.sleep(0.5)
+            if call_index + 1 < max_callcount:
+                time.sleep(max(0.0, retry_sleep_sec))
         self.get_logger().error(
             "/set_charge 调用失败，底盘可能未进入自动贴桩模式。"
             "已重试 %d 次，value=%s。" % (max_callcount, value))
@@ -386,16 +372,18 @@ class InventoryAutoRecharger(Node):
     def publish_recharger_flag(self, set_velflag=0):
         with self.charge_control_lock:
             if set_velflag == 1:
+                self.chargeflag = DOCKING_CHARGEFLAG
                 topic = Int8()
-                topic.data = int(self.chargeflag)
+                topic.data = self.chargeflag
                 self.get_logger().info(
-                    "发布 robot_recharge_flag，car_mode=%s，chargeflag=%d。" %
-                    (self.robot["car_mode"], self.chargeflag))
+                    "发布 robot_recharge_flag：robot_model=%s，"
+                    "robot_recharge_flag_value=%d。" %
+                    (self.robot_model, topic.data))
                 for _ in range(10):
                     self.recharger_flag_pub.publish(topic)
             self.get_logger().info(
-                "准备设置底盘自动贴桩模式：car_mode=%s，/set_charge=%d。" %
-                (self.robot["car_mode"], self.chargeflag))
+                "准备设置底盘自动贴桩模式：robot_model=%s，set_charge_value=%d。" %
+                (self.robot_model, self.chargeflag))
             return self.set_charge_mode(self.chargeflag)
 
     def publish_recharge_flag_value(self, value, repeat_count=10):
@@ -403,109 +391,6 @@ class InventoryAutoRecharger(Node):
         topic.data = int(value)
         for _ in range(repeat_count):
             self.recharger_flag_pub.publish(topic)
-
-    def wait_for_charging_flag_clear(self):
-        return self.wait_for_charging_flag_clear_with_timeout(
-            self.wait_charging_clear_timeout_sec)
-
-    def wait_for_charging_flag_clear_with_timeout(self, timeout_sec):
-        timeout_sec = max(0.0, timeout_sec)
-        if self.robot["Charging"] != 1:
-            return True
-
-        self.get_logger().info(
-            "等待 robot_charging_flag=false，timeout=%.2fs。" % timeout_sec)
-        deadline = time.monotonic() + timeout_sec
-        while rclpy.ok() and time.monotonic() < deadline:
-            if self.robot["Charging"] != 1:
-                self.get_logger().info("robot_charging_flag 已变为 false。")
-                return True
-            time.sleep(0.1)
-        return self.robot["Charging"] != 1
-
-    def wait_for_cancel_disconnect_grace(self, reason):
-        wait_sec = max(0.0, self.cancel_charge_disconnect_wait_sec)
-        poll_sec = self.cancel_charge_disconnect_poll_interval_sec
-        if not math.isfinite(poll_sec) or poll_sec <= 0.0:
-            poll_sec = 0.05
-        poll_sec = max(0.01, min(poll_sec, 0.5))
-
-        if self.robot["Charging"] != 1:
-            self.get_logger().info("%s：取消判定前 robot_charging_flag 已为 false。" % reason)
-            return True
-
-        self.get_logger().info(
-            "%s：开始等待 robot_charging_flag=false 宽限窗口，timeout=%.2fs，poll=%.2fs。"
-            % (reason, wait_sec, poll_sec))
-        deadline = time.monotonic() + wait_sec
-        while rclpy.ok() and time.monotonic() < deadline:
-            if self.robot["Charging"] != 1:
-                self.get_logger().info("取消自动回充成功：等待后检测到充电连接已断开。")
-                return True
-            time.sleep(poll_sec)
-
-        if self.robot["Charging"] != 1:
-            self.get_logger().info("取消自动回充成功：等待后检测到充电连接已断开。")
-            return True
-        self.get_logger().error(
-            "%s：等待 %.2fs 后 robot_charging_flag 仍为 true，才判定取消失败。"
-            % (reason, wait_sec))
-        return False
-
-    def execute_recharge_depart_motion(self, reason):
-        if self.robot["Charging"] != 1:
-            self.get_logger().info("%s：robot_charging_flag=false，跳过离桩动作。" % reason)
-            return True
-        if not self.recharge_depart_enabled:
-            self.get_logger().warn("%s：离桩动作未启用，仅等待 robot_charging_flag 释放。" % reason)
-            return False
-
-        speed = self.recharge_depart_speed_mps
-        if not math.isfinite(speed) or abs(speed) <= 1e-4:
-            self.get_logger().error("recharge_depart_speed_mps 非法，无法执行离桩动作: %.3f" % speed)
-            return False
-
-        duration_sec = max(0.0, self.recharge_depart_duration_sec)
-        timeout_sec = max(0.1, self.recharge_depart_timeout_sec)
-        run_sec = min(duration_sec, timeout_sec)
-        if run_sec <= 0.0:
-            self.get_logger().warn("%s：离桩持续时间为 0，跳过离桩动作。" % reason)
-            return False
-
-        self.get_logger().warn(
-            "%s：robot_charging_flag still true, execute recharge depart motion，"
-            "speed=%.3f m/s，duration=%.2fs，timeout=%.2fs，configured_distance=%.2fm。"
-            % (reason, speed, duration_sec, timeout_sec, self.recharge_depart_distance_m))
-        self.get_logger().info(
-            "inventory_auto_recharger 当前使用 timed depart；"
-            "recharge_depart_distance_m 作为现场调参记录，里程闭环可后续接入。")
-        self.get_logger().warn(
-            "recharge_depart_speed_mps 保留正负号；系统原生 E/e 使用 linear.x=+0.1，"
-            "若现场方向相反请在 YAML 改为负值。")
-
-        deadline = time.monotonic() + run_sec
-        publish_period_sec = 0.1
-        try:
-            while rclpy.ok() and time.monotonic() < deadline:
-                if self.robot["Charging"] != 1:
-                    self.get_logger().info("离桩过程中 robot_charging_flag 已变为 false。")
-                    return True
-                cmd = Twist()
-                cmd.linear.x = speed
-                self.cmd_vel_pub.publish(cmd)
-                self.publish_recharge_flag_value(0, repeat_count=1)
-                time.sleep(publish_period_sec)
-            return self.robot["Charging"] != 1
-        finally:
-            self.publish_zero_velocity()
-            self.publish_recharge_flag_value(0)
-
-    def cancel_cleanup_failure_message(self):
-        if self.robot["Charging"] == 1:
-            if self.last_set_charge_zero_ok:
-                return "取消自动回充失败，离桩后 robot_charging_flag 仍为 true"
-            return "取消自动回充失败，/set_charge=0 失败且离桩后 robot_charging_flag 仍为 true"
-        return "/set_charge=0 取消失败，底盘可能仍处于自动贴桩模式，请现场确认。"
 
     def charger_pose(self):
         nav_goal = PoseStamped()
@@ -598,80 +483,67 @@ class InventoryAutoRecharger(Node):
     def stop_charge(self):
         self.shutdown_chassis_recharge_mode("停止自动回充")
 
-    def shutdown_chassis_recharge_mode(self, reason):
+    def shutdown_chassis_recharge_mode(self, reason, max_callcount=None, timeout_sec=None):
+        self.get_logger().info("%s：cancel request received。" % reason)
         self.cancel_nav_goal()
+        self.get_logger().info("%s：cancel nav task done / skipped。" % reason)
         self.publish_zero_velocity()
+        self.get_logger().info("%s：publish cmd_vel zero。" % reason)
         with self.charge_control_lock:
-            charging_was_active = self.robot["Charging"] == 1
             self.lost_power_once = 1
             self.chargeflag = 0
             self.last_set_charge_zero_ok = False
             self.get_logger().info(
-                "%s：已发布 /cmd_vel=0，chargeflag=0，准备调用 /set_charge=0。" % reason)
-            set_charge_ok = self.set_charge_mode(0, max_callcount=self.set_charge_retry_count)
+                "%s：chargeflag=0，准备短等待调用 /set_charge=0。" % reason)
+            self.publish_recharge_flag_value(0)
+            self.get_logger().info("%s：publish robot_recharge_flag=0。" % reason)
+            set_charge_ok = self.set_charge_mode(
+                0,
+                max_callcount=max_callcount,
+                timeout_sec=timeout_sec,
+                retry_sleep_sec=0.0)
             self.last_set_charge_zero_ok = set_charge_ok
             self.get_logger().info(
-                "%s：/set_charge=0 调用结果=%s，当前 robot_charging_flag=%s。" %
+                "%s：/set_charge=0 result=%s，当前 robot_charging_flag=%s。" %
                 (reason, "success" if set_charge_ok else "failed",
                  "true" if self.robot["Charging"] == 1 else "false"))
-            self.publish_recharge_flag_value(0)
-            self.get_logger().info("%s：已发布 robot_recharge_flag=0。" % reason)
             if not set_charge_ok:
-                self.get_logger().error(
-                    "/set_charge=0 调用失败，底盘可能仍处于自动贴桩模式，请现场确认。")
-                if self.robot["Charging"] == 1 and not self.recharge_depart_require_set_charge_success:
-                    self.get_logger().warn(
-                        "/set_charge=0 failed, attempt depart motion because "
-                        "robot_charging_flag is still true")
-                elif self.recharge_depart_require_set_charge_success:
-                    self.publish_zero_velocity()
-                    return False
-            if self.robot["Charging"] == 1:
-                self.execute_recharge_depart_motion(reason)
+                self.get_logger().warn(
+                    "%s：set_charge_stop_failed，取消服务将快速返回，离桩由 mission_manager 负责。"
+                    % reason)
             else:
-                self.get_logger().info("%s：robot_charging_flag=false，无需执行离桩动作。" % reason)
-
-            charging_clear = self.wait_for_charging_flag_clear_with_timeout(
-                self.recharge_depart_wait_charging_clear_sec)
-            if not charging_clear:
-                charging_clear = self.wait_for_cancel_disconnect_grace(reason)
-            if not charging_clear:
-                self.get_logger().error(
-                    "%s：robot_charging_flag 仍为 true，底盘可能仍处于充电/贴桩状态。" % reason)
-            elif reason == "取消自动回充":
-                if set_charge_ok:
-                    self.get_logger().info("已取消自动回充流程，已离桩并释放充电状态。")
-                else:
-                    self.get_logger().warn(
-                        "已离桩并释放充电状态，/set_charge=0 曾失败，按离桩状态判定 cancel 成功。")
-            else:
-                self.get_logger().info("%s：已关闭底盘回充模式，充电状态已释放。" % reason)
-            if set_charge_ok:
-                return charging_clear
-            return charging_clear and self.chargeflag == 0 and (
-                not charging_was_active or not self.recharge_depart_require_set_charge_success)
+                self.get_logger().info("%s：底层回充控制停止请求已发送。" % reason)
+            self.publish_zero_velocity()
+            self.publish_recharge_flag_value(0)
+            return set_charge_ok
 
     def start_docking_by_red_signal(self, reason="发现红外信号"):
         with self.charge_control_lock:
             if self.should_stop_recharge():
                 self.get_logger().warn("%s，但已收到取消请求，不再开启底盘自动贴桩模式。" % reason)
                 return
-            if "akm" in self.robot["car_mode"]:
-                self.chargeflag = 2
-            else:
-                self.chargeflag = 1
+            self.chargeflag = DOCKING_CHARGEFLAG
             self.get_logger().info(
-                "%s，开始底盘自动贴桩/回充：car_mode=%s，RED=%d，chargeflag=%d，/set_charge=%d。" %
-                (reason, self.robot["car_mode"], self.robot["RED"], self.chargeflag, self.chargeflag))
+                "%s，开始底盘自动贴桩/回充：robot_model=%s，RED=%d；"
+                "当前仅支持 S200_diff，旧车型兼容已移除。" %
+                (
+                    reason,
+                    self.robot_model,
+                    self.robot["RED"],
+                ))
+            self.get_logger().info(
+                "S200_diff 自动贴桩参数：selected_chargeflag=%d，"
+                "set_charge_value=%d，robot_recharge_flag_value=%d。" %
+                (
+                    self.chargeflag,
+                    self.chargeflag,
+                    DOCKING_CHARGEFLAG,
+                ))
             self.set_status("DOCKING")
             self.publish_recharger_flag(1)
 
     def battery_percent(self):
-        if self.robot["Type"] == "Plus":
-            return (self.robot["Voltage"] - 20.0) / 5.0
-        if self.robot["Type"] == "Mini":
-            return (self.robot["Voltage"] - 10.0) / 2.5
-        return 0.0
+        return (self.robot["Voltage"] - 20.0) / 5.0
 
     def recharge_estimate_text(self):
         percent = self.battery_percent()
@@ -702,21 +574,28 @@ class InventoryAutoRecharger(Node):
 
     def log_recharge_start_context(self):
         self.get_logger().info(
-            "自动回充流程启动信息：car_mode=%s，BatteryCapacity=%d mAh，Voltage=%.2f V，"
-            "Charging=%d，Charging_Current=%.2f A，chargeflag=%d，"
+            "自动回充流程启动信息：robot_model=%s，BatteryCapacity=%d mAh，Voltage=%.2f V，"
+            "Charging=%d，Charging_Current=%.2f A，当前仅支持 S200_diff，旧车型兼容已移除，"
             "charger_goal[x=%.3f, y=%.3f, z=%.6f, w=%.6f, frame=%s]。" %
             (
-                self.robot["car_mode"],
+                self.robot_model,
                 self.robot["BatteryCapacity"],
                 self.robot["Voltage"],
                 self.robot["Charging"],
                 self.robot["Charging_current"],
-                self.chargeflag,
                 self.charger_pose_x,
                 self.charger_pose_y,
                 self.charger_pose_z,
                 self.charger_pose_w,
                 self.nav_goal_frame,
+            ))
+        self.get_logger().info(
+            "S200_diff 自动回充参数：selected_chargeflag=%d，"
+            "set_charge_value=%d，robot_recharge_flag_value=%d。" %
+            (
+                DOCKING_CHARGEFLAG,
+                DOCKING_CHARGEFLAG,
+                DOCKING_CHARGEFLAG,
             ))
 
     def log_charging_status(self):
@@ -736,11 +615,11 @@ class InventoryAutoRecharger(Node):
     def log_waiting_for_charging_status(self):
         self.get_logger().warn(
             "已进入自动贴桩/回充模式，但尚未检测到充电状态，请检查红外、充电触点、"
-            "/set_charge 和底盘回充模式。当前 RED=%d，car_mode=%s，chargeflag=%d，"
+            "/set_charge 和底盘回充模式。当前 RED=%d，robot_model=%s，chargeflag=%d，"
             "Voltage=%.2f V，Charging_Current=%.2f A。" %
             (
                 self.robot["RED"],
-                self.robot["car_mode"],
+                self.robot_model,
                 self.chargeflag,
                 self.robot["Voltage"],
                 self.robot["Charging_current"],
@@ -751,8 +630,7 @@ class InventoryAutoRecharger(Node):
             self.last_charge_complete = self.charge_complete
             self.charge_complete = 0
             return False
-        if ((self.robot["Type"] == "Plus" and self.robot["Voltage"] > 25) or
-                (self.robot["Type"] == "Mini" and self.robot["Voltage"] > 12.5)):
+        if self.robot["Voltage"] > 25:
             self.charge_complete += 1
         else:
             self.charge_complete = 0
@@ -797,8 +675,9 @@ class InventoryAutoRecharger(Node):
                             self.get_logger().info("自动回充导航任务完成：已到达充电桩导航目标。")
                             if self.robot["RED"] == 1:
                                 self.get_logger().info(
-                                    "已到达充电桩预停点，当前 RED=%d，car_mode=%s，准备开启底盘贴桩模式。" %
-                                    (self.robot["RED"], self.robot["car_mode"]))
+                                    "已到达充电桩预停点，当前 RED=%d，robot_model=%s，"
+                                    "准备开启底盘贴桩模式。" %
+                                    (self.robot["RED"], self.robot_model))
                                 self.start_docking_by_red_signal("已到达充电桩预停点并发现红外信号")
                             else:
                                 self.get_logger().warn("未发现红外信号，开始自转寻找。")

@@ -42,7 +42,7 @@ ACTION_CANCEL_MISSION = "停止/中断盘库"
 ACTION_SAFE_EXIT_GAP = "停止并退出缝隙"
 ACTION_RETURN_HOME = "回地图零点"
 ACTION_RETURN_TO_CHARGE = "启动自动回充"
-ACTION_CANCEL_AUTO_RECHARGE = "取消自动回充"
+ACTION_CANCEL_AUTO_RECHARGE = "停止充电并离桩"
 ACTION_STOP_AUTO_CHARGE_AND_DEPART = "停止自动充电并离桩"
 
 AUTO_RECHARGE_STATUS_TEXT = {
@@ -868,8 +868,8 @@ class InventoryOperationGuiApp:
     def request_cancel_auto_recharge(self):
         self.send_trigger_request(
             ACTION_CANCEL_AUTO_RECHARGE,
-            self.node.cancel_auto_recharge_client,
-            self.node.cancel_auto_recharge_service_name)
+            self.node.stop_auto_charge_and_depart_client,
+            self.node.stop_auto_charge_and_depart_service_name)
 
     def request_stop_auto_charge_and_depart(self):
         self.send_trigger_request(
@@ -1391,7 +1391,8 @@ class InventoryOperationGuiApp:
             else self.tk.DISABLED)
         self.cancel_auto_recharge_button.configure(
             state=self.tk.NORMAL
-            if self.node.cancel_auto_recharge_client.service_is_ready() and not cancel_auto_recharge_pending
+            if self.node.stop_auto_charge_and_depart_client.service_is_ready() and
+            not cancel_auto_recharge_pending
             else self.tk.DISABLED)
         self.stop_auto_charge_and_depart_button.configure(
             state=self.tk.NORMAL
