@@ -348,10 +348,8 @@ public:
     rfid_serial_device_ = declare_parameter<std::string>("rfid_serial_device", "/dev/ttyUSB0");
     rfid_serial_baud_ = declare_parameter<int>("rfid_serial_baud", 9600);
     rfid_scan_duration_sec_ = declare_parameter<double>("rfid_scan_duration_sec", 5.0);
-    rfid_frame_header_ = declare_parameter<std::string>("rfid_frame_header", "1100EE00");
-    rfid_frame_length_ = declare_parameter<int>("rfid_frame_length", 18);
-    rfid_epc_offset_ = declare_parameter<int>("rfid_epc_offset", 4);
-    rfid_epc_length_ = declare_parameter<int>("rfid_epc_length", 12);
+    rfid_frame_min_length_ = declare_parameter<int>("rfid_frame_min_length", 8);
+    rfid_frame_max_length_ = declare_parameter<int>("rfid_frame_max_length", 64);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -1684,10 +1682,9 @@ private:
     scanner_config.rfid_serial_device = rfid_serial_device_;
     scanner_config.rfid_serial_baud = rfid_serial_baud_;
     scanner_config.rfid_scan_duration_sec = std::max(0.1, rfid_scan_duration_sec_);
-    scanner_config.rfid_frame_header = rfid_frame_header_;
-    scanner_config.rfid_frame_length = std::max(1, rfid_frame_length_);
-    scanner_config.rfid_epc_offset = std::max(0, rfid_epc_offset_);
-    scanner_config.rfid_epc_length = std::max(0, rfid_epc_length_);
+    scanner_config.rfid_frame_min_length = std::max(8, rfid_frame_min_length_);
+    scanner_config.rfid_frame_max_length =
+      std::max(scanner_config.rfid_frame_min_length, rfid_frame_max_length_);
     inventory_scanner_.configure(scanner_config);
 
     lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
@@ -1845,8 +1842,8 @@ private:
       get_logger(),
       "RFID上传配置: enabled=%s url=%s verify_tls=%s timeout=%.2f retry_count=%d fail_policy=%s "
       "require_success=%s reader_enabled=%s reader_mode=%s "
-      "serial_device=%s serial_baud=%d serial_scan_duration=%.2f frame_header=%s "
-      "frame_length=%d epc_offset=%d epc_length=%d local_log=%s local_log_path=%s "
+      "serial_device=%s serial_baud=%d serial_scan_duration=%.2f frame_id=00EE00 "
+      "frame_min_length=%d frame_max_length=%d local_log=%s local_log_path=%s "
       "local_log_summary=%s status_path=%s",
       rfid_upload_enabled_ ? "true" : "false",
       rfid_upload_url_.c_str(),
@@ -1860,10 +1857,8 @@ private:
       rfid_serial_device_.empty() ? "<empty>" : rfid_serial_device_.c_str(),
       rfid_serial_baud_,
       rfid_scan_duration_sec_,
-      rfid_frame_header_.empty() ? "<empty>" : rfid_frame_header_.c_str(),
-      rfid_frame_length_,
-      rfid_epc_offset_,
-      rfid_epc_length_,
+      rfid_frame_min_length_,
+      rfid_frame_max_length_,
       rfid_local_log_enabled_ ? "true" : "false",
       rfid_local_log_path_.empty() ? "<empty>" : rfid_local_log_path_.c_str(),
       rfid_local_log_write_batch_summary_ ? "true" : "false",
@@ -11350,10 +11345,8 @@ private:
   std::string rfid_serial_device_{"/dev/ttyUSB0"};
   int rfid_serial_baud_{9600};
   double rfid_scan_duration_sec_{5.0};
-  std::string rfid_frame_header_{"1100EE00"};
-  int rfid_frame_length_{18};
-  int rfid_epc_offset_{4};
-  int rfid_epc_length_{12};
+  int rfid_frame_min_length_{8};
+  int rfid_frame_max_length_{64};
   PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
   int plc_open_wait_target_cabinet_{-1};
   bool plc_open_wait_required_{false};

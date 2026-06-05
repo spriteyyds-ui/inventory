@@ -453,10 +453,8 @@ mission_manager_node:
     rfid_serial_device: "/dev/ttyUSB0"                                  # PL2303 RFID 读写器串口；不要配置为 /dev/ttyCH341USB0 继电器串口
     rfid_serial_baud: 9600                                              # RFID 串口波特率；当前硬件 9600 8N1 无流控
     rfid_scan_duration_sec: 5.0                                         # 单个格位主动上报读取窗口，单位 s；无 EPC 也继续盘库流程
-    rfid_frame_header: "1100EE00"                                      # 主动上报帧头；仅接受 11 00 EE 00
-    rfid_frame_length: 18                                               # 主动上报帧长度，单位 byte
-    rfid_epc_offset: 4                                                  # EPC 起始位置；最新实测为 frame[4:16]
-    rfid_epc_length: 12                                                 # EPC 长度，单位 byte；尾部 frame[16:18] 仅记录日志
+    rfid_frame_min_length: 8                                            # 变长主动上报帧最小长度；frame_len=frame[0]+1，RFID=frame[4:-2]
+    rfid_frame_max_length: 64                                           # 变长主动上报帧最大长度；固定标识为 frame[1:4] == 00 EE 00
     scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
     scan_duration_sec: 5.0                                              # 单次扫描动作持续时间，单位 s；主动串口模式建议与 rfid_scan_duration_sec 一致
     scan_timeout_sec: 5.0                                               # 等待扫描完成超时，单位 s；调大会允许扫描设备更慢返回

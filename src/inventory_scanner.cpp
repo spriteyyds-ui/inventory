@@ -1,7 +1,6 @@
 #include "agv_inventory_system/inventory_scanner.hpp"
 
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
@@ -35,38 +34,6 @@ std::string bytes_to_hex_string(
     oss << std::setw(2) << static_cast<int>(data[i]);
   }
   return oss.str();
-}
-
-bool hex_string_to_bytes(const std::string & text, std::vector<unsigned char> & bytes)
-{
-  std::string compact;
-  compact.reserve(text.size());
-  for (const unsigned char ch : text) {
-    if (std::isxdigit(ch) != 0) {
-      compact.push_back(static_cast<char>(std::toupper(ch)));
-    } else if (std::isspace(ch) != 0 || ch == ':' || ch == '-') {
-      continue;
-    } else {
-      return false;
-    }
-  }
-
-  if (compact.empty() || compact.size() % 2U != 0U) {
-    return false;
-  }
-
-  bytes.clear();
-  bytes.reserve(compact.size() / 2U);
-  for (std::size_t i = 0; i < compact.size(); i += 2U) {
-    const std::string byte_text = compact.substr(i, 2U);
-    char * end = nullptr;
-    const long value = std::strtol(byte_text.c_str(), &end, 16);
-    if (end == nullptr || *end != '\0' || value < 0 || value > 0xff) {
-      return false;
-    }
-    bytes.push_back(static_cast<unsigned char>(value));
-  }
-  return true;
 }
 
 bool serial_device_is_reserved_for_relay(const std::string & device_path)
@@ -124,9 +91,9 @@ void InventoryScanner::configure(const InventoryScannerConfig & config)
   config_.scan_retry_count = std::max(0, config_.scan_retry_count);
   config_.scan_result_timeout_sec = std::max(0.0, config_.scan_result_timeout_sec);
   config_.rfid_reader_mode = normalize_reader_mode(config_.rfid_reader_mode);
-  config_.rfid_frame_length = std::max(1, config_.rfid_frame_length);
-  config_.rfid_epc_offset = std::max(0, config_.rfid_epc_offset);
-  config_.rfid_epc_length = std::max(0, config_.rfid_epc_length);
+  config_.rfid_frame_min_length = std::max(8, config_.rfid_frame_min_length);
+  config_.rfid_frame_max_length =
+    std::max(config_.rfid_frame_min_length, config_.rfid_frame_max_length);
 }
 
 const InventoryScannerConfig & InventoryScanner::config() const
@@ -261,27 +228,8 @@ bool InventoryScanner::start_active_report_serial_reader(std::string & error_mes
 {
   close_active_report_serial_device();
   active_report_serial_buffer_.clear();
-  active_report_serial_epcs_.clear();
-  active_report_serial_seen_epcs_.clear();
-
-  std::vector<unsigned char> header;
-  if (!hex_string_to_bytes(config_.rfid_frame_header, header)) {
-    error_message = "invalid rfid_frame_header=" + config_.rfid_frame_header;
-    return false;
-  }
-  if (config_.rfid_frame_length < static_cast<int>(header.size())) {
-    error_message = "rfid_frame_length shorter than rfid_frame_header";
-    return false;
-  }
-  if (config_.rfid_epc_length <= 0 ||
-    config_.rfid_epc_offset < 0 ||
-    config_.rfid_epc_offset + config_.rfid_epc_length > config_.rfid_frame_length)
-  {
-    error_message = "invalid EPC slice offset=" + std::to_string(config_.rfid_epc_offset) +
-      " length=" + std::to_string(config_.rfid_epc_length) +
-      " frame_length=" + std::to_string(config_.rfid_frame_length);
-    return false;
-  }
+  active_report_serial_rfids_.clear();
+  active_report_serial_seen_rfids_.clear();
   if (config_.rfid_serial_device.empty()) {
     error_message = "rfid_serial_device is empty";
     return false;
@@ -317,9 +265,9 @@ bool InventoryScanner::start_active_report_serial_reader(std::string & error_mes
   std::cout << "[scanner][RFID][active_report_serial] opened path="
             << config_.rfid_serial_device
             << " baud=" << config_.rfid_serial_baud
-            << " frame_length=" << config_.rfid_frame_length
-            << " epc_offset=" << config_.rfid_epc_offset
-            << " epc_length=" << config_.rfid_epc_length
+            << " frame_id=00EE00"
+            << " frame_min_length=" << config_.rfid_frame_min_length
+            << " frame_max_length=" << config_.rfid_frame_max_length
             << " duration_sec=" << config_.rfid_scan_duration_sec << std::endl;
   return true;
 }
@@ -433,44 +381,65 @@ bool InventoryScanner::poll_active_report_serial_once(std::string & error_messag
 
 void InventoryScanner::parse_active_report_serial_buffer()
 {
-  std::vector<unsigned char> header;
-  if (!hex_string_to_bytes(config_.rfid_frame_header, header) || header.empty()) {
-    active_report_serial_buffer_.clear();
-    return;
-  }
+  constexpr unsigned char kFrameId0 = 0x00;
+  constexpr unsigned char kFrameId1 = 0xEE;
+  constexpr unsigned char kFrameId2 = 0x00;
+  const std::size_t min_frame_length = static_cast<std::size_t>(config_.rfid_frame_min_length);
+  const std::size_t max_frame_length = static_cast<std::size_t>(config_.rfid_frame_max_length);
 
-  const std::size_t frame_length = static_cast<std::size_t>(config_.rfid_frame_length);
-  const std::size_t epc_offset = static_cast<std::size_t>(config_.rfid_epc_offset);
-  const std::size_t epc_length = static_cast<std::size_t>(config_.rfid_epc_length);
+  while (active_report_serial_buffer_.size() >= 4U) {
+    std::size_t candidate_pos = active_report_serial_buffer_.size();
+    for (std::size_t i = 0; i + 3U < active_report_serial_buffer_.size(); ++i) {
+      if (active_report_serial_buffer_[i + 1U] == kFrameId0 &&
+        active_report_serial_buffer_[i + 2U] == kFrameId1 &&
+        active_report_serial_buffer_[i + 3U] == kFrameId2)
+      {
+        candidate_pos = i;
+        break;
+      }
+    }
 
-  while (active_report_serial_buffer_.size() >= header.size()) {
-    auto header_pos = std::search(
-      active_report_serial_buffer_.begin(),
-      active_report_serial_buffer_.end(),
-      header.begin(),
-      header.end());
-
-    if (header_pos == active_report_serial_buffer_.end()) {
-      const std::size_t keep = std::min(header.size() - 1U, active_report_serial_buffer_.size());
-      if (keep > 0U) {
+    if (candidate_pos == active_report_serial_buffer_.size()) {
+      const std::size_t keep = std::min<std::size_t>(3U, active_report_serial_buffer_.size());
+      if (active_report_serial_buffer_.size() > keep) {
         active_report_serial_buffer_.erase(
           active_report_serial_buffer_.begin(),
           active_report_serial_buffer_.end() - static_cast<std::ptrdiff_t>(keep));
-      } else {
-        active_report_serial_buffer_.clear();
       }
       return;
     }
 
-    if (header_pos != active_report_serial_buffer_.begin()) {
-      active_report_serial_buffer_.erase(active_report_serial_buffer_.begin(), header_pos);
+    if (candidate_pos > 0U) {
+      active_report_serial_buffer_.erase(
+        active_report_serial_buffer_.begin(),
+        active_report_serial_buffer_.begin() + static_cast<std::ptrdiff_t>(candidate_pos));
+    }
+
+    if (active_report_serial_buffer_.size() < 4U) {
+      return;
+    }
+
+    const std::size_t frame_length =
+      static_cast<std::size_t>(active_report_serial_buffer_[0]) + 1U;
+    if (frame_length < min_frame_length || frame_length > max_frame_length) {
+      std::cout << "[scanner][RFID][active_report_serial] WARNING invalid frame_length="
+                << frame_length
+                << " min=" << min_frame_length
+                << " max=" << max_frame_length
+                << " drop_len_byte="
+                << bytes_to_hex_string(active_report_serial_buffer_.data(), 1U) << std::endl;
+      active_report_serial_buffer_.erase(active_report_serial_buffer_.begin());
+      continue;
     }
 
     if (active_report_serial_buffer_.size() < frame_length) {
       return;
     }
 
-    if (epc_offset + epc_length > frame_length) {
+    const std::size_t rfid_length = frame_length - 6U;
+    if (rfid_length == 0U) {
+      std::cout << "[scanner][RFID][active_report_serial] WARNING empty RFID payload"
+                << " frame_length=" << frame_length << std::endl;
       active_report_serial_buffer_.erase(
         active_report_serial_buffer_.begin(),
         active_report_serial_buffer_.begin() + static_cast<std::ptrdiff_t>(frame_length));
@@ -478,21 +447,19 @@ void InventoryScanner::parse_active_report_serial_buffer()
     }
 
     const unsigned char * frame = active_report_serial_buffer_.data();
-    const std::string epc = bytes_to_hex_string(frame + epc_offset, epc_length);
-    const std::size_t tail_offset = frame_length >= 2U ? frame_length - 2U : frame_length;
-    const std::size_t tail_length = frame_length - tail_offset;
-    const std::string tail =
-      tail_length > 0U ? bytes_to_hex_string(frame + tail_offset, tail_length) : "";
-    const bool inserted = active_report_serial_seen_epcs_.insert(epc).second;
+    const std::string rfid = bytes_to_hex_string(frame + 4U, rfid_length);
+    const std::string tail = bytes_to_hex_string(frame + frame_length - 2U, 2U);
+    const bool inserted = active_report_serial_seen_rfids_.insert(rfid).second;
     if (inserted) {
-      active_report_serial_epcs_.push_back(epc);
+      active_report_serial_rfids_.push_back(rfid);
     }
 
     std::cout << "[scanner][RFID][active_report_serial] frame cabinet=" << cabinet_id_
               << " level=" << level_
               << " column=" << column_
-              << " epc=" << epc
-              << " tail_check_not_epc=" << tail
+              << " frame_len=" << frame_length
+              << " rfid=" << rfid
+              << " tail_check_not_rfid=" << tail
               << " duplicate=" << (inserted ? "false" : "true") << std::endl;
 
     active_report_serial_buffer_.erase(
@@ -513,7 +480,7 @@ void InventoryScanner::finish_active_report_serial_scan(
 
   std::vector<std::string> rfids;
   if (reader_ok) {
-    rfids = active_report_serial_epcs_;
+    rfids = active_report_serial_rfids_;
   }
 
   std::ostringstream result;
@@ -560,8 +527,8 @@ void InventoryScanner::reset_active_report_serial_reader()
   close_active_report_serial_device();
   active_report_serial_active_ = false;
   active_report_serial_buffer_.clear();
-  active_report_serial_epcs_.clear();
-  active_report_serial_seen_epcs_.clear();
+  active_report_serial_rfids_.clear();
+  active_report_serial_seen_rfids_.clear();
 }
 
 void InventoryScanner::clear_scan_output()
