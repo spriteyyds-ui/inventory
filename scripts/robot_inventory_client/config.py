@@ -26,8 +26,15 @@ FASTAPI_PORT = 8000
 # ROS2 mission-manager bridge configuration.
 ROS_START_MISSION_SERVICE = "/inventory/start_mission"
 ROS_MISSION_STATE_TOPIC = "/inventory/mission_state"
+ROS_AUTO_RECHARGE_STATUS_TOPIC = "/inventory/auto_recharge/status"
+ROS_CHARGING_FLAG_TOPIC = "robot_charging_flag"
+ROS_RECHARGE_FLAG_TOPIC = "robot_recharge_flag"
+ROS_STOP_AUTO_CHARGE_AND_DEPART_SERVICE = "/inventory/stop_auto_charge_and_depart"
 ROS_SERVICE_WAIT_TIMEOUT_SECONDS = 10
 ROS_SERVICE_CALL_TIMEOUT_SECONDS = 30
+ROS_RECHARGE_STATUS_SAMPLE_TIMEOUT_SECONDS = 2
+ROS_RECHARGE_DEPART_WAIT_TIMEOUT_SECONDS = 90
+ROS_RECHARGE_POLL_INTERVAL_SECONDS = 0.2
 # 0 means wait indefinitely. V0 uses a long timeout to avoid hanging forever on failures.
 ROS_MISSION_TIMEOUT_SECONDS = 4 * 60 * 60
 

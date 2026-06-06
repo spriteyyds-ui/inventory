@@ -419,8 +419,8 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: false                                             # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
-    plc_server_url: "https://172.26.130.75:8099"                        # 当前 Java/PLC HTTP 服务地址
+    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_server_url: "https://192.168.8.31:8099"                         # 当前 Java/PLC HTTP 服务地址
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
     plc_open_query_param: "shelfId"                                     # 当前 Java/PLC 开柜参数名；最终请求为 endpoint?shelfId=<柜号>
@@ -437,12 +437,12 @@ mission_manager_node:
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
 
-    rfid_upload_enabled: false                                         # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
-    rfid_upload_url: "https://172.26.130.75/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
+    rfid_upload_enabled: true                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
+    rfid_upload_url: "https://192.168.8.31:8099/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
     rfid_upload_verify_tls: false                                       # RFID HTTPS 上传是否校验证书；false 等效 curl -k，仅影响 RFID POST
-    rfid_upload_timeout_sec: 3.0                                        # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
-    rfid_upload_retry_count: 2                                          # RFID 上传失败后的重试次数，单位 次
-    rfid_upload_fail_policy: "continue_without_upload"                                    # RFID 上传失败策略：error 或 continue_without_upload
+    rfid_upload_timeout_sec: 60.0                                       # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
+    rfid_upload_retry_count: 10                                         # RFID 上传失败后的重试次数，单位 次
+    rfid_upload_fail_policy: "error"                                    # RFID 上传失败策略：error 或 continue_without_upload
     rfid_local_log_enabled: true                                        # 是否追加保存本地 RFID/扫码 JSONL 记录；写入失败只告警不影响盘库
     rfid_local_log_path: "/home/wheeltec/wheeltec_ros2/rfid_scan_logs/rfid_scan_records.jsonl" # 正式盘库扫码本地记录文件；运行时自动创建父目录
     rfid_local_log_write_batch_summary: true                            # 是否记录最终批量上传 prepare/success/failed/skipped summary
@@ -520,9 +520,9 @@ mission_manager_node:
     same_side_search_speed: 0.10                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
     same_side_search_timeout_sec: 40.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
     same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
-    same_side_left_fixed_y_m: 0.660                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_left_fixed_y_m: 0.732                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_left_fixed_yaw_rad: -3.1400                               # 左/上排同侧搜索保持的航向，单位 rad；改动会改变车头方向
-    same_side_right_fixed_y_m: -0.360                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_right_fixed_y_m: -0.639                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_right_fixed_yaw_rad: -3.1400                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
     same_side_yaw_kp: 0.80                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
     same_side_yaw_deadband_rad: 0.03                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
@@ -584,7 +584,7 @@ inventory_operation_gui:
     lift_stop_service_name: /lift/stop                                  # GUI 停止按钮调用服务
     lift_all_off_service_name: /lift/all_off                            # GUI 全关按钮调用服务
     lift_manual_duration_sec: 5.0                                       # GUI 上升/下降固定点动时间，单位 s
-    robot_api_status_url: "http://172.26.130.75:8000/status"                # GUI 轮询网页接收/上传状态接口
-    robot_api_health_url: "http://172.26.130.75:8000/health"                # /status 不可用时的健康检查兜底接口
+    robot_api_status_url: "http://192.168.8.31:8000/status"                # GUI 轮询网页接收/上传状态接口
+    robot_api_health_url: "http://192.168.8.31:8000/health"                # /status 不可用时的健康检查兜底接口
     robot_api_poll_interval_ms: 2000                                    # GUI 轮询网页接收服务状态周期，单位 ms
     robot_api_request_timeout_sec: 0.5                                  # GUI 单次 HTTP 状态请求超时，单位 s；保持较短避免卡界面
