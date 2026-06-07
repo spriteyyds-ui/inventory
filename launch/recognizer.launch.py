@@ -50,7 +50,7 @@ def generate_launch_description():
             'camera_name': 'c100_right',
             'image_width': 640,
             'image_height': 480,
-            'framerate': 30.0,
+            'framerate': 15.0,
             'pixel_format': 'mjpeg2rgb',
         }],
         remappings=[
@@ -69,7 +69,7 @@ def generate_launch_description():
             'camera_name': 'c100_left',
             'image_width': 640,
             'image_height': 480,
-            'framerate': 30.0,
+            'framerate': 15.0,
             'pixel_format': 'mjpeg2rgb',
         }],
         remappings=[

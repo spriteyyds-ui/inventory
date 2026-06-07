@@ -140,7 +140,7 @@ number_recognizer_node:
     circle_marker_debug_log_enabled: true                               # 圆形标靶失败或无效时是否打印提取和分类诊断；开启便于定位 num=? conf=0
     circle_marker_use_color: false                                      # 圆形标靶第一版是否使用颜色信息；false 表示仅使用灰度结构识别
     circle_marker_panel_gaussian_kernel: 5                              # marker panel 检测高斯模糊核尺寸，单位 px；通常取奇数
-    circle_marker_panel_morph_kernel_size: 5                            # marker panel 检测形态学闭运算核尺寸，单位 px
+    circle_marker_panel_morph_kernel_size: 7                            # marker panel 检测形态学闭运算核尺寸，单位 px
     circle_marker_panel_min_area_ratio: 0.01                            # marker panel 候选面积占整图面积的最小比例
     circle_marker_panel_max_area_ratio: 0.90                            # marker panel 候选面积占整图面积的最大比例
     circle_marker_panel_approx_epsilon: 0.02                            # marker panel 四边形轮廓拟合精度比例
@@ -419,7 +419,7 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_http_enabled: false                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
     plc_server_url: "https://192.168.8.31:8099"                         # 当前 Java/PLC HTTP 服务地址
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
@@ -437,12 +437,12 @@ mission_manager_node:
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
 
-    rfid_upload_enabled: true                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
+    rfid_upload_enabled: false                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
     rfid_upload_url: "https://192.168.8.31:8099/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
     rfid_upload_verify_tls: false                                       # RFID HTTPS 上传是否校验证书；false 等效 curl -k，仅影响 RFID POST
     rfid_upload_timeout_sec: 60.0                                       # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
     rfid_upload_retry_count: 10                                         # RFID 上传失败后的重试次数，单位 次
-    rfid_upload_fail_policy: "error"                                    # RFID 上传失败策略：error 或 continue_without_upload
+    rfid_upload_fail_policy: "continue_without_upload"                                    # RFID 上传失败策略：error 或 continue_without_upload
     rfid_local_log_enabled: true                                        # 是否追加保存本地 RFID/扫码 JSONL 记录；写入失败只告警不影响盘库
     rfid_local_log_path: "/home/wheeltec/wheeltec_ros2/rfid_scan_logs/rfid_scan_records.jsonl" # 正式盘库扫码本地记录文件；运行时自动创建父目录
     rfid_local_log_write_batch_summary: true                            # 是否记录最终批量上传 prepare/success/failed/skipped summary
@@ -522,7 +522,7 @@ mission_manager_node:
     same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
     same_side_left_fixed_y_m: 0.732                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_left_fixed_yaw_rad: -3.1400                               # 左/上排同侧搜索保持的航向，单位 rad；改动会改变车头方向
-    same_side_right_fixed_y_m: -0.639                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_right_fixed_y_m: -0.764                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_right_fixed_yaw_rad: -3.1400                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
     same_side_yaw_kp: 0.80                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
     same_side_yaw_deadband_rad: 0.03                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
@@ -531,7 +531,15 @@ mission_manager_node:
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
     full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
-    full_inventory_same_side_recognition_delay_distance_m: 1.0          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
+    full_inventory_same_side_recognition_delay_distance_m: 0.8          # 同侧搜索开始后延迟采信识别的行驶距离，单位 m；达到后恢复原识别逻辑
+    rear_target_handling_enabled: true                                  # 同一 physical_units 内下一个目标需要从后方搜索时是否启用后方目标处理
+    rear_target_handle_mode: "hold_entry_yaw_backup"                    # 后方目标处理方式；保持 entry_turn_start_yaw，不做 180 度掉头
+    rear_target_turn_yaw_tolerance_rad: 0.08                             # 后方目标 yaw 微调收敛阈值，单位 rad；调小更准但耗时更久
+    rear_target_turn_timeout_sec: 10.0                                   # 后方目标 yaw 微调超时，单位 s；超时进入全量盘库 ERROR
+    rear_target_backup_enabled: true                                     # yaw 微调后是否倒车固定距离，再进入同侧搜索
+    rear_target_backup_distance_m: 1.50                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
+    rear_target_backup_speed: 0.08                                       # 后方目标倒车速度，单位 m/s；低速保证现场安全
+    rear_target_backup_timeout_sec: 30.0                                 # 后方目标倒车超时，单位 s；1.5m/0.08m/s 约 18.75s
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错

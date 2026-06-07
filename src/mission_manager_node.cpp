@@ -479,6 +479,22 @@ public:
       declare_parameter<bool>("full_inventory_same_side_recognition_delay_enabled", true);
     full_inventory_same_side_recognition_delay_distance_m_ =
       declare_parameter<double>("full_inventory_same_side_recognition_delay_distance_m", 1.0);
+    rear_target_handling_enabled_ =
+      declare_parameter<bool>("rear_target_handling_enabled", true);
+    rear_target_handle_mode_ =
+      declare_parameter<std::string>("rear_target_handle_mode", "hold_entry_yaw_backup");
+    rear_target_turn_yaw_tolerance_rad_ =
+      declare_parameter<double>("rear_target_turn_yaw_tolerance_rad", 0.08);
+    rear_target_turn_timeout_sec_ =
+      declare_parameter<double>("rear_target_turn_timeout_sec", 10.0);
+    rear_target_backup_enabled_ =
+      declare_parameter<bool>("rear_target_backup_enabled", true);
+    rear_target_backup_distance_m_ =
+      declare_parameter<double>("rear_target_backup_distance_m", 1.50);
+    rear_target_backup_speed_ =
+      declare_parameter<double>("rear_target_backup_speed", 0.08);
+    rear_target_backup_timeout_sec_ =
+      declare_parameter<double>("rear_target_backup_timeout_sec", 30.0);
     full_inventory_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_final_recognition_wait_sec", 5.0);
     full_inventory_recognition_fallback_enabled_ =
@@ -786,6 +802,8 @@ private:
     FULL_INVENTORY_IN_GAP_SCAN,
     FULL_INVENTORY_EXIT_GAP,
     FULL_INVENTORY_ADVANCE_NEXT_TARGET,
+    FULL_INVENTORY_REAR_TARGET_REORIENT,
+    FULL_INVENTORY_REAR_TARGET_BACKUP,
     FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
     FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
     FULL_INVENTORY_COMPLETE,
@@ -819,6 +837,7 @@ private:
     SINGLE_CABINET_PREPARE_NAV,
     FULL_INVENTORY_START_ROUTE,
     FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
+    FULL_INVENTORY_REAR_TARGET_REORIENT,
     FULL_INVENTORY_ADVANCE_ROUTE,
     FULL_INVENTORY_BETWEEN_SIDE_ROUTE,
   };
@@ -1079,6 +1098,10 @@ private:
         return "FULL_INVENTORY_EXIT_GAP";
       case State::FULL_INVENTORY_ADVANCE_NEXT_TARGET:
         return "FULL_INVENTORY_ADVANCE_NEXT_TARGET";
+      case State::FULL_INVENTORY_REAR_TARGET_REORIENT:
+        return "FULL_INVENTORY_REAR_TARGET_REORIENT";
+      case State::FULL_INVENTORY_REAR_TARGET_BACKUP:
+        return "FULL_INVENTORY_REAR_TARGET_BACKUP";
       case State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
         return "FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH";
       case State::FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES:
@@ -1099,6 +1122,8 @@ private:
         return "FULL_INVENTORY_START_ROUTE";
       case PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
         return "FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH";
+      case PlcOpenContinuation::FULL_INVENTORY_REAR_TARGET_REORIENT:
+        return "FULL_INVENTORY_REAR_TARGET_REORIENT";
       case PlcOpenContinuation::FULL_INVENTORY_ADVANCE_ROUTE:
         return "FULL_INVENTORY_ADVANCE_ROUTE";
       case PlcOpenContinuation::FULL_INVENTORY_BETWEEN_SIDE_ROUTE:
@@ -1214,6 +1239,21 @@ private:
     return "auto_charge";
   }
 
+  static std::string normalize_rear_target_handle_mode(std::string mode)
+  {
+    mode = agv_inventory_system::trim(mode);
+    std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
+      return static_cast<char>(std::tolower(c));
+    });
+    if (mode == "hold_entry_yaw_backup" || mode == "hold_entry_yaw") {
+      return "hold_entry_yaw_backup";
+    }
+    if (mode == "turn_around") {
+      return "hold_entry_yaw_backup";
+    }
+    return "hold_entry_yaw_backup";
+  }
+
   static std::string normalize_plc_fail_policy(std::string policy)
   {
     policy = agv_inventory_system::trim(policy);
@@ -1309,6 +1349,20 @@ private:
   double apply_exit_motion_direction(double speed_abs) const
   {
     return -apply_entry_motion_direction(speed_abs);
+  }
+
+  static std::string exit_motion_label_from_linear_cmd(double linear_cmd)
+  {
+    if (!std::isfinite(linear_cmd)) {
+      return "unknown";
+    }
+    if (linear_cmd > 1e-4) {
+      return "straight_forward";
+    }
+    if (linear_cmd < -1e-4) {
+      return "straight_reverse";
+    }
+    return "straight_stop";
   }
 
   static bool try_parse_search_direction(std::string direction, SearchDirection & parsed)
@@ -1694,6 +1748,19 @@ private:
     plc_retry_count_ = std::max(0, plc_retry_count_);
     plc_open_wait_sec_ = std::max(0.0, plc_open_wait_sec_);
     plc_fail_policy_ = normalize_plc_fail_policy(plc_fail_policy_);
+    rear_target_handle_mode_ = normalize_rear_target_handle_mode(rear_target_handle_mode_);
+    rear_target_turn_yaw_tolerance_rad_ =
+      std::max(0.001, std::abs(rear_target_turn_yaw_tolerance_rad_));
+    rear_target_turn_timeout_sec_ = std::max(0.1, rear_target_turn_timeout_sec_);
+    rear_target_backup_distance_m_ =
+      std::max(0.0, std::isfinite(rear_target_backup_distance_m_) ?
+      std::abs(rear_target_backup_distance_m_) : 1.50);
+    rear_target_backup_speed_ =
+      std::max(0.0, std::isfinite(rear_target_backup_speed_) ?
+      std::abs(rear_target_backup_speed_) : 0.08);
+    rear_target_backup_timeout_sec_ =
+      std::max(0.1, std::isfinite(rear_target_backup_timeout_sec_) ?
+      rear_target_backup_timeout_sec_ : 30.0);
     rfid_upload_timeout_sec_ = std::max(0.1, rfid_upload_timeout_sec_);
     rfid_upload_retry_count_ = std::max(0, rfid_upload_retry_count_);
     rfid_upload_fail_policy_ = normalize_rfid_upload_fail_policy(rfid_upload_fail_policy_);
@@ -1898,6 +1965,8 @@ private:
       "left_fixed_y=%.3f left_fixed_yaw=%.4f right_fixed_y=%.3f right_fixed_yaw=%.4f "
       "yaw_kp=%.3f yaw_deadband=%.3f y_kp=%.3f y_deadband=%.3f "
       "y_sign=%.1f max_angular=%.3f recognition_delay=%s delay_distance=%.2f "
+      "rear_target=%s rear_mode=%s rear_turn_tolerance=%.3f rear_turn_timeout=%.2f "
+      "rear_backup=%s rear_backup_distance=%.2f rear_backup_speed=%.3f rear_backup_timeout=%.2f "
       "final_recognition_wait=%.2f "
       "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
       "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
@@ -1924,6 +1993,14 @@ private:
       full_inventory_same_side_max_angular_,
       full_inventory_same_side_recognition_delay_enabled_ ? "true" : "false",
       full_inventory_same_side_recognition_delay_distance_m_,
+      rear_target_handling_enabled_ ? "true" : "false",
+      rear_target_handle_mode_.c_str(),
+      rear_target_turn_yaw_tolerance_rad_,
+      rear_target_turn_timeout_sec_,
+      rear_target_backup_enabled_ ? "true" : "false",
+      rear_target_backup_distance_m_,
+      rear_target_backup_speed_,
+      rear_target_backup_timeout_sec_,
       full_inventory_final_recognition_wait_sec_,
       full_inventory_recognition_fallback_enabled_ ? "true" : "false",
       full_inventory_recognition_fallback_speed_,
@@ -2229,6 +2306,108 @@ private:
       reason = "解析仓库布局配置失败: " + std::string(ex.what());
       return false;
     }
+  }
+
+  bool find_physical_unit_for_cabinet(
+    int cabinet_id,
+    std::vector<int> & physical_unit,
+    std::string & side,
+    std::size_t * unit_index_out = nullptr) const
+  {
+    physical_unit.clear();
+    side.clear();
+    for (const auto & row_item : warehouse_rows_by_side_) {
+      const auto & units = row_item.second.physical_units;
+      for (std::size_t unit_index = 0; unit_index < units.size(); ++unit_index) {
+        const auto & unit = units[unit_index];
+        if (std::find(unit.begin(), unit.end(), cabinet_id) == unit.end()) {
+          continue;
+        }
+        physical_unit = unit;
+        side = row_item.first;
+        if (unit_index_out != nullptr) {
+          *unit_index_out = unit_index;
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool cabinets_in_same_physical_unit(
+    int first_cabinet,
+    int second_cabinet,
+    std::vector<int> & physical_unit,
+    std::string & side) const
+  {
+    physical_unit.clear();
+    side.clear();
+    std::size_t first_unit_index = 0;
+    if (!find_physical_unit_for_cabinet(first_cabinet, physical_unit, side, &first_unit_index)) {
+      return false;
+    }
+
+    std::vector<int> second_unit;
+    std::string second_side;
+    std::size_t second_unit_index = 0;
+    if (!find_physical_unit_for_cabinet(
+        second_cabinet,
+        second_unit,
+        second_side,
+        &second_unit_index))
+    {
+      return false;
+    }
+
+    return side == second_side && first_unit_index == second_unit_index;
+  }
+
+  bool should_use_rear_target_handling(
+    int finished_cabinet,
+    int next_target_cabinet,
+    std::string & reason)
+  {
+    reason.clear();
+    std::vector<int> physical_unit;
+    std::string physical_side;
+    bool same_physical_unit = false;
+    if (!warehouse_layout_loaded_) {
+      std::string load_reason;
+      warehouse_layout_loaded_ = load_warehouse_layout_config(load_reason);
+      if (!warehouse_layout_loaded_) {
+        reason = "warehouse_layout_load_failed: " + load_reason;
+      }
+    }
+    if (warehouse_layout_loaded_) {
+      same_physical_unit = cabinets_in_same_physical_unit(
+        finished_cabinet,
+        next_target_cabinet,
+        physical_unit,
+        physical_side);
+    }
+
+    bool use_rear_target = false;
+    if (!rear_target_handling_enabled_) {
+      reason = "rear_target_disabled";
+    } else if (!same_physical_unit) {
+      reason = reason.empty() ? "not_same_physical_unit" : reason;
+    } else if (physical_unit.size() <= 1U) {
+      reason = "single_cabinet_physical_unit";
+    } else {
+      use_rear_target = true;
+      reason = "same_physical_unit_and_rear_search_from_entry_yaw";
+    }
+
+    publish_full_inventory_log(
+      "[rear_target] finished=" + std::to_string(finished_cabinet) +
+      " next=" + std::to_string(next_target_cabinet) +
+      " same_physical_unit=" + std::string(same_physical_unit ? "1" : "0") +
+      " physical_unit=" + cabinet_unit_to_string(physical_unit) +
+      " side=" + (physical_side.empty() ? "unknown" : physical_side) +
+      " enabled=" + std::string(rear_target_handling_enabled_ ? "1" : "0") +
+      " use_rear_target=" + std::string(use_rear_target ? "1" : "0") +
+      " reason=" + reason);
+    return use_rear_target;
   }
 
   bool resolve_current_gap_plan(std::string & reason)
@@ -5480,6 +5659,12 @@ private:
       case PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH:
         start_full_inventory_same_side_next_search();
         return;
+      case PlcOpenContinuation::FULL_INVENTORY_REAR_TARGET_REORIENT:
+        publish_plc_log(
+          "rear target PLC continuation target_cabinet=" + std::to_string(cabinet_id) +
+          " next=FULL_INVENTORY_REAR_TARGET_REORIENT");
+        start_full_inventory_rear_target_reorient();
+        return;
       case PlcOpenContinuation::FULL_INVENTORY_ADVANCE_ROUTE:
         (void)start_full_inventory_target_route("PLC open wait done, advance next target");
         return;
@@ -5581,6 +5766,51 @@ private:
     full_inventory_recognition_fallback_index_ = 0;
     full_inventory_post_gap_advance_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    clear_full_inventory_rear_target_context("reset_full_inventory_context");
+    clear_plc_open_wait_context();
+  }
+
+  void clear_full_inventory_rear_target_context(
+    const std::string & reason,
+    bool keep_last_exit_entry_yaw = false)
+  {
+    const bool had_context =
+      full_inventory_rear_target_pending_ ||
+      full_inventory_rear_target_active_ ||
+      full_inventory_same_side_heading_override_valid_ ||
+      full_inventory_gap_search_direction_override_valid_ ||
+      full_inventory_rear_target_backup_started_;
+    if (had_context) {
+      publish_full_inventory_log("[rear_target] clear rear target override reason=" + reason);
+    }
+    full_inventory_rear_target_pending_ = false;
+    full_inventory_rear_target_active_ = false;
+    full_inventory_rear_target_finished_cabinet_ = -1;
+    full_inventory_rear_target_next_cabinet_ = -1;
+    full_inventory_rear_target_yaw_ = 0.0;
+    full_inventory_rear_target_original_gap_direction_ = SearchDirection::FORWARD;
+    if (!keep_last_exit_entry_yaw) {
+      full_inventory_last_exit_entry_yaw_valid_ = false;
+      full_inventory_last_exit_entry_yaw_ = 0.0;
+    }
+    full_inventory_same_side_heading_override_valid_ = false;
+    full_inventory_same_side_heading_override_yaw_rad_ = 0.0;
+    full_inventory_gap_search_direction_override_valid_ = false;
+    full_inventory_gap_search_direction_override_ = SearchDirection::FORWARD;
+    full_inventory_rear_target_turn_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    full_inventory_rear_target_backup_started_ = false;
+    full_inventory_rear_target_backup_start_pose_ = Pose2D{};
+    full_inventory_rear_target_backup_fixed_y_ = 0.0;
+    full_inventory_rear_target_backup_start_time_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+  }
+
+  SearchDirection effective_gap_search_direction() const
+  {
+    return full_inventory_gap_search_direction_override_valid_ ?
+           full_inventory_gap_search_direction_override_ :
+           current_gap_plan_.search_direction;
   }
 
   void reset_between_side_auto_charge_runtime()
@@ -5829,6 +6059,7 @@ private:
 
   bool start_full_inventory_target_route(const std::string & context)
   {
+    clear_full_inventory_rear_target_context("start_full_inventory_target_route");
     mission_active_ = true;
     cancel_requested_ = false;
     target_visible_ = false;
@@ -5886,6 +6117,7 @@ private:
       full_inventory_sequence_.size() > 1U ? full_inventory_sequence_[1] : -1;
     mission_force_map_origin_on_finish_ = force_map_origin_on_finish;
     reset_between_side_auto_charge_runtime();
+    clear_full_inventory_rear_target_context("start_full_inventory_sequence");
     full_inventory_same_side_search_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     full_inventory_final_recognition_wait_start_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -5958,6 +6190,7 @@ private:
     clear_inventory_upload_batch("error");
     reset_single_cabinet_scan_runtime();
     reset_between_side_auto_charge_runtime();
+    clear_full_inventory_rear_target_context("fail_full_inventory");
     mission_error_reason_ = reason;
     set_flow_state(State::ERROR, "[FULL_INVENTORY] " + reason);
   }
@@ -6123,10 +6356,416 @@ private:
     }
   }
 
+  bool prepare_full_inventory_rear_target_context(
+    int finished_cabinet,
+    int next_target_cabinet,
+    std::string & reason)
+  {
+    reason.clear();
+    if (rear_target_handle_mode_ != "hold_entry_yaw_backup") {
+      reason = "unsupported rear_target_handle_mode=" + rear_target_handle_mode_;
+      return false;
+    }
+    if (!full_inventory_last_exit_entry_yaw_valid_ ||
+      !std::isfinite(full_inventory_last_exit_entry_yaw_))
+    {
+      reason =
+        "entry_turn_start_yaw_ invalid after exit, cannot derive rear target yaw safely";
+      return false;
+    }
+    if (!current_gap_plan_.valid) {
+      reason = "current_gap_plan invalid for rear target";
+      return false;
+    }
+
+    full_inventory_rear_target_pending_ = true;
+    full_inventory_rear_target_active_ = false;
+    full_inventory_rear_target_finished_cabinet_ = finished_cabinet;
+    full_inventory_rear_target_next_cabinet_ = next_target_cabinet;
+    full_inventory_rear_target_yaw_ = normalize_angle(full_inventory_last_exit_entry_yaw_);
+    full_inventory_rear_target_original_gap_direction_ = current_gap_plan_.search_direction;
+    full_inventory_same_side_heading_override_valid_ = true;
+    full_inventory_same_side_heading_override_yaw_rad_ = full_inventory_rear_target_yaw_;
+    full_inventory_gap_search_direction_override_valid_ = false;
+    full_inventory_gap_search_direction_override_ = SearchDirection::FORWARD;
+    full_inventory_rear_target_turn_start_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    full_inventory_rear_target_backup_started_ = false;
+    full_inventory_rear_target_backup_start_pose_ = Pose2D{};
+    full_inventory_rear_target_backup_fixed_y_ = 0.0;
+    full_inventory_rear_target_backup_start_time_ =
+      rclcpp::Time(0, 0, get_clock()->get_clock_type());
+
+    publish_full_inventory_log(
+      "[rear_target] prepare finished=" + std::to_string(finished_cabinet) +
+      " next=" + std::to_string(next_target_cabinet) +
+      " entry_turn_start_yaw=" + format_fixed(full_inventory_last_exit_entry_yaw_, 4) +
+      " rear_target_yaw=" + format_fixed(full_inventory_rear_target_yaw_, 4) +
+      " handle_mode=" + rear_target_handle_mode_ +
+      " yaw_strategy=hold_entry_turn_start_yaw no_pi_flip=1 heading_override=1 " +
+      "gap_direction_override=0");
+    publish_full_inventory_log(
+      "[rear_target] yaw strategy: hold entry_turn_start_yaw entry_turn_start_yaw=" +
+      format_fixed(full_inventory_last_exit_entry_yaw_, 4) +
+      " rear_target_yaw=" + format_fixed(full_inventory_rear_target_yaw_, 4) +
+      " yaw_strategy=hold_entry_turn_start_yaw no_pi_flip=1");
+    publish_full_inventory_log(
+      "[rear_target] gap_search_direction keep original=" +
+      search_direction_to_string(full_inventory_rear_target_original_gap_direction_) +
+      " effective=" + search_direction_to_string(effective_gap_search_direction()) +
+      " override=0 reason=no_yaw_pi_flip_hold_entry_yaw");
+    return true;
+  }
+
+  void start_full_inventory_rear_target_reorient()
+  {
+    if (!full_inventory_rear_target_pending_) {
+      fail_full_inventory("rear target reorient requested without pending context");
+      return;
+    }
+    if (!full_inventory_last_exit_entry_yaw_valid_ ||
+      !std::isfinite(full_inventory_last_exit_entry_yaw_) ||
+      !std::isfinite(full_inventory_rear_target_yaw_))
+    {
+      fail_full_inventory("rear target yaw invalid, cannot reorient safely");
+      return;
+    }
+
+    publish_stop();
+    set_corridor_mode(false, false);
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+    set_distance_estimator_enabled(false, true);
+    set_gap_detector_enabled(false);
+    full_inventory_rear_target_turn_start_ = this->now();
+    full_inventory_rear_target_active_ = true;
+    publish_full_inventory_log(
+      "[rear_target] start reorient target=" +
+      std::to_string(full_inventory_rear_target_next_cabinet_) +
+      " entry_turn_start_yaw=" + format_fixed(full_inventory_last_exit_entry_yaw_, 4) +
+      " rear_target_yaw=" + format_fixed(full_inventory_rear_target_yaw_, 4) +
+      " tolerance=" + format_fixed(rear_target_turn_yaw_tolerance_rad_, 4) +
+      " timeout=" + format_seconds(rear_target_turn_timeout_sec_));
+    set_state(
+      State::FULL_INVENTORY_REAR_TARGET_REORIENT,
+      "[FULL_INVENTORY] rear target reorient target=" +
+      std::to_string(full_inventory_rear_target_next_cabinet_));
+  }
+
+  void handle_full_inventory_rear_target_reorient_state()
+  {
+    publish_entry_side();
+    set_corridor_mode(false, false);
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
+
+    if (!full_inventory_rear_target_pending_) {
+      publish_stop();
+      fail_full_inventory("rear target reorient state without pending context");
+      return;
+    }
+    if (full_inventory_rear_target_turn_start_.nanoseconds() == 0) {
+      full_inventory_rear_target_turn_start_ = this->now();
+    }
+
+    const Pose2D current = current_pose_2d();
+    if (!current.valid || !std::isfinite(current.yaw)) {
+      publish_stop();
+      fail_full_inventory("rear target reorient current pose/yaw invalid");
+      return;
+    }
+
+    Pose2D map_pose;
+    std::string tf_error;
+    if (!transform_pose_2d(current, nav2_goal_frame_, map_pose, tf_error)) {
+      publish_stop();
+      fail_full_inventory("rear target reorient map yaw transform failed: " + tf_error);
+      return;
+    }
+    if (!map_pose.valid || !std::isfinite(map_pose.yaw)) {
+      publish_stop();
+      fail_full_inventory("rear target reorient map yaw invalid");
+      return;
+    }
+
+    const double elapsed = (this->now() - full_inventory_rear_target_turn_start_).seconds();
+    const double timeout = std::max(0.1, rear_target_turn_timeout_sec_);
+    const double yaw_error = normalize_angle(full_inventory_rear_target_yaw_ - map_pose.yaw);
+    const double yaw_tolerance = std::max(0.001, rear_target_turn_yaw_tolerance_rad_);
+	    const bool turn_done = std::abs(yaw_error) <= yaw_tolerance;
+	    if (turn_done) {
+	      publish_stop();
+	      publish_full_inventory_log(
+	        "[rear_target_reorient] done target=" +
+	        std::to_string(full_inventory_rear_target_next_cabinet_) +
+	        " strategy=hold_entry_yaw entry_turn_start_yaw=" +
+	        format_fixed(full_inventory_last_exit_entry_yaw_, 4) +
+	        " rear_target_yaw=" + format_fixed(full_inventory_rear_target_yaw_, 4) +
+	        " current_yaw=" + format_fixed(map_pose.yaw, 4) +
+	        " yaw_error=" + format_fixed(yaw_error, 4) +
+	        " elapsed=" + format_seconds(elapsed) +
+	        " turn_done=1");
+	      start_full_inventory_rear_target_backup();
+	      return;
+	    }
+    if (elapsed >= timeout) {
+      publish_stop();
+      fail_full_inventory(
+        "rear target reorient timeout entry_turn_start_yaw=" +
+        format_fixed(full_inventory_last_exit_entry_yaw_, 4) +
+        " rear_target_yaw=" + format_fixed(full_inventory_rear_target_yaw_, 4) +
+        " current_yaw=" + format_fixed(map_pose.yaw, 4) +
+        " yaw_error=" + format_fixed(yaw_error, 4) +
+        " elapsed=" + format_seconds(elapsed) +
+        " timeout=" + format_seconds(timeout));
+      return;
+    }
+
+    const double turn_speed = std::isfinite(single_cabinet_exit_turn_angular_speed_) ?
+      std::abs(single_cabinet_exit_turn_angular_speed_) : 0.0;
+    if (turn_speed <= 1e-4) {
+      publish_stop();
+      fail_full_inventory("rear target reorient turn speed invalid");
+      return;
+    }
+
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = 0.0;
+    cmd.angular.z = yaw_hold_command(
+      full_inventory_rear_target_yaw_,
+      map_pose.yaw,
+      1.0,
+      turn_speed);
+    cmd_pub_->publish(cmd);
+	    RCLCPP_INFO_THROTTLE(
+	      get_logger(),
+	      *get_clock(),
+	      1000,
+	      "[mission_manager][FULL_INVENTORY][rear_target_reorient] target=%d "
+	      "strategy=hold_entry_yaw entry_turn_start_yaw=%.4f target_yaw=%.4f "
+	      "current_yaw=%.4f yaw_error=%.4f angular_cmd=%.3f elapsed=%.2f/%.2f "
+	      "turn_done=%s",
+	      full_inventory_rear_target_next_cabinet_,
+	      full_inventory_last_exit_entry_yaw_,
+	      full_inventory_rear_target_yaw_,
+	      map_pose.yaw,
+      yaw_error,
+      cmd.angular.z,
+      elapsed,
+	      timeout,
+	      turn_done ? "true" : "false");
+	  }
+
+	  bool current_rear_target_map_pose(Pose2D & map_pose, std::string & reason) const
+	  {
+	    map_pose = Pose2D{};
+	    reason.clear();
+
+	    const Pose2D current = current_pose_2d();
+	    if (!current.valid || !std::isfinite(current.x) || !std::isfinite(current.y) ||
+	      !std::isfinite(current.yaw))
+	    {
+	      reason = "current pose invalid";
+	      return false;
+	    }
+
+	    std::string tf_error;
+	    if (!transform_pose_2d(current, nav2_goal_frame_, map_pose, tf_error)) {
+	      reason = "map pose transform failed: " + tf_error;
+	      return false;
+	    }
+	    if (!map_pose.valid || !std::isfinite(map_pose.x) || !std::isfinite(map_pose.y) ||
+	      !std::isfinite(map_pose.yaw))
+	    {
+	      reason = "map pose invalid";
+	      return false;
+	    }
+	    return true;
+	  }
+
+	  void start_full_inventory_rear_target_backup()
+	  {
+	    if (!full_inventory_rear_target_pending_) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup requested without pending context");
+	      return;
+	    }
+	    if (!std::isfinite(full_inventory_rear_target_yaw_)) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup yaw invalid");
+	      return;
+	    }
+
+	    if (!rear_target_backup_enabled_ || rear_target_backup_distance_m_ <= 1e-4) {
+	      publish_stop();
+	      publish_full_inventory_log(
+	        "[rear_target_backup] disabled target=" +
+	        std::to_string(full_inventory_rear_target_next_cabinet_) +
+	        " enabled=" + std::string(rear_target_backup_enabled_ ? "1" : "0") +
+	        " distance=" + format_fixed(rear_target_backup_distance_m_, 2) +
+	        " next=FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH");
+	      start_full_inventory_same_side_next_search();
+	      return;
+	    }
+	    if (!std::isfinite(rear_target_backup_speed_) || rear_target_backup_speed_ <= 1e-4) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup speed invalid");
+	      return;
+	    }
+
+	    Pose2D map_pose;
+	    std::string pose_reason;
+	    if (!current_rear_target_map_pose(map_pose, pose_reason)) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup start pose invalid: " + pose_reason);
+	      return;
+	    }
+
+	    publish_stop();
+	    set_corridor_mode(false, false);
+	    request_recognizer_enable(false);
+	    set_recognizer_topic_enabled(false, true);
+	    set_distance_estimator_enabled(false, true);
+	    set_gap_detector_enabled(false);
+	    full_inventory_rear_target_backup_start_pose_ = map_pose;
+	    full_inventory_rear_target_backup_fixed_y_ = map_pose.y;
+	    full_inventory_rear_target_backup_start_time_ = this->now();
+	    full_inventory_rear_target_backup_started_ = true;
+	    full_inventory_rear_target_active_ = true;
+	    publish_full_inventory_log(
+	      "[rear_target_backup] start target=" +
+	      std::to_string(full_inventory_rear_target_next_cabinet_) +
+	      " start_x=" + format_fixed(map_pose.x, 3) +
+	      " start_y=" + format_fixed(map_pose.y, 3) +
+	      " start_yaw=" + format_fixed(map_pose.yaw, 4) +
+	      " backup_fixed_y=" + format_fixed(full_inventory_rear_target_backup_fixed_y_, 3) +
+	      " hold_yaw=" + format_fixed(full_inventory_rear_target_yaw_, 4) +
+	      " distance=" + format_fixed(rear_target_backup_distance_m_, 2) +
+	      " speed=" + format_fixed(rear_target_backup_speed_, 3) +
+	      " timeout=" + format_seconds(rear_target_backup_timeout_sec_));
+	    set_state(
+	      State::FULL_INVENTORY_REAR_TARGET_BACKUP,
+	      "[FULL_INVENTORY] rear target backup target=" +
+	      std::to_string(full_inventory_rear_target_next_cabinet_));
+	  }
+
+	  void handle_full_inventory_rear_target_backup_state()
+	  {
+	    publish_entry_side();
+	    set_corridor_mode(false, false);
+	    request_recognizer_enable(false);
+	    set_recognizer_topic_enabled(false);
+	    set_distance_estimator_enabled(false);
+	    set_gap_detector_enabled(false);
+
+	    if (!full_inventory_rear_target_pending_) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup state without pending context");
+	      return;
+	    }
+	    if (!full_inventory_rear_target_backup_started_ ||
+	      !full_inventory_rear_target_backup_start_pose_.valid)
+	    {
+	      publish_stop();
+	      fail_full_inventory("rear target backup start pose missing");
+	      return;
+	    }
+	    if (full_inventory_rear_target_backup_start_time_.nanoseconds() == 0) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup start time missing");
+	      return;
+	    }
+
+	    Pose2D map_pose;
+	    std::string pose_reason;
+	    if (!current_rear_target_map_pose(map_pose, pose_reason)) {
+	      publish_stop();
+	      fail_full_inventory("rear target backup current pose invalid: " + pose_reason);
+	      return;
+	    }
+
+	    const double dx = map_pose.x - full_inventory_rear_target_backup_start_pose_.x;
+	    const double dy = map_pose.y - full_inventory_rear_target_backup_start_pose_.y;
+	    const double traveled = std::hypot(dx, dy);
+	    const double target_distance = std::max(0.0, rear_target_backup_distance_m_);
+	    const double elapsed = (this->now() - full_inventory_rear_target_backup_start_time_).seconds();
+	    const double timeout = std::max(0.1, rear_target_backup_timeout_sec_);
+	    const double hold_yaw = normalize_angle(full_inventory_rear_target_yaw_);
+	    const double yaw_error = normalize_angle(hold_yaw - map_pose.yaw);
+	    const double y_error = full_inventory_rear_target_backup_fixed_y_ - map_pose.y;
+
+	    if (traveled >= target_distance) {
+	      publish_stop();
+	      publish_full_inventory_log(
+	        "[rear_target_backup] done target=" +
+	        std::to_string(full_inventory_rear_target_next_cabinet_) +
+	        " traveled=" + format_fixed(traveled, 2) +
+	        " next=FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH heading_override=" +
+	        std::string(full_inventory_same_side_heading_override_valid_ ? "1" : "0") +
+	        " final_search_yaw=" +
+	        format_fixed(full_inventory_same_side_heading_override_yaw_rad_, 4));
+	      start_full_inventory_same_side_next_search();
+	      return;
+	    }
+	    if (elapsed >= timeout) {
+	      publish_stop();
+	      fail_full_inventory(
+	        "rear target backup timeout target=" +
+	        std::to_string(full_inventory_rear_target_next_cabinet_) +
+	        " traveled=" + format_fixed(traveled, 2) +
+	        " target_distance=" + format_fixed(target_distance, 2) +
+	        " elapsed=" + format_seconds(elapsed) +
+	        " timeout=" + format_seconds(timeout));
+	      return;
+	    }
+
+	    const double linear_cmd = -std::abs(rear_target_backup_speed_);
+	    const double max_angular = std::isfinite(full_inventory_same_side_max_angular_) ?
+	      std::max(0.0, std::abs(full_inventory_same_side_max_angular_)) : 0.15;
+	    const double yaw_kp = std::isfinite(full_inventory_same_side_yaw_kp_) ?
+	      std::max(0.0, full_inventory_same_side_yaw_kp_) : 0.40;
+	    geometry_msgs::msg::Twist cmd;
+	    cmd.linear.x = linear_cmd;
+	    cmd.angular.z = yaw_hold_command(hold_yaw, map_pose.yaw, yaw_kp, max_angular);
+	    cmd_pub_->publish(cmd);
+
+	    RCLCPP_INFO_THROTTLE(
+	      get_logger(),
+	      *get_clock(),
+	      1000,
+	      "[mission_manager][FULL_INVENTORY][rear_target_backup] target=%d "
+	      "start=(%.2f,%.2f) current=(%.2f,%.2f) backup_fixed_y=%.2f y_error=%.2f "
+	      "traveled=%.2f/%.2f linear=%.3f hold_yaw=%.4f current_yaw=%.4f "
+	      "yaw_error=%.4f angular=%.3f elapsed=%.2f/%.2f",
+	      full_inventory_rear_target_next_cabinet_,
+	      full_inventory_rear_target_backup_start_pose_.x,
+	      full_inventory_rear_target_backup_start_pose_.y,
+	      map_pose.x,
+	      map_pose.y,
+	      full_inventory_rear_target_backup_fixed_y_,
+	      y_error,
+	      traveled,
+	      target_distance,
+	      cmd.linear.x,
+	      hold_yaw,
+	      map_pose.yaw,
+	      yaw_error,
+	      cmd.angular.z,
+	      elapsed,
+	      timeout);
+	  }
+
   void start_full_inventory_same_side_next_search()
   {
     full_inventory_same_side_search_start_ = this->now();
     select_full_inventory_same_side_pose_hold_target();
+    const double normal_fixed_yaw = full_inventory_same_side_active_fixed_yaw_rad_;
+    if (full_inventory_same_side_heading_override_valid_) {
+      full_inventory_same_side_active_fixed_yaw_rad_ =
+        normalize_angle(full_inventory_same_side_heading_override_yaw_rad_);
+    }
     std::string fixed_y_source = "config_fallback";
     std::string fixed_y_pose_note = "pose hold disabled";
     double fixed_y_start_current_y = std::numeric_limits<double>::quiet_NaN();
@@ -6164,6 +6803,11 @@ private:
         std::to_string(full_inventory_current_target_) +
         " map_side=" + full_inventory_same_side_active_map_side_ +
         " fixed_y=" + format_fixed(full_inventory_same_side_active_fixed_y_m_, 3) +
+        " use_heading_override=" +
+        std::string(full_inventory_same_side_heading_override_valid_ ? "true" : "false") +
+        " normal_fixed_yaw=" + format_fixed(normal_fixed_yaw, 4) +
+        " override_yaw=" +
+        format_fixed(full_inventory_same_side_heading_override_yaw_rad_, 4) +
         " fixed_yaw=" + format_fixed(full_inventory_same_side_active_fixed_yaw_rad_, 4) +
         " fixed_y_source=" + fixed_y_source +
         " start_current_y=" + format_fixed(fixed_y_start_current_y, 3) +
@@ -6282,8 +6926,9 @@ private:
         *get_clock(),
         1000,
         "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s speed=%.3f current_y=%.3f "
-        "fixed_y=%.3f y_error=%.3f current_yaw=%.4f fixed_yaw=%.4f yaw_error=%.4f "
-        "angular=%.3f elapsed=%.2f/%.2f pose=%s",
+        "fixed_y=%.3f y_error=%.3f current_yaw=%.4f fixed_yaw=%.4f "
+        "use_heading_override=%s override_yaw=%.4f final_search_yaw=%.4f "
+        "yaw_error=%.4f angular=%.3f elapsed=%.2f/%.2f pose=%s",
         current_target_cabinet_,
         full_inventory_same_side_active_map_side_.c_str(),
         cmd.linear.x,
@@ -6291,6 +6936,9 @@ private:
         full_inventory_same_side_active_fixed_y_m_,
         y_error,
         pose.yaw,
+        full_inventory_same_side_active_fixed_yaw_rad_,
+        full_inventory_same_side_heading_override_valid_ ? "true" : "false",
+        full_inventory_same_side_heading_override_yaw_rad_,
         full_inventory_same_side_active_fixed_yaw_rad_,
         yaw_error,
         cmd.angular.z,
@@ -6303,11 +6951,15 @@ private:
         *get_clock(),
         1000,
         "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s speed=%.3f angular=%.3f "
+        "use_heading_override=%s override_yaw=%.4f final_search_yaw=%.4f "
         "elapsed=%.2f/%.2f open_loop=true",
         current_target_cabinet_,
         full_inventory_same_side_active_map_side_.c_str(),
         cmd.linear.x,
         cmd.angular.z,
+        full_inventory_same_side_heading_override_valid_ ? "true" : "false",
+        full_inventory_same_side_heading_override_yaw_rad_,
+        full_inventory_same_side_active_fixed_yaw_rad_,
         elapsed,
         timeout);
     }
@@ -6639,6 +7291,7 @@ private:
 
     publish_full_inventory_log(
       "FULL_INVENTORY_IN_GAP_SCAN runtime finished cabinet=" + std::to_string(cabinet_id));
+    clear_full_inventory_rear_target_context("current target scan complete");
     set_state(
       State::FULL_INVENTORY_EXIT_GAP,
       "[FULL_INVENTORY] in-gap sequence finished, reverse exit gap cabinet=" +
@@ -6745,6 +7398,7 @@ private:
 
   void start_between_side_auto_charge(int next_target)
   {
+    clear_full_inventory_rear_target_context("start_between_side_auto_charge");
     reset_between_side_auto_charge_runtime();
     between_side_auto_charge_active_ = true;
     between_side_auto_charge_target_index_ = full_inventory_index_;
@@ -6770,6 +7424,7 @@ private:
 
   void continue_full_inventory_after_between_side_auto_charge()
   {
+    clear_full_inventory_rear_target_context("continue_after_between_side_auto_charge");
     if (between_side_auto_charge_target_index_ >= full_inventory_sequence_.size()) {
       fail_full_inventory("跨侧自动回充后 full_inventory_index 越界");
       return;
@@ -7009,19 +7664,43 @@ private:
     }
 
     if (same_side && full_inventory_same_side_next_search_enabled_) {
+      clear_full_inventory_rear_target_context("prepare same-side transition", true);
+      std::string rear_target_reason;
+      const bool use_rear_target =
+        should_use_rear_target_handling(finished_target, next_target, rear_target_reason);
+      PlcOpenContinuation continuation = PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH;
+      std::string context = "advance same-side next target before search";
+      if (use_rear_target) {
+        std::string rear_prepare_reason;
+        if (!prepare_full_inventory_rear_target_context(
+            finished_target,
+            next_target,
+            rear_prepare_reason))
+        {
+          fail_full_inventory("准备后方目标处理失败: " + rear_prepare_reason);
+          return;
+        }
+        continuation = PlcOpenContinuation::FULL_INVENTORY_REAR_TARGET_REORIENT;
+        context = "advance rear-target same physical unit before reorient";
+      }
       if (!begin_plc_open_wait_for_target(
           current_target_cabinet_,
-          PlcOpenContinuation::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
-          "advance same-side next target before search"))
+          continuation,
+          context))
       {
         return;
       }
       if (!plc_http_enabled_) {
-        start_full_inventory_same_side_next_search();
+        if (use_rear_target) {
+          start_full_inventory_rear_target_reorient();
+        } else {
+          start_full_inventory_same_side_next_search();
+        }
       }
       return;
     }
 
+    clear_full_inventory_rear_target_context("route restart or non same-side transition");
     publish_full_inventory_log(
       "next_target=" + std::to_string(next_target) +
       " route restart side=" + next_side);
@@ -8110,6 +8789,10 @@ private:
   {
     publish_stop();
     robot_inside_gap_ = false;
+    const bool finished_exit_entry_yaw_valid =
+      entry_turn_start_yaw_valid_ && std::isfinite(entry_turn_start_yaw_);
+    const double finished_exit_entry_yaw =
+      finished_exit_entry_yaw_valid ? normalize_angle(entry_turn_start_yaw_) : 0.0;
     reset_entry_gap_runtime();
     clear_safe_exit_gap_recovery_context();
     single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -8122,6 +8805,12 @@ private:
     }
 
     if (full_inventory_active_) {
+      full_inventory_last_exit_entry_yaw_valid_ = finished_exit_entry_yaw_valid;
+      full_inventory_last_exit_entry_yaw_ = finished_exit_entry_yaw;
+      publish_full_inventory_log(
+        "[rear_target] exit gap captured entry_turn_start_yaw_valid=" +
+        std::string(full_inventory_last_exit_entry_yaw_valid_ ? "1" : "0") +
+        " entry_turn_start_yaw=" + format_fixed(full_inventory_last_exit_entry_yaw_, 4));
       set_state(
         State::FULL_INVENTORY_ADVANCE_NEXT_TARGET,
         "[FULL_INVENTORY] exit gap finished, advance sequence");
@@ -8275,13 +8964,27 @@ private:
 
       if (traveled >= single_cabinet_exit_target_distance_) {
         publish_stop();
+        const double finished_exit_linear_cmd = apply_exit_motion_direction(speed);
+        const std::string exit_motion_label =
+          exit_motion_label_from_linear_cmd(finished_exit_linear_cmd);
         if (!single_cabinet_exit_turn_enabled_) {
           RCLCPP_INFO(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse only traveled=%.2f",
-            traveled);
+            "[mission_manager][single_cabinet][exit_gap] 出缝完成：%s only traveled=%.2f "
+            "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
+            "exit_motion_label=%s",
+            exit_motion_label.c_str(),
+            traveled,
+            entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+            finished_exit_linear_cmd,
+            finished_exit_linear_cmd,
+            exit_motion_label.c_str());
           publish_motion_log(
-            "[exit_gap] 出缝完成：straight_reverse only traveled=" + format_seconds(traveled));
+            "[exit_gap] entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " exit_motion_label=" + exit_motion_label +
+            " only traveled=" + format_seconds(traveled));
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -8293,7 +8996,12 @@ private:
             get_logger(),
             "[mission_manager][single_cabinet][exit_gap] 原地转回走廊角速度非法，降级为直线出缝完成: %.3f",
             single_cabinet_exit_turn_angular_speed_);
-          publish_motion_log("[exit_gap] exit turn angular speed invalid, finish straight_reverse only");
+          publish_motion_log(
+            "[exit_gap] exit turn angular speed invalid, finish " + exit_motion_label +
+            " only entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " exit_motion_label=" + exit_motion_label);
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -8304,7 +9012,12 @@ private:
             get_logger(),
             "[mission_manager][single_cabinet][exit_gap] 原地转回走廊无法获取有效yaw，降级完成: %s",
             yaw_reason.c_str());
-          publish_motion_log("[exit_gap] yaw invalid before turn_to_corridor, finish straight_reverse only");
+          publish_motion_log(
+            "[exit_gap] yaw invalid before turn_to_corridor, finish " + exit_motion_label +
+            " only entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " exit_motion_label=" + exit_motion_label);
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -8314,7 +9027,12 @@ private:
           RCLCPP_WARN(
             get_logger(),
             "[mission_manager][single_cabinet][exit_gap] 原地转回走廊yaw数据无效，降级完成");
-          publish_motion_log("[exit_gap] yaw data invalid before turn_to_corridor, finish straight_reverse only");
+          publish_motion_log(
+            "[exit_gap] yaw data invalid before turn_to_corridor, finish " + exit_motion_label +
+            " only entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " exit_motion_label=" + exit_motion_label);
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -8327,12 +9045,24 @@ private:
         if (std::abs(yaw_error) <= yaw_tolerance) {
           RCLCPP_INFO(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + turn_to_corridor "
-            "yaw already aligned current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f",
+            "[mission_manager][single_cabinet][exit_gap] 出缝完成：%s + turn_to_corridor "
+            "yaw already aligned current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+            "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
+            "exit_motion_label=%s",
+            exit_motion_label.c_str(),
             current.yaw,
             target_exit_yaw,
-            yaw_error);
-          publish_motion_log("[exit_gap] 出缝完成：straight_reverse + turn_to_corridor yaw already aligned");
+            yaw_error,
+            entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+            finished_exit_linear_cmd,
+            finished_exit_linear_cmd,
+            exit_motion_label.c_str());
+          publish_motion_log(
+            "[exit_gap] entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
+            " exit_motion_label=" + exit_motion_label +
+            " turn_to_corridor yaw already aligned");
           finish_single_cabinet_exit_gap();
           return;
         }
@@ -8411,15 +9141,30 @@ private:
         std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
       if (std::abs(yaw_error) <= yaw_tolerance) {
         publish_stop();
+        const double finished_exit_linear_cmd = apply_exit_motion_direction(speed);
+        const std::string exit_motion_label =
+          exit_motion_label_from_linear_cmd(finished_exit_linear_cmd);
         RCLCPP_INFO(
           get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] 出缝完成：straight_reverse + turn_to_corridor "
-          "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f",
+          "[mission_manager][single_cabinet][exit_gap] 出缝完成：%s + turn_to_corridor "
+          "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+          "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
+          "exit_motion_label=%s",
+          exit_motion_label.c_str(),
           current_entry_side_.c_str(),
           current.yaw,
           target_exit_yaw,
-          yaw_error);
-        publish_motion_log("[exit_gap] 出缝完成：straight_reverse + turn_to_corridor");
+          yaw_error,
+          entry_motion_mode_to_string(entry_motion_mode_).c_str(),
+          finished_exit_linear_cmd,
+          finished_exit_linear_cmd,
+          exit_motion_label.c_str());
+        publish_motion_log(
+          "[exit_gap] entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
+          " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
+          " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
+          " exit_motion_label=" + exit_motion_label +
+          " turn_to_corridor");
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -9344,6 +10089,7 @@ private:
     entry_motion_mode_ = EntryMotionMode::FORWARD_ENTRY;
     entry_gap_phase_start_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     entry_turn_start_yaw_ = 0.0;
+    entry_turn_start_yaw_valid_ = false;
     target_gap_yaw_ = 0.0;
     target_gap_yaw_valid_ = false;
     straight_start_pose_ = Pose2D{};
@@ -9423,15 +10169,19 @@ private:
     request_recognizer_enable(false);
     set_recognizer_topic_enabled(false, true);
     set_distance_estimator_enabled(false, true);
+    const SearchDirection effective_direction = effective_gap_search_direction();
     const std::string detail =
       "跟踪稳定，按物理单元找缝 direction=" +
-      search_direction_to_string(current_gap_plan_.search_direction) +
+      search_direction_to_string(effective_direction) +
       " gap=" + gap_plan_to_string(current_gap_plan_);
     if (full_inventory_active_) {
       single_cabinet_gap_searching_ = false;
       publish_full_inventory_log(
         "search gap target=" + std::to_string(current_target_cabinet_) +
-        " direction=" + search_direction_to_string(current_gap_plan_.search_direction));
+        " direction=" + search_direction_to_string(effective_direction) +
+        " original_direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
+        " override_valid=" +
+        std::string(full_inventory_gap_search_direction_override_valid_ ? "true" : "false"));
       set_state(State::FULL_INVENTORY_SEARCH_GAP, "[FULL_INVENTORY] " + detail);
     } else if (single_cabinet_motion_active_) {
       single_cabinet_gap_searching_ = true;
@@ -9652,6 +10402,7 @@ private:
     set_distance_estimator_enabled(false, true);
     set_gap_detector_enabled(false);
     entry_turn_start_yaw_ = yaw_control.yaw;
+    entry_turn_start_yaw_valid_ = true;
     double base_entry_yaw = 0.0;
     if (current_entry_side_ == "right") {
       base_entry_yaw = normalize_angle(entry_right_target_yaw_rad_);
@@ -9661,7 +10412,8 @@ private:
       fail_entering_gap("entry_side 非法，无法确定固定 map Y 入缝目标 yaw: " + current_entry_side_);
       return;
     }
-    entry_motion_mode_ = resolve_entry_motion_mode(current_gap_plan_.search_direction);
+    const SearchDirection entering_gap_search_direction = effective_gap_search_direction();
+    entry_motion_mode_ = resolve_entry_motion_mode(entering_gap_search_direction);
     target_gap_yaw_ = entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY ?
       normalize_angle(base_entry_yaw + M_PI) : base_entry_yaw;
     target_gap_yaw_valid_ = true;
@@ -9674,7 +10426,7 @@ private:
       "target_yaw_source=fixed_map_y yaw_frame=%s current_yaw=%.4f yaw_error=%.4f pose_note=%s",
       current_entry_side_.c_str(),
       entry_motion_mode_to_string(entry_motion_mode_).c_str(),
-      search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      search_direction_to_string(entering_gap_search_direction).c_str(),
       base_entry_yaw,
       target_gap_yaw_,
       entry_right_target_yaw_rad_,
@@ -9686,7 +10438,10 @@ private:
     publish_motion_log(
       "[entering_gap] fixed map-y target yaw entry_side=" + current_entry_side_ +
       " entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
-      " gap_search_direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
+      " gap_search_direction=" + search_direction_to_string(entering_gap_search_direction) +
+      " original_gap_search_direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
+      " override_valid=" +
+      std::string(full_inventory_gap_search_direction_override_valid_ ? "true" : "false") +
       " base_entry_yaw=" + format_fixed(base_entry_yaw, 4) +
       " target_gap_yaw=" + format_fixed(target_gap_yaw_, 4) +
       " entry_right_target_yaw_rad=" + format_fixed(entry_right_target_yaw_rad_, 4) +
@@ -9782,7 +10537,7 @@ private:
 
   double get_current_search_gap_timeout_sec() const
   {
-    if (current_gap_plan_.search_direction == SearchDirection::BACKWARD) {
+    if (effective_gap_search_direction() == SearchDirection::BACKWARD) {
       return search_gap_backward_timeout_sec_;
     }
     return search_gap_forward_timeout_sec_;
@@ -9811,12 +10566,12 @@ private:
     reset_segment_distance();
     publish_full_inventory_log(
       "gap detected stable, post advance direction=" +
-      search_direction_to_string(current_gap_plan_.search_direction) +
+      search_direction_to_string(effective_gap_search_direction()) +
       " distance=" + format_seconds(post_gap_detect_advance_distance_m_));
     set_state(
       State::FULL_INVENTORY_POST_GAP_DETECT_ADVANCE,
       "[FULL_INVENTORY] gap detected stable, post advance direction=" +
-      search_direction_to_string(current_gap_plan_.search_direction) +
+      search_direction_to_string(effective_gap_search_direction()) +
       " distance=" + format_seconds(post_gap_detect_advance_distance_m_));
   }
 
@@ -9847,7 +10602,7 @@ private:
     }
 
     const double direction =
-      current_gap_plan_.search_direction == SearchDirection::BACKWARD ? -1.0 : 1.0;
+      effective_gap_search_direction() == SearchDirection::BACKWARD ? -1.0 : 1.0;
     const bool done = run_wait_gap_linear_motion(
       direction,
       post_gap_detect_advance_speed_,
@@ -9869,7 +10624,7 @@ private:
       "[mission_manager][FULL_INVENTORY] post_gap_advance target=%d direction=%s traveled=%.2f/%.2f "
       "speed=%.3f elapsed=%.2f/%.2f",
       current_target_cabinet_,
-      search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      search_direction_to_string(effective_gap_search_direction()).c_str(),
       segment_distance(),
       std::abs(post_gap_detect_advance_distance_m_),
       post_gap_detect_advance_speed_,
@@ -9906,21 +10661,21 @@ private:
         fail_full_inventory(
           "SEARCH_GAP timeout target=" +
           std::to_string(current_target_cabinet_) +
-          " direction=" + search_direction_to_string(current_gap_plan_.search_direction) +
+          " direction=" + search_direction_to_string(effective_gap_search_direction()) +
           " timeout=" + format_seconds(timeout_sec) +
           " elapsed=" + format_seconds(elapsed_sec));
         return;
       }
       begin_waiting_gap_fallback_flow(
         "SEARCH_GAP超时未检测到目标间隙，执行原固定回退序列作为fallback微调 direction=" +
-        search_direction_to_string(current_gap_plan_.search_direction) +
+        search_direction_to_string(effective_gap_search_direction()) +
         " timeout=" + format_seconds(timeout_sec) +
         " elapsed=" + format_seconds(elapsed_sec));
       return;
     }
 
     const double direction =
-      current_gap_plan_.search_direction == SearchDirection::BACKWARD ? -1.0 : 1.0;
+      effective_gap_search_direction() == SearchDirection::BACKWARD ? -1.0 : 1.0;
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = direction * std::abs(search_gap_speed_);
     cmd.angular.z = 0.0;
@@ -9931,11 +10686,14 @@ private:
       *get_clock(),
       1000,
       "search_gap: target_cabinet=%d target_side=%s entry_side=%s gap_search_direction=%s "
-      "timeout_sec=%.2f elapsed_sec=%.2f expected_gap=%s cmd.linear.x=%.3f",
+      "original_gap_search_direction=%s override_valid=%s timeout_sec=%.2f elapsed_sec=%.2f "
+      "expected_gap=%s cmd.linear.x=%.3f",
       current_target_cabinet_,
       current_target_side_.c_str(),
       current_entry_side_.c_str(),
+      search_direction_to_string(effective_gap_search_direction()).c_str(),
       search_direction_to_string(current_gap_plan_.search_direction).c_str(),
+      full_inventory_gap_search_direction_override_valid_ ? "true" : "false",
       timeout_sec,
       elapsed_sec,
       gap_plan_to_string(current_gap_plan_).c_str(),
@@ -10912,6 +11670,16 @@ private:
         break;
       }
 
+      case State::FULL_INVENTORY_REAR_TARGET_REORIENT: {
+        handle_full_inventory_rear_target_reorient_state();
+        break;
+      }
+
+      case State::FULL_INVENTORY_REAR_TARGET_BACKUP: {
+        handle_full_inventory_rear_target_backup_state();
+        break;
+      }
+
       case State::FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH: {
         handle_full_inventory_same_side_next_search_state();
         break;
@@ -11292,9 +12060,19 @@ private:
   double full_inventory_same_side_max_angular_{0.15};
   bool full_inventory_same_side_recognition_delay_enabled_{true};
   double full_inventory_same_side_recognition_delay_distance_m_{1.0};
+  bool rear_target_handling_enabled_{true};
+  std::string rear_target_handle_mode_{"hold_entry_yaw_backup"};
+  double rear_target_turn_yaw_tolerance_rad_{0.08};
+  double rear_target_turn_timeout_sec_{10.0};
+  bool rear_target_backup_enabled_{true};
+  double rear_target_backup_distance_m_{1.50};
+  double rear_target_backup_speed_{0.08};
+  double rear_target_backup_timeout_sec_{30.0};
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{-3.1400};
   std::string full_inventory_same_side_active_map_side_{"left"};
+  bool full_inventory_same_side_heading_override_valid_{false};
+  double full_inventory_same_side_heading_override_yaw_rad_{0.0};
   double full_inventory_final_recognition_wait_sec_{5.0};
   bool full_inventory_recognition_fallback_enabled_{true};
   double full_inventory_recognition_fallback_speed_{0.04};
@@ -11426,6 +12204,21 @@ private:
     FullInventoryRecognitionFallbackPhase::IDLE};
   std::size_t full_inventory_recognition_fallback_index_{0};
   rclcpp::Time full_inventory_post_gap_advance_start_{0, 0, RCL_ROS_TIME};
+  bool full_inventory_rear_target_pending_{false};
+  bool full_inventory_rear_target_active_{false};
+  int full_inventory_rear_target_finished_cabinet_{-1};
+  int full_inventory_rear_target_next_cabinet_{-1};
+  double full_inventory_rear_target_yaw_{0.0};
+  SearchDirection full_inventory_rear_target_original_gap_direction_{SearchDirection::FORWARD};
+  bool full_inventory_last_exit_entry_yaw_valid_{false};
+  double full_inventory_last_exit_entry_yaw_{0.0};
+  bool full_inventory_gap_search_direction_override_valid_{false};
+  SearchDirection full_inventory_gap_search_direction_override_{SearchDirection::FORWARD};
+  rclcpp::Time full_inventory_rear_target_turn_start_{0, 0, RCL_ROS_TIME};
+  bool full_inventory_rear_target_backup_started_{false};
+  Pose2D full_inventory_rear_target_backup_start_pose_;
+  double full_inventory_rear_target_backup_fixed_y_{0.0};
+  rclcpp::Time full_inventory_rear_target_backup_start_time_{0, 0, RCL_ROS_TIME};
   agv_inventory_system::ScanSequenceGenerator scan_sequence_generator_;
   agv_inventory_system::InventoryScanner inventory_scanner_;
   agv_inventory_system::WebApiClient web_api_client_;
@@ -11532,6 +12325,7 @@ private:
   EntryMotionMode entry_motion_mode_{EntryMotionMode::FORWARD_ENTRY};
   rclcpp::Time entry_gap_phase_start_{0, 0, RCL_ROS_TIME};
   double entry_turn_start_yaw_{0.0};
+  bool entry_turn_start_yaw_valid_{false};
   double target_gap_yaw_{0.0};
   bool target_gap_yaw_valid_{false};
   Pose2D straight_start_pose_;

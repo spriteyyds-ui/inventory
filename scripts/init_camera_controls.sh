@@ -8,14 +8,20 @@ set +e  # do not exit on individual command failures
 RIGHT_DEVICE="$1"
 LEFT_DEVICE="$2"
 
-# v4l2 control values
-AUTO_EXPOSURE=1        # 1 = Manual Mode
-BRIGHTNESS=50
-BACKLIGHT_COMPENSATION=0
-GAIN=0
-EXPOSURE_TIME_ABSOLUTE=55
-
-CONTROLS="auto_exposure=${AUTO_EXPOSURE} brightness=${BRIGHTNESS} backlight_compensation=${BACKLIGHT_COMPENSATION} gain=${GAIN} exposure_time_absolute=${EXPOSURE_TIME_ABSOLUTE}"
+# Confirmed C100 v4l2 control values for both cameras.
+CONTROLS=(
+    "white_balance_automatic=1"
+    "auto_exposure=1"
+    "exposure_dynamic_framerate=0"
+    "exposure_time_absolute=35"
+    "brightness=40"
+    "contrast=40"
+    "sharpness=3"
+    "gain=0"
+    "backlight_compensation=0"
+    "gamma=100"
+    "power_line_frequency=1"
+)
 
 TAG="[init_camera_controls]"
 
@@ -39,6 +45,8 @@ wait_for_device() {
 set_camera_params() {
     local device="$1"
     local label="$2"
+    local ctrl=""
+    local ctrl_name=""
 
     if ! wait_for_device "$device" "$label"; then
         return 0
@@ -46,7 +54,7 @@ set_camera_params() {
 
     echo "${TAG} Setting ${label} v4l2 controls on ${device} ..."
 
-    for ctrl in $CONTROLS; do
+    for ctrl in "${CONTROLS[@]}"; do
         v4l2-ctl --device="$device" --set-ctrl="$ctrl" 2>/dev/null
         if [ $? -ne 0 ]; then
             echo "${TAG} WARNING: Failed to set ${ctrl} on ${label}"
@@ -54,11 +62,15 @@ set_camera_params() {
     done
 
     echo "${TAG} ${label} readback:"
-    v4l2-ctl --device="$device" --list-ctrls-menus 2>/dev/null \
-        | grep -E "auto_exposure|brightness|backlight_compensation|gain|exposure_time_absolute" \
-        | while IFS= read -r line; do
-            echo "${TAG}   ${label}: ${line}"
-        done
+    for ctrl in "${CONTROLS[@]}"; do
+        ctrl_name="${ctrl%%=*}"
+        readback=$(v4l2-ctl --device="$device" --get-ctrl="$ctrl_name" 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            echo "${TAG}   ${label}: ${readback}"
+        else
+            echo "${TAG} WARNING: Failed to read ${ctrl_name} on ${label}"
+        fi
+    done
 
     echo "${TAG} ${label} initialization complete."
 }
