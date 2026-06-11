@@ -10,9 +10,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 namespace agv_inventory_system
 {
@@ -94,6 +96,15 @@ void InventoryScanner::configure(const InventoryScannerConfig & config)
   config_.rfid_frame_min_length = std::max(8, config_.rfid_frame_min_length);
   config_.rfid_frame_max_length =
     std::max(config_.rfid_frame_min_length, config_.rfid_frame_max_length);
+  // UHFReader188 defaults
+  config_.uhf_reader_baudrate = std::max(1200, config_.uhf_reader_baudrate);
+  config_.uhf_reader_address = std::max(0, std::min(255, config_.uhf_reader_address));
+  config_.uhf_reader_q_value = std::max(0, std::min(8, config_.uhf_reader_q_value));
+  config_.uhf_reader_session = std::max(0, std::min(3, config_.uhf_reader_session));
+  config_.uhf_reader_scan_rounds_per_cell = std::max(1, config_.uhf_reader_scan_rounds_per_cell);
+  config_.uhf_reader_scan_interval_sec = std::max(0.0, config_.uhf_reader_scan_interval_sec);
+  config_.uhf_reader_frame_timeout_sec = std::max(0.1, config_.uhf_reader_frame_timeout_sec);
+  config_.uhf_reader_max_follow_frames = std::max(0, config_.uhf_reader_max_follow_frames);
 }
 
 const InventoryScannerConfig & InventoryScanner::config() const
@@ -103,9 +114,12 @@ const InventoryScannerConfig & InventoryScanner::config() const
 
 bool InventoryScanner::start_grid_scan(int cabinet_id, int row, int level, int column)
 {
+  // Reset both readers
   reset_active_report_serial_reader();
+  reset_uhf_reader188();
   clear_scan_output();
   active_report_serial_active_ = false;
+  uhf_active_ = false;
 
   if (!config_.enabled) {
     finished_ = true;
@@ -136,13 +150,25 @@ bool InventoryScanner::start_grid_scan(int cabinet_id, int row, int level, int c
             << " level=" << level_
             << " column=" << column_
             << " reader_mode=" << config_.rfid_reader_mode << std::endl;
-  std::string error_message;
-  if (!config_.rfid_reader_enabled) {
-    finish_active_report_serial_scan(false, "rfid_reader_enabled=false");
-  } else if (!start_active_report_serial_reader(error_message)) {
-    finish_active_report_serial_scan(false, error_message);
+
+  // Route to the correct reader mode
+  if (is_uhf_reader188_mode(config_.rfid_reader_mode)) {
+    // UHFReader188 answer mode: open port and start synchronous cell scan in a thread
+    if (!config_.rfid_reader_enabled) {
+      finish_uhf_reader188_scan(false, "rfid_reader_enabled=false");
+    } else {
+      uhf_active_ = true;
+    }
   } else {
-    active_report_serial_active_ = true;
+    // Active report serial mode (old reader)
+    std::string error_message;
+    if (!config_.rfid_reader_enabled) {
+      finish_active_report_serial_scan(false, "rfid_reader_enabled=false");
+    } else if (!start_active_report_serial_reader(error_message)) {
+      finish_active_report_serial_scan(false, error_message);
+    } else {
+      active_report_serial_active_ = true;
+    }
   }
   return true;
 }
@@ -156,6 +182,13 @@ void InventoryScanner::update()
   const auto now = Clock::now();
   const double elapsed =
     std::chrono::duration<double>(now - start_time_).count();
+
+  if (uhf_active_) {
+    // UHFReader188 mode: run the full cell scan synchronously on first update
+    uhf_active_ = false;
+    uhf_run_cell_scan();
+    return;
+  }
 
   if (active_report_serial_active_) {
     std::string error_message;
@@ -200,10 +233,12 @@ const InventoryScanOutput & InventoryScanner::last_scan_output() const
 void InventoryScanner::reset()
 {
   reset_active_report_serial_reader();
+  reset_uhf_reader188();
   active_ = false;
   finished_ = false;
   success_ = false;
   active_report_serial_active_ = false;
+  uhf_active_ = false;
   cabinet_id_ = 0;
   row_ = 0;
   level_ = 0;
@@ -218,11 +253,549 @@ std::string InventoryScanner::normalize_reader_mode(std::string mode)
   std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
-  if (mode == "active_report_serial") {
+  if (mode == "uhf_reader188_answer_serial" || mode == "active_report_serial") {
     return mode;
   }
-  return "active_report_serial";
+  // Default to uhf_reader188_answer_serial
+  return "uhf_reader188_answer_serial";
 }
+
+bool InventoryScanner::is_uhf_reader188_mode(const std::string & mode)
+{
+  return mode == "uhf_reader188_answer_serial";
+}
+
+// =========================================================================
+// UHFReader188 answer mode implementation
+// =========================================================================
+
+unsigned short InventoryScanner::uhf_crc16(const unsigned char * data, std::size_t length)
+{
+  unsigned short crc = 0xFFFF;
+  for (std::size_t i = 0; i < length; ++i) {
+    crc ^= static_cast<unsigned short>(data[i]);
+    for (int j = 0; j < 8; ++j) {
+      if (crc & 0x0001) {
+        crc = (crc >> 1) ^ 0x8408;
+      } else {
+        crc >>= 1;
+      }
+    }
+  }
+  return crc;
+}
+
+std::vector<unsigned char> InventoryScanner::uhf_build_cmd(
+  int addr, int cmd, const std::vector<unsigned char> & data)
+{
+  int length = 4 + static_cast<int>(data.size());
+  std::vector<unsigned char> frame;
+  frame.reserve(length + 2);
+  frame.push_back(static_cast<unsigned char>(length & 0xFF));
+  frame.push_back(static_cast<unsigned char>(addr & 0xFF));
+  frame.push_back(static_cast<unsigned char>(cmd & 0xFF));
+  frame.insert(frame.end(), data.begin(), data.end());
+  unsigned short crc = uhf_crc16(frame.data(), frame.size());
+  frame.push_back(static_cast<unsigned char>(crc & 0xFF));        // CRC low byte
+  frame.push_back(static_cast<unsigned char>((crc >> 8) & 0xFF)); // CRC high byte
+  return frame;
+}
+
+std::vector<unsigned char> InventoryScanner::uhf_build_inventory_short(
+  int addr, int q_value, int session)
+{
+  std::vector<unsigned char> data = {
+    static_cast<unsigned char>(q_value & 0x07),
+    static_cast<unsigned char>(session & 0x03)
+  };
+  return uhf_build_cmd(addr, 0x01, data);
+}
+
+std::vector<unsigned char> InventoryScanner::uhf_build_inventory_single(int addr)
+{
+  return uhf_build_cmd(addr, 0x0F, {});
+}
+
+std::vector<unsigned char> InventoryScanner::uhf_build_reader_info_cmd(int addr)
+{
+  return uhf_build_cmd(addr, 0x21, {});
+}
+
+bool InventoryScanner::start_uhf_reader188(std::string & error_message)
+{
+  close_uhf_reader188_device();
+  uhf_rfids_.clear();
+  uhf_seen_rfids_.clear();
+  uhf_error_log_.clear();
+
+  if (config_.uhf_reader_serial_port.empty()) {
+    error_message = "uhf_reader_serial_port is empty";
+    return false;
+  }
+  if (serial_device_is_reserved_for_relay(config_.uhf_reader_serial_port)) {
+    error_message =
+      "refuse to open relay serial device as UHFReader188 path=" +
+      config_.uhf_reader_serial_port;
+    return false;
+  }
+
+  uhf_fd_ = ::open(
+    config_.uhf_reader_serial_port.c_str(),
+    O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+  if (uhf_fd_ < 0) {
+    error_message = errno_message(
+      "open UHFReader188 serial failed path=" + config_.uhf_reader_serial_port);
+    if (errno == EACCES || errno == EPERM) {
+      error_message += " (permission denied; check dialout group or udev permissions)";
+    }
+    return false;
+  }
+
+  if (!configure_uhf_reader188_port(error_message)) {
+    close_uhf_reader188_device();
+    return false;
+  }
+
+  if (::tcflush(uhf_fd_, TCIOFLUSH) != 0) {
+    error_message = errno_message(
+      "tcflush UHFReader188 serial failed path=" + config_.uhf_reader_serial_port);
+    close_uhf_reader188_device();
+    return false;
+  }
+
+  error_message.clear();
+  std::cout << "[scanner][RFID][uhf_reader188] opened path="
+            << config_.uhf_reader_serial_port
+            << " baud=" << config_.uhf_reader_baudrate
+            << " addr=0x" << std::hex << config_.uhf_reader_address << std::dec
+            << " q=" << config_.uhf_reader_q_value
+            << " session=S" << config_.uhf_reader_session
+            << " rounds=" << config_.uhf_reader_scan_rounds_per_cell
+            << " interval=" << config_.uhf_reader_scan_interval_sec
+            << std::endl;
+  return true;
+}
+
+bool InventoryScanner::configure_uhf_reader188_port(std::string & error_message)
+{
+  if (uhf_fd_ < 0) {
+    error_message = "UHFReader188 serial device is not open";
+    return false;
+  }
+
+  speed_t speed;
+  if (!baud_to_termios_speed(config_.uhf_reader_baudrate, speed)) {
+    error_message = "unsupported uhf_reader_baudrate=" +
+      std::to_string(config_.uhf_reader_baudrate);
+    return false;
+  }
+
+  termios tty;
+  if (::tcgetattr(uhf_fd_, &tty) != 0) {
+    error_message = errno_message(
+      "tcgetattr UHFReader188 failed path=" + config_.uhf_reader_serial_port);
+    return false;
+  }
+
+  if (::cfsetispeed(&tty, speed) != 0 || ::cfsetospeed(&tty, speed) != 0) {
+    error_message = errno_message(
+      "set UHFReader188 baud failed path=" + config_.uhf_reader_serial_port);
+    return false;
+  }
+
+  tty.c_cflag &= ~PARENB;
+  tty.c_cflag &= ~CSTOPB;
+  tty.c_cflag &= ~CSIZE;
+  tty.c_cflag |= CS8;
+  tty.c_cflag |= CREAD;
+  tty.c_cflag |= CLOCAL;
+#ifdef CRTSCTS
+  tty.c_cflag &= ~CRTSCTS;
+#endif
+  tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+  tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+  tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+  tty.c_oflag &= ~OPOST;
+  // Non-blocking read: VMIN=0, VTIME=0 for poll-based reading
+  tty.c_cc[VMIN] = 0;
+  tty.c_cc[VTIME] = 0;
+
+  if (::tcsetattr(uhf_fd_, TCSANOW, &tty) != 0) {
+    error_message = errno_message(
+      "tcsetattr UHFReader188 failed path=" + config_.uhf_reader_serial_port);
+    return false;
+  }
+
+  return true;
+}
+
+bool InventoryScanner::uhf_reader188_send_cmd(const std::vector<unsigned char> & cmd)
+{
+  if (uhf_fd_ < 0) {return false;}
+  ssize_t written = ::write(uhf_fd_, cmd.data(), cmd.size());
+  if (written < 0 || static_cast<std::size_t>(written) != cmd.size()) {
+    return false;
+  }
+  if (config_.uhf_reader_debug_hex_log) {
+    std::cout << "[scanner][RFID][uhf_reader188] TX: "
+              << bytes_to_hex_string(cmd.data(), cmd.size()) << std::endl;
+  }
+  return true;
+}
+
+bool InventoryScanner::uhf_reader188_read_frame(std::vector<unsigned char> & frame)
+{
+  return uhf_reader188_read_frame_with_timeout(frame, config_.uhf_reader_frame_timeout_sec);
+}
+
+bool InventoryScanner::uhf_reader188_read_frame_with_timeout(
+  std::vector<unsigned char> & frame, double timeout_sec)
+{
+  frame.clear();
+  if (uhf_fd_ < 0) {return false;}
+
+  // Read Len byte with timeout using poll
+  auto deadline = Clock::now() + std::chrono::milliseconds(
+    static_cast<int>(timeout_sec * 1000.0));
+
+  // Poll for Len byte
+  while (true) {
+    auto now = Clock::now();
+    if (now >= deadline) {
+      return false;  // timeout
+    }
+    double remaining_ms = std::chrono::duration<double>(deadline - now).count() * 1000.0;
+    pollfd pfd;
+    pfd.fd = uhf_fd_;
+    pfd.events = POLLIN;
+    pfd.revents = 0;
+    int poll_result = ::poll(&pfd, 1, static_cast<int>(remaining_ms));
+    if (poll_result < 0) {
+      if (errno == EINTR) {continue;}
+      return false;
+    }
+    if (poll_result == 0) {continue;}  // timeout, keep polling
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+      return false;
+    }
+    break;
+  }
+
+  // Read Len byte
+  unsigned char len_byte;
+  while (true) {
+    ssize_t n = ::read(uhf_fd_, &len_byte, 1);
+    if (n == 1) {break;}
+    if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      // Check timeout
+      if (Clock::now() >= deadline) {return false;}
+      // Small sleep and retry
+      struct timespec ts = {0, 1000000};  // 1ms
+      ::nanosleep(&ts, nullptr);
+      continue;
+    }
+    return false;
+  }
+
+  frame.push_back(len_byte);
+  int remaining = len_byte;
+  if (remaining < 3) {return false;}  // minimum: addr + cmd + crc_lo + crc_h but len includes 4 bytes
+
+  // Read remaining bytes
+  int total_to_read = remaining;
+  std::vector<unsigned char> buf(total_to_read);
+  int total_read = 0;
+  while (total_read < total_to_read) {
+    if (Clock::now() >= deadline) {
+      return false;
+    }
+    ssize_t n = ::read(uhf_fd_, buf.data() + total_read, total_to_read - total_read);
+    if (n > 0) {
+      total_read += static_cast<int>(n);
+    } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+      struct timespec ts = {0, 1000000};  // 1ms
+      ::nanosleep(&ts, nullptr);
+      continue;
+    } else {
+      return false;
+    }
+  }
+
+  frame.insert(frame.end(), buf.begin(), buf.begin() + total_to_read);
+
+  if (config_.uhf_reader_debug_hex_log) {
+    std::cout << "[scanner][RFID][uhf_reader188] RX: "
+              << bytes_to_hex_string(frame.data(), frame.size()) << std::endl;
+  }
+
+  // Validate frame length
+  if (frame.size() < 5) {return false;}
+
+  // Validate CRC
+  unsigned short calc_crc = uhf_crc16(frame.data(), frame.size() - 2);
+  unsigned short recv_crc = static_cast<unsigned short>(frame[frame.size() - 2]) |
+    (static_cast<unsigned short>(frame[frame.size() - 1]) << 8);
+  if (calc_crc != recv_crc) {
+    if (config_.uhf_reader_debug_hex_log) {
+      std::cerr << "[scanner][RFID][uhf_reader188] CRC mismatch: calc=0x"
+                << std::hex << calc_crc << " recv=0x" << recv_crc << std::dec << std::endl;
+    }
+    return false;
+  }
+
+  return true;
+}
+
+bool InventoryScanner::uhf_parse_tags(
+  const unsigned char * data, std::size_t length,
+  std::set<std::string> & seen, std::vector<std::string> & rfids)
+{
+  if (length < 1) {return false;}
+
+  std::size_t offset = 0;
+  int num_tags = data[offset];
+  offset += 1;
+
+  for (int t = 0; t < num_tags && offset < length; ++t) {
+    // Auto-detect format: standard (EPC_Len + EPC + RSSI) or variant (Ant + EPC_Len + EPC + RSSI)
+    unsigned char candidate = data[offset];
+    std::size_t after_epc_len = offset + 1 + candidate + 1;  // EPC_Len + EPC + RSSI
+    int antenna = 0;
+
+    if (candidate >= 4 && candidate <= 32 && candidate % 2 == 0 && after_epc_len <= length) {
+      // Standard format
+      offset += 1;  // skip EPC_Len
+    } else if (offset + 1 < length) {
+      // Variant: Ant + EPC_Len + EPC + RSSI
+      antenna = candidate;
+      offset += 1;
+      if (offset >= length) {break;}
+      candidate = data[offset];
+      if (candidate < 4 || candidate > 32 || candidate % 2 != 0) {break;}
+      after_epc_len = offset + 1 + candidate + 1;
+      if (after_epc_len > length) {break;}
+      offset += 1;  // skip EPC_Len
+    } else {
+      break;
+    }
+
+    int epc_len = candidate;
+    if (offset + epc_len > length) {break;}
+
+    std::string epc = bytes_to_hex_string(data + offset, epc_len);
+    offset += epc_len;
+
+    int rssi = 0;
+    if (offset < length) {
+      rssi = data[offset];
+      offset += 1;
+    }
+
+    (void)antenna;
+    (void)rssi;
+
+    if (seen.find(epc) == seen.end()) {
+      seen.insert(epc);
+      rfids.push_back(epc);
+    }
+  }
+
+  return true;
+}
+
+void InventoryScanner::uhf_collect_inventory_round()
+{
+  // Build and send 0x01 short format command
+  auto cmd = uhf_build_inventory_short(
+    config_.uhf_reader_address,
+    config_.uhf_reader_q_value,
+    config_.uhf_reader_session);
+
+  if (!uhf_reader188_send_cmd(cmd)) {
+    uhf_error_log_.push_back("send_cmd_failed");
+    return;
+  }
+
+  // Read first response frame
+  std::vector<unsigned char> frame;
+  if (!uhf_reader188_read_frame(frame)) {
+    uhf_error_log_.push_back("read_frame_failed");
+    return;
+  }
+
+  if (frame.size() < 5) {
+    uhf_error_log_.push_back("short_frame");
+    return;
+  }
+
+  // Parse: frame[0]=Len, frame[1]=Addr, frame[2]=reCmd, frame[3]=Status, frame[4..]=Data+CRC
+  unsigned char status = frame[3];
+  const unsigned char * data = frame.data() + 4;
+  // Frame: Len Addr reCmd Status Data CRC_L CRC_H
+  // Len includes Addr+reCmd+Status+Data+CRC = 3+len(Data)+2 = 5+len(Data)
+  // payload_len = frame.size()-1(Len)-4(Addr,Cmd,Status,CRC)= frame.size()-6
+  std::size_t payload_len = frame.size() > 6 ? frame.size() - 6 : 0;
+
+  if (status == 0x03 || status == 0x01 || status == 0x02 || status == 0x00 || status == 0x04) {
+    uhf_parse_tags(data, payload_len, uhf_seen_rfids_, uhf_rfids_);
+  }
+
+  // Collect continuation frames if status=0x03
+  int follow_count = 0;
+  while (status == 0x03 && config_.uhf_reader_collect_follow_frames &&
+    follow_count < config_.uhf_reader_max_follow_frames)
+  {
+    std::vector<unsigned char> follow_frame;
+    if (!uhf_reader188_read_frame(follow_frame)) {
+      uhf_error_log_.push_back("follow_frame_read_failed");
+      break;
+    }
+    if (follow_frame.size() < 5) {break;}
+    status = follow_frame[3];
+    const unsigned char * fdata = follow_frame.data() + 4;
+    std::size_t fdata_len = 0;
+    if (follow_frame.size() > 6) {
+      fdata_len = follow_frame.size() - 6;
+    }
+
+    if (status == 0x03 || status == 0x01 || status == 0x02 || status == 0x00 || status == 0x04) {
+      uhf_parse_tags(fdata, fdata_len, uhf_seen_rfids_, uhf_rfids_);
+    }
+    follow_count++;
+  }
+}
+
+void InventoryScanner::uhf_run_cell_scan()
+{
+  std::string error_message;
+  if (!start_uhf_reader188(error_message)) {
+    finish_uhf_reader188_scan(false, error_message);
+    return;
+  }
+
+  // Perform multiple rounds of inventory
+  for (int i = 0; i < config_.uhf_reader_scan_rounds_per_cell; ++i) {
+    uhf_collect_inventory_round();
+
+    // Sleep between rounds (except after the last round)
+    if (i < config_.uhf_reader_scan_rounds_per_cell - 1) {
+      ::usleep(static_cast<useconds_t>(
+        config_.uhf_reader_scan_interval_sec * 1000000.0));
+    }
+  }
+
+  // Fallback: if no tags found and fallback_single_cmd is enabled
+  if (uhf_rfids_.empty() && config_.uhf_reader_fallback_single_cmd &&
+    config_.uhf_reader_single_cmd_enabled)
+  {
+    std::cout << "[scanner][RFID][uhf_reader188] no tags from 0x01, "
+              << "trying 0x0F single-tag fallback" << std::endl;
+    auto cmd = uhf_build_inventory_single(config_.uhf_reader_address);
+    if (uhf_reader188_send_cmd(cmd)) {
+      std::vector<unsigned char> frame;
+      if (uhf_reader188_read_frame(frame) && frame.size() >= 5) {
+        unsigned char status = frame[3];
+        if (status == 0x01 || status == 0x02 || status == 0x03) {
+          const unsigned char * data = frame.data() + 4;
+          std::size_t data_len = frame.size() > 6 ? frame.size() - 6 : 0;
+          uhf_parse_tags(data, data_len, uhf_seen_rfids_, uhf_rfids_);
+        }
+      }
+    }
+  }
+
+  // Check for hardware errors
+  bool reader_ok = true;
+  std::string reason = "cell_scan_complete";
+  for (const auto & err : uhf_error_log_) {
+    if (err == "send_cmd_failed" || err == "read_frame_failed") {
+      // If we got some tags, still report success
+      if (uhf_rfids_.empty()) {
+        reader_ok = false;
+        reason = err;
+        break;
+      }
+    }
+  }
+
+  close_uhf_reader188_device();
+  finish_uhf_reader188_scan(reader_ok, reason);
+}
+
+void InventoryScanner::finish_uhf_reader188_scan(
+  bool reader_ok, const std::string & reason)
+{
+  close_uhf_reader188_device();
+  uhf_active_ = false;
+  active_ = false;
+  finished_ = true;
+  success_ = true;
+
+  std::vector<std::string> rfids;
+  if (reader_ok) {
+    rfids = uhf_rfids_;
+  }
+
+  std::ostringstream result;
+  result << "uhf_reader188_"
+         << (reader_ok ? (rfids.empty() ? "empty" : "ok") : "failed")
+         << ":cabinet=" << cabinet_id_
+         << ",row=" << row_
+         << ",level=" << level_
+         << ",column=" << column_
+         << ",rfid_count=" << rfids.size()
+         << ",reason=" << reason;
+  last_result_ = result.str();
+  last_output_.source = reader_ok ?
+    (rfids.empty() ?
+      InventoryScanOutputSource::UHF_READER188_EMPTY :
+      InventoryScanOutputSource::UHF_READER188_SUCCESS) :
+    InventoryScanOutputSource::UHF_READER188_FAILED;
+  last_output_.fallback_to_placeholder = false;
+  last_output_.rfids = rfids;
+  last_output_.message = reason;
+
+  const bool has_epc = !rfids.empty();
+  std::ostream & stream = (reader_ok && has_epc) ? std::cout : std::cerr;
+  stream << "[scanner][RFID][uhf_reader188] "
+         << ((reader_ok && has_epc) ? "scan finished" : "WARNING scan no_epc_or_failed")
+         << " cabinet=" << cabinet_id_
+         << " level=" << level_
+         << " column=" << column_
+         << " rfid_count=" << rfids.size()
+         << " reason=\"" << reason << "\""
+         << " fallback_to_placeholder=false" << std::endl;
+
+  if (!uhf_error_log_.empty()) {
+    std::cout << "[scanner][RFID][uhf_reader188] error_log=";
+    for (std::size_t i = 0; i < uhf_error_log_.size(); ++i) {
+      if (i > 0) {std::cout << ",";}
+      std::cout << uhf_error_log_[i];
+    }
+    std::cout << std::endl;
+  }
+}
+
+void InventoryScanner::close_uhf_reader188_device()
+{
+  if (uhf_fd_ >= 0) {
+    ::close(uhf_fd_);
+    uhf_fd_ = -1;
+  }
+}
+
+void InventoryScanner::reset_uhf_reader188()
+{
+  close_uhf_reader188_device();
+  uhf_active_ = false;
+  uhf_rfids_.clear();
+  uhf_seen_rfids_.clear();
+  uhf_error_log_.clear();
+}
+
+// =========================================================================
+// Active report serial mode implementation (unchanged from original)
+// =========================================================================
 
 bool InventoryScanner::start_active_report_serial_reader(std::string & error_message)
 {

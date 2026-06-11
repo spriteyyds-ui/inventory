@@ -350,6 +350,25 @@ public:
     rfid_scan_duration_sec_ = declare_parameter<double>("rfid_scan_duration_sec", 5.0);
     rfid_frame_min_length_ = declare_parameter<int>("rfid_frame_min_length", 8);
     rfid_frame_max_length_ = declare_parameter<int>("rfid_frame_max_length", 64);
+    uhf_reader_serial_port_ = declare_parameter<std::string>(
+      "uhf_reader_serial_port",
+      "/dev/serial/by-id/usb-Prolific_Technology_Inc._"
+      "USB-Serial_Controller_CTA4b2A7N11-if00-port0");
+    uhf_reader_baudrate_ = declare_parameter<int>("uhf_reader_baudrate", 57600);
+    uhf_reader_address_ = declare_parameter<int>("uhf_reader_address", 0x00);
+    uhf_reader_q_value_ = declare_parameter<int>("uhf_reader_q_value", 2);
+    uhf_reader_session_ = declare_parameter<int>("uhf_reader_session", 0);
+    uhf_reader_scan_rounds_per_cell_ = declare_parameter<int>("uhf_reader_scan_rounds_per_cell", 5);
+    uhf_reader_scan_interval_sec_ = declare_parameter<double>("uhf_reader_scan_interval_sec", 0.5);
+    uhf_reader_frame_timeout_sec_ = declare_parameter<double>("uhf_reader_frame_timeout_sec", 2.5);
+    uhf_reader_collect_follow_frames_ =
+      declare_parameter<bool>("uhf_reader_collect_follow_frames", true);
+    uhf_reader_max_follow_frames_ = declare_parameter<int>("uhf_reader_max_follow_frames", 10);
+    uhf_reader_fallback_single_cmd_ =
+      declare_parameter<bool>("uhf_reader_fallback_single_cmd", true);
+    uhf_reader_single_cmd_enabled_ =
+      declare_parameter<bool>("uhf_reader_single_cmd_enabled", true);
+    uhf_reader_debug_hex_log_ = declare_parameter<bool>("uhf_reader_debug_hex_log", false);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -1296,8 +1315,14 @@ private:
         return "active_report_serial_empty";
       case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_FAILED:
         return "active_report_serial_failed";
+      case agv_inventory_system::InventoryScanOutputSource::UHF_READER188_SUCCESS:
+        return "uhf_reader188_success";
+      case agv_inventory_system::InventoryScanOutputSource::UHF_READER188_EMPTY:
+        return "uhf_reader188_empty";
+      case agv_inventory_system::InventoryScanOutputSource::UHF_READER188_FAILED:
+        return "uhf_reader188_failed";
       default:
-        return "active_report_serial";
+        return "unknown";
     }
   }
 
@@ -1308,15 +1333,21 @@ private:
       case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_SUCCESS:
       case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_EMPTY:
       case agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_FAILED:
-      default:
         return "active_report_serial";
+      case agv_inventory_system::InventoryScanOutputSource::UHF_READER188_SUCCESS:
+      case agv_inventory_system::InventoryScanOutputSource::UHF_READER188_EMPTY:
+      case agv_inventory_system::InventoryScanOutputSource::UHF_READER188_FAILED:
+        return "uhf_reader188";
+      default:
+        return "unknown";
     }
   }
 
   static bool inventory_scan_output_source_succeeded(
     agv_inventory_system::InventoryScanOutputSource source)
   {
-    return source == agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_SUCCESS;
+    return source == agv_inventory_system::InventoryScanOutputSource::ACTIVE_REPORT_SERIAL_SUCCESS ||
+           source == agv_inventory_system::InventoryScanOutputSource::UHF_READER188_SUCCESS;
   }
 
   bool finish_return_mode_is_map_origin() const
@@ -1739,6 +1770,19 @@ private:
     scanner_config.rfid_frame_min_length = std::max(8, rfid_frame_min_length_);
     scanner_config.rfid_frame_max_length =
       std::max(scanner_config.rfid_frame_min_length, rfid_frame_max_length_);
+    scanner_config.uhf_reader_serial_port = uhf_reader_serial_port_;
+    scanner_config.uhf_reader_baudrate = uhf_reader_baudrate_;
+    scanner_config.uhf_reader_address = uhf_reader_address_;
+    scanner_config.uhf_reader_q_value = uhf_reader_q_value_;
+    scanner_config.uhf_reader_session = uhf_reader_session_;
+    scanner_config.uhf_reader_scan_rounds_per_cell = uhf_reader_scan_rounds_per_cell_;
+    scanner_config.uhf_reader_scan_interval_sec = uhf_reader_scan_interval_sec_;
+    scanner_config.uhf_reader_frame_timeout_sec = uhf_reader_frame_timeout_sec_;
+    scanner_config.uhf_reader_collect_follow_frames = uhf_reader_collect_follow_frames_;
+    scanner_config.uhf_reader_max_follow_frames = uhf_reader_max_follow_frames_;
+    scanner_config.uhf_reader_fallback_single_cmd = uhf_reader_fallback_single_cmd_;
+    scanner_config.uhf_reader_single_cmd_enabled = uhf_reader_single_cmd_enabled_;
+    scanner_config.uhf_reader_debug_hex_log = uhf_reader_debug_hex_log_;
     inventory_scanner_.configure(scanner_config);
 
     lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
@@ -12125,6 +12169,21 @@ private:
   double rfid_scan_duration_sec_{5.0};
   int rfid_frame_min_length_{8};
   int rfid_frame_max_length_{64};
+  std::string uhf_reader_serial_port_{
+    "/dev/serial/by-id/usb-Prolific_Technology_Inc._"
+    "USB-Serial_Controller_CTA4b2A7N11-if00-port0"};
+  int uhf_reader_baudrate_{57600};
+  int uhf_reader_address_{0x00};
+  int uhf_reader_q_value_{2};
+  int uhf_reader_session_{0};
+  int uhf_reader_scan_rounds_per_cell_{5};
+  double uhf_reader_scan_interval_sec_{0.5};
+  double uhf_reader_frame_timeout_sec_{2.5};
+  bool uhf_reader_collect_follow_frames_{true};
+  int uhf_reader_max_follow_frames_{10};
+  bool uhf_reader_fallback_single_cmd_{true};
+  bool uhf_reader_single_cmd_enabled_{true};
+  bool uhf_reader_debug_hex_log_{false};
   PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
   int plc_open_wait_target_cabinet_{-1};
   bool plc_open_wait_required_{false};
