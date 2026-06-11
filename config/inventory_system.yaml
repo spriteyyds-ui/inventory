@@ -449,12 +449,28 @@ mission_manager_node:
     rfid_upload_status_path: "/tmp/agv_inventory_system/rfid_upload_status.json" # GUI/网页状态接口读取的最近 RFID 上传状态文件；不影响上传业务
     rfid_upload_require_success: false                                  # false 时 HTTP 200 即成功；true 时要求响应体包含 success=true
     rfid_reader_enabled: true                                           # 是否启用真实 RFID 读写器读取；false 时主动串口模式返回空 rfids
-    rfid_reader_mode: "active_report_serial"                            # RFID 数据来源；正式模式只保留 active_report_serial
+    rfid_reader_mode: "uhf_reader188_answer_serial"                     # RFID 数据来源：uhf_reader188_answer_serial（新UHFReader188应答模式）或 active_report_serial（旧主动上报模式）
     rfid_serial_device: "/dev/ttyUSB0"                                  # PL2303 RFID 读写器串口；不要配置为 /dev/ttyCH341USB0 继电器串口
     rfid_serial_baud: 9600                                              # RFID 串口波特率；当前硬件 9600 8N1 无流控
     rfid_scan_duration_sec: 5.0                                         # 单个格位主动上报读取窗口，单位 s；无 EPC 也继续盘库流程
     rfid_frame_min_length: 8                                            # 变长主动上报帧最小长度；frame_len=frame[0]+1，RFID=frame[4:-2]
     rfid_frame_max_length: 64                                           # 变长主动上报帧最大长度；固定标识为 frame[1:4] == 00 EE 00
+
+    # UHFReader188 应答模式参数
+    uhf_reader_serial_port: "/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CTA4b2A7N11-if00-port0"  # UHFReader188 USB 串口设备路径
+    uhf_reader_baudrate: 57600                                          # UHFReader188 串口波特率；必须为 57600
+    uhf_reader_address: 0x00                                            # UHFReader188 设备地址；广播地址为 0x00
+    uhf_reader_inventory_command: "0x01_short"                          # 询查命令格式：0x01_short 为短格式（仅QValue+Session）
+    uhf_reader_q_value: 2                                               # 0x01 询查 Q 值（0-8）；实测 Q=2 S0 稳定
+    uhf_reader_session: 0                                               # 0x01 询查 Session（0-3，即 S0-S3）；实测 S0 稳定
+    uhf_reader_scan_rounds_per_cell: 5                                  # 每个货格扫描轮数；多轮汇总去重
+    uhf_reader_scan_interval_sec: 0.5                                   # 两轮之间间隔时间，单位 s
+    uhf_reader_frame_timeout_sec: 2.5                                   # 帧读取超时，单位 s
+    uhf_reader_collect_follow_frames: true                              # 是否收集 status=0x03 后续帧
+    uhf_reader_max_follow_frames: 10                                    # 单次询查最多收集的后续帧数量
+    uhf_reader_fallback_single_cmd: true                                # 0x01 无标签时是否兜底尝试 0x0F 单标签询查
+    uhf_reader_single_cmd_enabled: true                                 # 是否允许使用 0x0F 单标签询查兜底
+    uhf_reader_debug_hex_log: true                                      # 是否打印发送帧和接收帧的十六进制调试日志
     scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
     scan_duration_sec: 5.0                                              # 单次扫描动作持续时间，单位 s；主动串口模式建议与 rfid_scan_duration_sec 一致
     scan_timeout_sec: 5.0                                               # 等待扫描完成超时，单位 s；调大会允许扫描设备更慢返回
