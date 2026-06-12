@@ -420,7 +420,7 @@ mission_manager_node:
     open_gap_wait_sec: 5.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 3.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
     plc_http_enabled: false                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
-    plc_server_url: "https://192.168.8.31:8099"                         # 当前 Java/PLC HTTP 服务地址
+    plc_server_url: "https://192.168.1.100:8099"                         # 当前 Java/PLC HTTP 服务地址
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
     plc_open_query_param: "shelfId"                                     # 当前 Java/PLC 开柜参数名；最终请求为 endpoint?shelfId=<柜号>
@@ -432,13 +432,13 @@ mission_manager_node:
     plc_request_timeout_sec: 3.0                                        # 单次 PLC HTTP 请求超时，单位 s；只判断请求层异常
     plc_retry_count: 1                                                  # PLC HTTP 请求失败后的重试次数，单位 次
     plc_fail_policy: "continue_without_plc"                                            # PLC open 失败策略：error 或 continue_without_plc
-    plc_supported_cabinets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18] # 首版支持 PLC 控制的柜号；19-36 不映射
+    plc_supported_cabinets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36] # 支持 PLC 控制的柜号范围 1-36
     plc_open_wait_sec: 5.0                                              # /open 请求层成功后的固定等待时间，单位 s；不等待 PLC 状态反馈
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
 
     rfid_upload_enabled: false                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
-    rfid_upload_url: "https://192.168.8.31:8099/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
+    rfid_upload_url: "https://192.168.1.100:8099/RobotInspection/inventoryAudit" # RFID 盘库结果 HTTP POST 地址；body 外层为 scanCells
     rfid_upload_verify_tls: false                                       # RFID HTTPS 上传是否校验证书；false 等效 curl -k，仅影响 RFID POST
     rfid_upload_timeout_sec: 60.0                                       # 单次 RFID 上传请求超时，单位 s；同步调用需保持较小
     rfid_upload_retry_count: 10                                         # RFID 上传失败后的重试次数，单位 次
@@ -526,7 +526,7 @@ mission_manager_node:
     grid_move_return_between_layers: false                              # 不同升降层之间是否回到网格起点；开启会增加回退动作但层间位置一致
 
     full_inventory_enabled: true                                        # 是否启用全量盘库队列；关闭会跳过全量任务流程
-    inventory_plan: [4, 3, 8, 7]                                        # 全量盘库货柜编号计划列表；调整会改变任务顺序和目标
+    inventory_plan: [18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]  # 全量盘库货柜编号计划列表；左侧18→1，右侧19→36，匹配现场巡检顺序
     recognize_in_idle: true                                             # IDLE 状态是否保持货柜编号识别；开启便于待机观察，关闭可省资源
     recognize_during_nav: false                                         # Nav2 导航期间是否保持识别；开启可提前发现目标但占用算力
     inventory_left_route: left_route                                    # 左/上排盘库使用的路线名；需与路线航点配置一致
@@ -536,7 +536,7 @@ mission_manager_node:
     same_side_search_speed: 0.10                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
     same_side_search_timeout_sec: 40.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
     same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
-    same_side_left_fixed_y_m: 0.732                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_left_fixed_y_m: 1.214                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_left_fixed_yaw_rad: -3.1400                               # 左/上排同侧搜索保持的航向，单位 rad；改动会改变车头方向
     same_side_right_fixed_y_m: -0.764                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_right_fixed_yaw_rad: -3.1400                              # 右/下排同侧搜索保持的航向，单位 rad；改动会改变车头方向
@@ -608,7 +608,7 @@ inventory_operation_gui:
     lift_stop_service_name: /lift/stop                                  # GUI 停止按钮调用服务
     lift_all_off_service_name: /lift/all_off                            # GUI 全关按钮调用服务
     lift_manual_duration_sec: 5.0                                       # GUI 上升/下降固定点动时间，单位 s
-    robot_api_status_url: "http://192.168.8.31:8000/status"                # GUI 轮询网页接收/上传状态接口
-    robot_api_health_url: "http://192.168.8.31:8000/health"                # /status 不可用时的健康检查兜底接口
+    robot_api_status_url: "http://192.168.1.100:8000/status"                # GUI 轮询网页接收/上传状态接口
+    robot_api_health_url: "http://192.168.1.100:8000/health"                # /status 不可用时的健康检查兜底接口
     robot_api_poll_interval_ms: 2000                                    # GUI 轮询网页接收服务状态周期，单位 ms
     robot_api_request_timeout_sec: 0.5                                  # GUI 单次 HTTP 状态请求超时，单位 s；保持较短避免卡界面

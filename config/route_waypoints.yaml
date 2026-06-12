@@ -5,16 +5,31 @@ routes:
   left_route:
     frame_id: map
     waypoints:
-      - {x: 3.044, y: -0.013, yaw: -0.0169}
-      - {x: 5.164, y: 0.002, yaw: -0.0299}
+      # - {x: 5.111, y: 0.098, yaw: -0.0144}
+      # - {x: 10.210, y: -0.049, yaw: -0.0396}
+      # - {x: 15.269, y: -0.253, yaw: -0.0295}
+      # - {x: 20.180, y: -0.520, yaw: -0.0104}
+      - {x: 25.263, y: -0.598, yaw: 0.0296}
 
-      - {x: 5.538, y: 0.049, yaw: 0.4328}
-      - {x: 5.585, y: 0.189, yaw: 1.5367}
-      - {x: 5.530, y: 0.453, yaw: 1.7126}
-      - {x: 5.470, y: 0.696, yaw: 1.9120}
-      - {x: 5.393, y: 0.735, yaw: 2.2981}
-      - {x: 5.359, y: 0.761, yaw: 2.6742}
-      - {x: 5.340, y: 0.732, yaw: -2.9606}
+      # 转弯前过渡
+      - {x: 25.798, y: -0.562, yaw: 0.0277}
+      - {x: 25.995, y: -0.554, yaw: 0.2295}
+      - {x: 25.995, y: -0.535, yaw: 0.6420}
+      - {x: 25.999, y: -0.531, yaw: 1.0451}
+      - {x: 26.012, y: -0.488, yaw: 1.4646}
+
+      # 进入竖向段
+      - {x: 26.026, y: -0.229, yaw: 1.6170}
+      - {x: 26.018, y: 0.043, yaw: 1.5816}
+      - {x: 26.005, y: 0.326, yaw: 1.5834}
+      - {x: 26.007, y: 0.595, yaw: 1.5653}
+      - {x: 26.009, y: 1.121, yaw: 1.5496}
+
+      # 最后姿态对正
+      - {x: 25.996, y: 1.183, yaw: 1.9680}
+      - {x: 26.020, y: 1.206, yaw: 2.3825}
+      - {x: 25.998, y: 1.213, yaw: 2.7951}
+      - {x: 26.009, y: 1.214, yaw: -3.1408}
 
   right_route:
     frame_id: map
@@ -42,86 +57,76 @@ cabinet_side_map:
   "2": left
   "3": left
   "4": left
-  "5": right
-  "6": right
-  "7": right
-  "8": right
-
-  # "5": left
-  # "6": left
-  # "7": left
-  # "8": left
-  # "9": left
-  # "10": left
-  # "11": left
-  # "12": left
-  # "13": left
-  # "14": left
-  # "15": left
-  # "16": left
-  # "17": left
-  # "18": left
-  # "19": right
-  # "20": right
-  # "21": right
-  # "22": right
-  # "23": right
-  # "24": right
-  # "25": right
-  # "26": right
-  # "27": right
-  # "28": right
-  # "29": right
-  # "30": right
-  # "31": right
-  # "32": right
-  # "33": right
-  # "34": right
-  # "35": right
-  # "36": right
+  "5": left
+  "6": left
+  "7": left
+  "8": left
+  "9": left
+  "10": left
+  "11": left
+  "12": left
+  "13": left
+  "14": left
+  "15": left
+  "16": left
+  "17": left
+  "18": left
+  "19": right
+  "20": right
+  "21": right
+  "22": right
+  "23": right
+  "24": right
+  "25": right
+  "26": right
+  "27": right
+  "28": right
+  "29": right
+  "30": right
+  "31": right
+  "32": right
+  "33": right
+  "34": right
+  "35": right
+  "36": right
 
 cabinet_entry_side_map:
   "1": right
   "2": right
   "3": right
   "4": right
-  "5": left
-  "6": left
-  "7": left
-  "8": left
-
-  # "5": right
-  # "6": right
-  # "7": right
-  # "8": right
-  # "9": right
-  # "10": right
-  # "11": right
-  # "12": right
-  # "13": right
-  # "14": right
-  # "15": right
-  # "16": right
-  # "17": right
-  # "18": right
-  # "19": left
-  # "20": left
-  # "21": left
-  # "22": left
-  # "23": left
-  # "24": left
-  # "25": left
-  # "26": left
-  # "27": left
-  # "28": left
-  # "29": left
-  # "30": left
-  # "31": left
-  # "32": left
-  # "33": left
-  # "34": left
-  # "35": left
-  # "36": left
+  "5": right
+  "6": right
+  "7": right
+  "8": right
+  "9": right
+  "10": right
+  "11": right
+  "12": right
+  "13": right
+  "14": right
+  "15": right
+  "16": right
+  "17": right
+  "18": right
+  "19": left
+  "20": left
+  "21": left
+  "22": left
+  "23": left
+  "24": left
+  "25": left
+  "26": left
+  "27": left
+  "28": left
+  "29": left
+  "30": left
+  "31": left
+  "32": left
+  "33": left
+  "34": left
+  "35": left
+  "36": left
 
 cabinet_gap_search_direction_map:
   "1": backward
@@ -132,31 +137,31 @@ cabinet_gap_search_direction_map:
   "6": forward
   "7": backward
   "8": forward
-  # "9": backward
-  # "10": forward
-  # "11": backward
-  # "12": forward
-  # "13": backward
-  # "14": forward
-  # "15": backward
-  # "16": forward
-  # "17": backward
-  # "18": forward
-  # "19": backward
-  # "20": forward
-  # "21": backward
-  # "22": forward
-  # "23": backward
-  # "24": forward
-  # "25": backward
-  # "26": forward
-  # "27": backward
-  # "28": forward
-  # "29": backward
-  # "30": forward
-  # "31": backward
-  # "32": forward
-  # "33": backward
-  # "34": forward
-  # "35": backward
-  # "36": forward
+  "9": backward
+  "10": forward
+  "11": backward
+  "12": forward
+  "13": backward
+  "14": forward
+  "15": backward
+  "16": forward
+  "17": backward
+  "18": forward
+  "19": backward
+  "20": forward
+  "21": backward
+  "22": forward
+  "23": backward
+  "24": forward
+  "25": backward
+  "26": forward
+  "27": backward
+  "28": forward
+  "29": backward
+  "30": forward
+  "31": backward
+  "32": forward
+  "33": backward
+  "34": forward
+  "35": backward
+  "36": forward

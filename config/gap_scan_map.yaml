@@ -1,4 +1,5 @@
 gaps:
+  # --- Left row (1-18) gaps ---
   gap_01_02_03:
     left_cabinet: 1
     right_cabinet: 2
@@ -30,3 +31,116 @@ gaps:
     second_scan_cabinets: [7, 6]
     open_command_id: gap_06_07_08
     close_command_id: gap_06_07_08
+
+  gap_08_09_10:
+    left_cabinet: 9
+    right_cabinet: 10
+    first_scan_cabinet: 9
+    second_scan_cabinets: [10, 11]
+    open_command_id: gap_08_09_10
+    close_command_id: gap_08_09_10
+
+  gap_10_11_12:
+    left_cabinet: 12
+    right_cabinet: 11
+    first_scan_cabinet: 12
+    second_scan_cabinets: [11, 10]
+    open_command_id: gap_10_11_12
+    close_command_id: gap_10_11_12
+
+  gap_12_13_14:
+    left_cabinet: 13
+    right_cabinet: 14
+    first_scan_cabinet: 13
+    second_scan_cabinets: [14, 15]
+    open_command_id: gap_12_13_14
+    close_command_id: gap_12_13_14
+
+  gap_14_15_16:
+    left_cabinet: 16
+    right_cabinet: 15
+    first_scan_cabinet: 16
+    second_scan_cabinets: [15, 14]
+    open_command_id: gap_14_15_16
+    close_command_id: gap_14_15_16
+
+  gap_16_17_18:
+    left_cabinet: 17
+    right_cabinet: 18
+    first_scan_cabinet: 17
+    second_scan_cabinets: [18]
+    open_command_id: gap_16_17_18
+    close_command_id: gap_16_17_18
+
+  # --- Right row (19-36) gaps ---
+  gap_19_20_21:
+    left_cabinet: 19
+    right_cabinet: 20
+    first_scan_cabinet: 19
+    second_scan_cabinets: [20, 21]
+    open_command_id: gap_19_20_21
+    close_command_id: gap_19_20_21
+
+  gap_20_21_22:
+    left_cabinet: 22
+    right_cabinet: 21
+    first_scan_cabinet: 22
+    second_scan_cabinets: [21, 20]
+    open_command_id: gap_20_21_22
+    close_command_id: gap_20_21_22
+
+  gap_22_23_24:
+    left_cabinet: 23
+    right_cabinet: 24
+    first_scan_cabinet: 23
+    second_scan_cabinets: [24, 25]
+    open_command_id: gap_22_23_24
+    close_command_id: gap_22_23_24
+
+  gap_24_25_26:
+    left_cabinet: 26
+    right_cabinet: 25
+    first_scan_cabinet: 26
+    second_scan_cabinets: [25, 24]
+    open_command_id: gap_24_25_26
+    close_command_id: gap_24_25_26
+
+  gap_26_27_28:
+    left_cabinet: 27
+    right_cabinet: 28
+    first_scan_cabinet: 27
+    second_scan_cabinets: [28, 29]
+    open_command_id: gap_26_27_28
+    close_command_id: gap_26_27_28
+
+  gap_28_29_30:
+    left_cabinet: 30
+    right_cabinet: 29
+    first_scan_cabinet: 30
+    second_scan_cabinets: [29, 28]
+    open_command_id: gap_28_29_30
+    close_command_id: gap_28_29_30
+
+  gap_30_31_32:
+    left_cabinet: 31
+    right_cabinet: 32
+    first_scan_cabinet: 31
+    second_scan_cabinets: [32, 33]
+    open_command_id: gap_30_31_32
+    close_command_id: gap_30_31_32
+
+  gap_32_33_34:
+    left_cabinet: 34
+    right_cabinet: 33
+    first_scan_cabinet: 34
+    second_scan_cabinets: [33, 32]
+    open_command_id: gap_32_33_34
+    close_command_id: gap_32_33_34
+
+  gap_34_35_36:
+    left_cabinet: 35
+    right_cabinet: 36
+    first_scan_cabinet: 35
+    second_scan_cabinets: [36]
+    open_command_id: gap_34_35_36
+    close_command_id: gap_34_35_36
