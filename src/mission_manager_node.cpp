@@ -1,3 +1,4 @@
+
 #include <algorithm>
 #include <chrono>
 #include <cctype>
@@ -311,7 +312,7 @@ public:
     const auto plc_supported_cabinets_param =
       declare_parameter<std::vector<int64_t>>(
       "plc_supported_cabinets",
-      std::vector<int64_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18});
+      std::vector<int64_t>{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36});
     plc_supported_cabinets_.assign(
       plc_supported_cabinets_param.begin(),
       plc_supported_cabinets_param.end());
@@ -455,7 +456,7 @@ public:
     const auto full_inventory_sequence_param =
       declare_parameter<std::vector<int64_t>>(
       "inventory_plan",
-      std::vector<int64_t>{4, 3, 8, 7});
+      std::vector<int64_t>{18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36});
     full_inventory_sequence_.assign(
       full_inventory_sequence_param.begin(),
       full_inventory_sequence_param.end());
@@ -5576,7 +5577,7 @@ private:
 
     if (!is_plc_supported_cabinet(cabinet_id)) {
       const std::string reason =
-        "目标柜号暂未配置 PLC 控制，不做 19-36 到 1-18 映射 cabinet=" +
+        "目标柜号不在 plc_supported_cabinets 范围内 cabinet=" +
         std::to_string(cabinet_id) +
         " supported=" + cabinet_unit_to_string(plc_supported_cabinets_);
       if (plc_continue_without_plc()) {
@@ -12083,7 +12084,7 @@ private:
   bool single_cabinet_grid_move_return_between_layers_{false};
   bool single_cabinet_close_gap_after_final_exit_{true};
   bool full_inventory_enabled_{true};
-  std::vector<int> full_inventory_sequence_{4, 3, 8, 7};
+  std::vector<int> full_inventory_sequence_{18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36};
   std::string full_inventory_left_route_{"left_route"};
   std::string full_inventory_right_route_{"right_route"};
   bool recognize_in_idle_{true};
@@ -12146,7 +12147,7 @@ private:
   double plc_request_timeout_sec_{3.0};
   int plc_retry_count_{1};
   std::string plc_fail_policy_{"error"};
-  std::vector<int> plc_supported_cabinets_{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+  std::vector<int> plc_supported_cabinets_{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36};
   double plc_open_wait_sec_{5.0};
   bool plc_call_close_on_mission_done_{false};
   bool plc_call_stop_on_error_{false};
