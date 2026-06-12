@@ -295,7 +295,7 @@ public:
     close_gap_wait_sec_ = declare_parameter<double>("close_gap_wait_sec", 3.0);
     plc_http_enabled_ = declare_parameter<bool>("plc_http_enabled", false);
     plc_server_url_ =
-      declare_parameter<std::string>("plc_server_url", "https://58.154.205.27:8099");
+      declare_parameter<std::string>("plc_server_url", "https://192.168.1.100:8099");
     plc_open_endpoint_ =
       declare_parameter<std::string>("plc_open_endpoint", "/http-control-plc/car_open");
     plc_open_endpoint_ =
@@ -305,8 +305,8 @@ public:
     plc_stop_endpoint_ = declare_parameter<std::string>("plc_stop_endpoint", "/stop");
     plc_hello_endpoint_ = declare_parameter<std::string>("plc_hello_endpoint", "/hello");
     plc_verify_tls_ = declare_parameter<bool>("plc_verify_tls", false);
-    plc_require_body_success_ = declare_parameter<bool>("plc_require_body_success", false);
-    plc_request_timeout_sec_ = declare_parameter<double>("plc_request_timeout_sec", 3.0);
+    plc_require_body_success_ = declare_parameter<bool>("plc_require_body_success", true);
+    plc_request_timeout_sec_ = declare_parameter<double>("plc_request_timeout_sec", 8.0);
     plc_retry_count_ = declare_parameter<int>("plc_retry_count", 1);
     plc_fail_policy_ = declare_parameter<std::string>("plc_fail_policy", "error");
     const auto plc_supported_cabinets_param =
@@ -324,7 +324,7 @@ public:
     rfid_upload_url_ =
       declare_parameter<std::string>(
       "rfid_upload_url",
-      "https://58.154.205.27:8099/RobotInspection/inventoryAudit");
+      "https://192.168.1.100:8099/RobotInspection/inventoryAudit");
     rfid_upload_verify_tls_ = declare_parameter<bool>("rfid_upload_verify_tls", false);
     rfid_upload_timeout_sec_ = declare_parameter<double>("rfid_upload_timeout_sec", 3.0);
     rfid_upload_retry_count_ = declare_parameter<int>("rfid_upload_retry_count", 2);
@@ -539,6 +539,39 @@ public:
       declare_parameter<double>("post_gap_detect_advance_timeout_sec", 8.0);
     scan_layers_ = declare_parameter<int>("scan_layers", 2);
     scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
+    {
+      const auto overrides_raw =
+        declare_parameter<std::vector<std::string>>("cabinet_depth_count_overrides", std::vector<std::string>{});
+      cabinet_depth_count_overrides_.clear();
+      for (const auto & entry : overrides_raw) {
+        const auto colon_pos = entry.find(':');
+        if (colon_pos == std::string::npos || colon_pos == 0 || colon_pos == entry.size() - 1) {
+          RCLCPP_WARN(get_logger(),
+            "cabinet_depth_count_overrides 条目格式错误，应为 cabinet_id:depth_count，已忽略: '%s'",
+            entry.c_str());
+          continue;
+        }
+        try {
+          const int cid = std::stoi(entry.substr(0, colon_pos));
+          const int dc = std::stoi(entry.substr(colon_pos + 1));
+          if (cid <= 0 || dc <= 0) {
+            RCLCPP_WARN(get_logger(),
+              "cabinet_depth_count_overrides 条目值非法(cid=%d, dc=%d)，已忽略: '%s'",
+              cid, dc, entry.c_str());
+            continue;
+          }
+          cabinet_depth_count_overrides_[cid] = dc;
+        } catch (const std::exception & e) {
+          RCLCPP_WARN(get_logger(),
+            "cabinet_depth_count_overrides 条目解析失败: '%s' (%s)", entry.c_str(), e.what());
+        }
+      }
+      if (!cabinet_depth_count_overrides_.empty()) {
+        RCLCPP_INFO(get_logger(),
+          "已加载 cabinet_depth_count_overrides: %zu 条",
+          cabinet_depth_count_overrides_.size());
+      }
+    }
     web_base_url_ = declare_parameter<std::string>("web_base_url", "");
     web_open_gap_endpoint_ =
       declare_parameter<std::string>("web_open_gap_endpoint", "/api/gap/open");
@@ -7934,14 +7967,42 @@ private:
     reset_lift_runtime();
   }
 
+  int resolve_scan_depth_count_for_cabinet(int cabinet_id, std::string & source) const
+  {
+    const auto it = cabinet_depth_count_overrides_.find(cabinet_id);
+    if (it != cabinet_depth_count_overrides_.end()) {
+      const int dc = it->second;
+      if (dc > 0) {
+        source = "override";
+        return dc;
+      }
+      RCLCPP_WARN(
+        get_logger(),
+        "cabinet_depth_count_overrides 中 cabinet=%d depth_count=%d 非法(<=0)，回退全局 scan_depth_count=%d",
+        cabinet_id, dc, scan_depth_count_);
+    }
+    source = "global";
+    return scan_depth_count_;
+  }
+
   bool begin_single_cabinet_scan_runtime(
     int cabinet_id,
     InGapScanRuntimeMode mode = InGapScanRuntimeMode::SINGLE_CABINET)
   {
+    std::string depth_count_source;
+    const int effective_depth_count = resolve_scan_depth_count_for_cabinet(cabinet_id, depth_count_source);
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][%s][scan_runtime] resolve cabinet=%d effective_depth_count=%d source=%s global_scan_depth_count=%d",
+      in_gap_scan_mode_label(mode),
+      cabinet_id,
+      effective_depth_count,
+      depth_count_source.c_str(),
+      scan_depth_count_);
     single_cabinet_scan_steps_ = scan_sequence_generator_.generateCabinetSnakeSequence(
       cabinet_id,
       scan_layers_,
-      scan_depth_count_);
+      effective_depth_count);
     if (single_cabinet_scan_steps_.empty()) {
       fail_in_gap_scan_runtime(mode, "生成扫描序列为空: cabinet=" + std::to_string(cabinet_id));
       return false;
@@ -12130,21 +12191,22 @@ private:
   double post_gap_detect_advance_timeout_sec_{8.0};
   int scan_layers_{2};
   int scan_depth_count_{3};
+  std::map<int, int> cabinet_depth_count_overrides_;
   std::string web_base_url_;
   std::string web_open_gap_endpoint_{"/api/gap/open"};
   std::string web_close_gap_endpoint_{"/api/gap/close"};
   std::string web_status_endpoint_{"/api/robot/status"};
   std::string web_result_endpoint_{"/api/inventory/result"};
   bool plc_http_enabled_{false};
-  std::string plc_server_url_{"https://58.154.205.27:8099"};
+  std::string plc_server_url_{"https://192.168.1.100:8099"};
   std::string plc_open_endpoint_{"/http-control-plc/car_open"};
   std::string plc_open_query_param_{"shelfId"};
   std::string plc_close_endpoint_{"/close"};
   std::string plc_stop_endpoint_{"/stop"};
   std::string plc_hello_endpoint_{"/hello"};
   bool plc_verify_tls_{false};
-  bool plc_require_body_success_{false};
-  double plc_request_timeout_sec_{3.0};
+  bool plc_require_body_success_{true};
+  double plc_request_timeout_sec_{8.0};
   int plc_retry_count_{1};
   std::string plc_fail_policy_{"error"};
   std::vector<int> plc_supported_cabinets_{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36};
@@ -12152,7 +12214,7 @@ private:
   bool plc_call_close_on_mission_done_{false};
   bool plc_call_stop_on_error_{false};
   bool rfid_upload_enabled_{true};
-  std::string rfid_upload_url_{"https://58.154.205.27:8099/RobotInspection/inventoryAudit"};
+  std::string rfid_upload_url_{"https://192.168.1.100:8099/RobotInspection/inventoryAudit"};
   bool rfid_upload_verify_tls_{false};
   double rfid_upload_timeout_sec_{3.0};
   int rfid_upload_retry_count_{2};
