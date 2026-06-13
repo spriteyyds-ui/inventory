@@ -163,8 +163,8 @@ public:
     left_max_depth_index_ = declare_parameter<int>("left_max_depth_index", 4);
     right_max_depth_index_ = declare_parameter<int>("right_max_depth_index", 3);
     entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
-    entry_right_target_yaw_rad_ = declare_parameter<double>("entry_right_target_yaw_rad", 1.5708);
-    entry_left_target_yaw_rad_ = declare_parameter<double>("entry_left_target_yaw_rad", -1.5708);
+    entry_right_target_yaw_rad_ = declare_parameter<double>("entry_right_target_yaw_rad", -1.5708);
+    entry_left_target_yaw_rad_ = declare_parameter<double>("entry_left_target_yaw_rad", 1.5708);
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
     entry_turn_yaw_stable_required_count_ =
@@ -478,11 +478,11 @@ public:
     full_inventory_same_side_left_fixed_y_m_ =
       declare_parameter<double>("same_side_left_fixed_y_m", 0.575);
     full_inventory_same_side_left_fixed_yaw_rad_ =
-      declare_parameter<double>("same_side_left_fixed_yaw_rad", -3.1400);
+      declare_parameter<double>("same_side_left_fixed_yaw_rad", 0.0);
     full_inventory_same_side_right_fixed_y_m_ =
       declare_parameter<double>("same_side_right_fixed_y_m", -0.625);
     full_inventory_same_side_right_fixed_yaw_rad_ =
-      declare_parameter<double>("same_side_right_fixed_yaw_rad", -3.1400);
+      declare_parameter<double>("same_side_right_fixed_yaw_rad", 0.0);
     full_inventory_same_side_yaw_kp_ =
       declare_parameter<double>("same_side_yaw_kp", 0.40);
     full_inventory_same_side_yaw_deadband_rad_ =
@@ -8656,7 +8656,7 @@ private:
       return true;
     }
 
-    const double speed_abs = std::clamp(std::abs(single_cabinet_grid_move_speed_), 0.0, 0.05);
+    const double speed_abs = std::clamp(std::abs(single_cabinet_grid_move_speed_), 0.0, 0.50);
     if (speed_abs <= 1e-4) {
       fail_in_gap_scan_runtime(
         mode,
@@ -11997,8 +11997,8 @@ private:
   double target_depth_center_m_{1.2};
   double target_straight_distance_{1.2};
   bool current_entry_profile_valid_{false};
-  double entry_right_target_yaw_rad_{1.5708};
-  double entry_left_target_yaw_rad_{-1.5708};
+  double entry_right_target_yaw_rad_{-1.5708};
+  double entry_left_target_yaw_rad_{1.5708};
   double entry_align_yaw_tolerance_rad_{0.08};
   int entry_turn_yaw_stable_required_count_{3};
   double entry_turn_angular_speed_{0.30};
@@ -12155,9 +12155,9 @@ private:
   double full_inventory_same_side_search_timeout_sec_{20.0};
   bool full_inventory_same_side_pose_hold_enabled_{true};
   double full_inventory_same_side_left_fixed_y_m_{0.575};
-  double full_inventory_same_side_left_fixed_yaw_rad_{-3.1400};
+  double full_inventory_same_side_left_fixed_yaw_rad_{0.0};
   double full_inventory_same_side_right_fixed_y_m_{-0.625};
-  double full_inventory_same_side_right_fixed_yaw_rad_{-3.1400};
+  double full_inventory_same_side_right_fixed_yaw_rad_{0.0};
   double full_inventory_same_side_yaw_kp_{0.40};
   double full_inventory_same_side_yaw_deadband_rad_{0.03};
   double full_inventory_same_side_y_kp_{0.30};
@@ -12175,7 +12175,7 @@ private:
   double rear_target_backup_speed_{0.08};
   double rear_target_backup_timeout_sec_{30.0};
   double full_inventory_same_side_active_fixed_y_m_{0.575};
-  double full_inventory_same_side_active_fixed_yaw_rad_{-3.1400};
+  double full_inventory_same_side_active_fixed_yaw_rad_{0.0};
   std::string full_inventory_same_side_active_map_side_{"left"};
   bool full_inventory_same_side_heading_override_valid_{false};
   double full_inventory_same_side_heading_override_yaw_rad_{0.0};
