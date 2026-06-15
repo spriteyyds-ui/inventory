@@ -34,7 +34,7 @@ number_recognizer_node:
     enable_control_topic: /inventory/recognizer_enable                  # 识别器使能控制话题；任务阶段切换时控制是否运行识别
     distance_overlay_topic: /inventory/target_distance                  # 可视化叠加距离输入话题；缺失时只影响显示距离文本
 
-    recognition_target_style: circle_marker                             # 识别目标样式：circle_marker 为圆形标靶；legacy_a4_digit 为旧 A4 黑字模式
+    recognition_target_style: qr_marker                                 # 识别目标样式：qr_marker 为二维码；circle_marker 为圆形标靶；legacy_a4_digit 为旧 A4 黑字模式
     enable_on_start: true                                               # 启动后是否默认开启识别；设为 false 可等任务管理器明确使能
     min_confidence: 0.70                                                # 整体识别有效的最低置信度比例；调大会更严格，调小更容易接受低置信结果
     max_attempts: 20                                                    # 本地连续失败计数上限，单位 次；调大会延长重试，调小更快复位
@@ -148,10 +148,10 @@ number_recognizer_node:
     circle_marker_panel_aspect_tolerance: 0.35                          # marker panel 宽高比评分容差；调大更容忍长条或透视误差
     circle_marker_panel_warp_width: 640                                 # marker panel 透视矫正输出宽度，单位 px
     circle_marker_panel_warp_height: 452                                # marker panel 透视矫正输出高度，单位 px
-    circle_marker_search_x_min_ratio: 0.10                              # panel 内圆形标靶搜索 ROI 左边界比例
-    circle_marker_search_x_max_ratio: 0.90                              # panel 内圆形标靶搜索 ROI 右边界比例
-    circle_marker_search_y_min_ratio: 0.10                              # panel 内圆形标靶搜索 ROI 上边界比例
-    circle_marker_search_y_max_ratio: 0.90                              # panel 内圆形标靶搜索 ROI 下边界比例
+    circle_marker_search_x_min_ratio: 0.02                              # panel 内圆形标靶搜索 ROI 左边界比例；原 0.10 改为 0.02 避免裁切黑色圆
+    circle_marker_search_x_max_ratio: 0.98                              # panel 内圆形标靶搜索 ROI 右边界比例；原 0.90 改为 0.98 避免裁切黑色圆
+    circle_marker_search_y_min_ratio: 0.02                              # panel 内圆形标靶搜索 ROI 上边界比例；原 0.10 改为 0.02 避免裁切黑色圆
+    circle_marker_search_y_max_ratio: 0.98                              # panel 内圆形标靶搜索 ROI 下边界比例；原 0.90 改为 0.98 避免裁切黑色圆
     circle_marker_dark_threshold: 180                                   # 深色圆形区域灰度阈值；灰度小于该值视作暗区域候选
     circle_marker_bright_threshold: 190                                 # 圆内白色数字灰度阈值；灰度大于该值视作亮色数字候选
     circle_marker_use_otsu: true                                        # 是否融合 Otsu 自适应阈值，提高光照变化下的圆和数字提取稳定性
@@ -166,6 +166,12 @@ number_recognizer_node:
     circle_marker_max_digits: 2                                         # 圆形标靶内最多识别数字位数；柜号 1-36 需要最多 2 位
     circle_marker_min_number: 1                                         # 圆形标靶接受的最小柜号
     circle_marker_max_number: 36                                        # 圆形标靶接受的最大柜号
+
+    qr_min_number: 1                                                    # QR marker minimum accepted cabinet number
+    qr_max_number: 36                                                   # QR marker maximum accepted cabinet number
+    qr_min_side_px: 60                                                  # QR marker minimum detected side length in pixels
+    qr_known_size_m: 0.20                                               # QR marker physical side length in meters, used for rough visual distance
+    qr_confidence: 1.0                                                  # QR marker confidence reported after a valid decode
 
 distance_estimator_node:
   ros__parameters:
@@ -322,19 +328,19 @@ mission_manager_node:
     entry_distance: 1.2                                                 # 兼容用固定进缝距离，单位 m；关闭网格中心进入时使用
     turn_speed: 0.40                                                    # 通用转向角速度，单位 rad/s；调大会转向更快但过冲风险更高
     enable_grid_center_entry: true                                      # 是否优先按目标深度网格中心计算进缝直行距离；关闭后回退固定 entry_distance
-    grid_depth_m: 2.80                                                  # 单个货柜深度网格长度，单位 m；调大会增加按深度索引计算的进缝距离
+    grid_depth_m: 2.40                                                  # 单个货柜深度网格长度，单位 m；调大会增加按深度索引计算的进缝距离
     left_max_depth_index: 4                                             # 左/上排货柜允许的最大深度索引，单位 层；调大允许更深目标
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
-    entry_center_offset_m: 0.0                                          # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
-    entry_right_target_yaw_rad: -1.6326                                # 右侧进缝固定目标 yaw，单位 rad；map -Y，新地图方向相反
+    entry_center_offset_m: 0.40                                         # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
+    entry_right_target_yaw_rad: -1.6026                                # 右侧进缝固定目标 yaw，单位 rad；map -Y，新地图方向相反
     entry_left_target_yaw_rad: 1.5708                                   # 左侧进缝固定目标 yaw，单位 rad；map +Y，新地图方向相反
     entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
     entry_turn_timeout_sec: 60.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
-    entry_straight_speed: 0.20                                          # 转向对齐后直行到深度网格中心的速度，单位 m/s；调大会更快但精度下降
+    entry_straight_speed: 0.10                                          # 转向对齐后直行到深度网格中心的速度，单位 m/s；调大会更快但精度下降
     entry_straight_timeout_sec: 120.0                                    # MOVING_TO_GRID_CENTER 入缝直行到深度格中心的超时，单位 s；调大会允许低速入缝更久
-    entry_straight_yaw_kp: 1.00                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
+    entry_straight_yaw_kp: 0.40                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
     entry_straight_yaw_deadband_rad: 0.03                               # 进缝直行航向保持死区，单位 rad；调大会减少小幅修正，调小更准
     entry_straight_max_angular_speed: 0.20                              # 进缝直行航向保持角速度限幅，单位 rad/s；调大会纠偏更快
     entry_side_hold_target_distance_m: 0.30                             # 进缝到网格中心时目标侧保持距离，单位 m；调大会离侧柜更远
@@ -512,7 +518,7 @@ mission_manager_node:
     exit_gap_speed: 0.20                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
     exit_gap_extra_distance_m: 0.20                                     # 退出间隙额外距离，单位 m；调大会多退一些
     exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
-    exit_gap_distance_m: 1.50                                           # 退出间隙目标距离，单位 m；调大会倒退更远
+    exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
     exit_gap_turn_angular_speed: 0.25                                   # 退出后转向角速度，单位 rad/s；调大会转向更快
     exit_gap_turn_yaw_tolerance_rad: 0.08                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
@@ -521,7 +527,7 @@ mission_manager_node:
     close_gap_after_final_exit: true                                    # 最终退出后是否请求关闭间隙；关闭会跳过关闭请求
 
     grid_motion_enabled: true                                           # 是否启用间隙内深度网格移动；关闭会跳过网格位移
-    grid_spacing_m: 2.80                                                # 间隙内相邻扫描网格间距，单位 m；调大会每层移动更远
+    grid_spacing_m: 2.40                                                # 间隙内相邻扫描网格间距，单位 m；调大会每层移动更远
     grid_move_speed: 0.30                                               # 间隙内网格移动速度，单位 m/s；调大会移动更快但定位误差可能增大
     grid_move_timeout_sec: 120.0                                         # 间隙内网格移动超时，单位 s；调大会更容忍慢速移动
     grid_move_return_between_layers: false                              # 不同升降层之间是否回到网格起点；开启会增加回退动作但层间位置一致
@@ -534,16 +540,16 @@ mission_manager_node:
     inventory_right_route: right_route                                  # 右/下排盘库使用的路线名；需与路线航点配置一致
 
     same_side_next_search_enabled: true                                 # 退出间隙后是否启用同侧下一目标搜索；关闭会减少连续盘库能力
-    same_side_search_speed: 0.10                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
-    same_side_search_timeout_sec: 40.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
+    same_side_search_speed: 0.15                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
+    same_side_search_timeout_sec: 120.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
     same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
-    same_side_left_fixed_y_m: 1.214                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
-    same_side_left_fixed_yaw_rad: 0.0                                   # 左/上排同侧搜索保持的航向，单位 rad；新地图方向相反，由 -π 改为 0
+    same_side_left_fixed_y_m: -2.009                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_left_fixed_yaw_rad: 0.0000                                  # 左/上排同侧搜索保持的航向，单位 rad；新地图方向相反，由 -π 改为 0
     same_side_right_fixed_y_m: -0.764                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_right_fixed_yaw_rad: 0.0                                  # 右/下排同侧搜索保持的航向，单位 rad；新地图方向相反，由 -π 改为 0
-    same_side_yaw_kp: 0.80                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
-    same_side_yaw_deadband_rad: 0.03                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
-    same_side_y_kp: 0.30                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
+    same_side_yaw_kp: 0.40                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
+    same_side_yaw_deadband_rad: 0.08                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
+    same_side_y_kp: 0.15                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
     same_side_y_deadband_m: 0.15                                        # 同侧搜索 y 坐标误差死区，单位 m；调大会减少小幅横向修正
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
@@ -554,9 +560,9 @@ mission_manager_node:
     rear_target_turn_yaw_tolerance_rad: 0.08                             # 后方目标 yaw 微调收敛阈值，单位 rad；调小更准但耗时更久
     rear_target_turn_timeout_sec: 10.0                                   # 后方目标 yaw 微调超时，单位 s；超时进入全量盘库 ERROR
     rear_target_backup_enabled: true                                     # yaw 微调后是否倒车固定距离，再进入同侧搜索
-    rear_target_backup_distance_m: 1.50                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
-    rear_target_backup_speed: 0.08                                       # 后方目标倒车速度，单位 m/s；低速保证现场安全
-    rear_target_backup_timeout_sec: 30.0                                 # 后方目标倒车超时，单位 s；1.5m/0.08m/s 约 18.75s
+    rear_target_backup_distance_m: 5.00                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
+    rear_target_backup_speed: 0.20                                       # 后方目标倒车速度，单位 m/s；低速保证现场安全
+    rear_target_backup_timeout_sec: 120.0                                # 后方目标倒车超时，单位 s；1.5m/0.08m/s 约 18.75s
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错

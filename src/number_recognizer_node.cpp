@@ -28,6 +28,7 @@
 #include "agv_inventory_system/digit_segmenter.hpp"
 #include "agv_inventory_system/id_utils.hpp"
 #include "agv_inventory_system/msg/recognized_number.hpp"
+#include "agv_inventory_system/qr_marker_recognizer.hpp"
 #include "yaml-cpp/yaml.h"
 
 class NumberRecognizerNode : public rclcpp::Node
@@ -141,6 +142,12 @@ private:
       declare_parameter<bool>("enable_union_fallback_classification", true);
     circle_marker_debug_log_enabled_ =
       declare_parameter<bool>("circle_marker_debug_log_enabled", true);
+
+    qr_params_.min_number = declare_parameter<int>("qr_min_number", 1);
+    qr_params_.max_number = declare_parameter<int>("qr_max_number", 36);
+    qr_params_.min_side_px = declare_parameter<int>("qr_min_side_px", 60);
+    qr_params_.known_size_m = declare_parameter<double>("qr_known_size_m", 0.20);
+    qr_params_.confidence = declare_parameter<double>("qr_confidence", 1.0);
 
     cabinet_id_min_ = declare_parameter<int>("cabinet_id_min", 1);
     cabinet_id_max_ = declare_parameter<int>("cabinet_id_max", 36);
@@ -333,7 +340,8 @@ private:
     seg_params_.digit_input_size = std::max(8, seg_params_.digit_input_size);
     cls_params_.input_size = std::max(8, cls_params_.input_size);
     circle_params_.digit_input_size = cls_params_.input_size;
-    if (recognition_target_style_ != "circle_marker" &&
+    if (recognition_target_style_ != "qr_marker" &&
+      recognition_target_style_ != "circle_marker" &&
       recognition_target_style_ != "legacy_a4_digit")
     {
       RCLCPP_WARN(
@@ -342,6 +350,7 @@ private:
         recognition_target_style_.c_str());
       recognition_target_style_ = "circle_marker";
     }
+    qr_recognizer_.set_params(qr_params_);
     detector_.set_params(a4_params_);
     segmenter_.set_params(seg_params_);
     circle_recognizer_.set_params(circle_params_);
@@ -475,6 +484,15 @@ private:
       circle_params_.max_digits,
       circle_params_.min_number,
       circle_params_.max_number);
+
+    RCLCPP_INFO(
+      get_logger(),
+      "QR_MARKER: range=%d..%d min_side=%dpx known_size=%.3fm confidence=%.2f",
+      qr_params_.min_number,
+      qr_params_.max_number,
+      qr_params_.min_side_px,
+      qr_params_.known_size_m,
+      qr_params_.confidence);
   }
 
   std::filesystem::path resolve_config_path(const std::string & raw_path) const
@@ -698,6 +716,7 @@ private:
     auto seg_new = seg_params_;
     auto cls_new = cls_params_;
     auto circle_new = circle_params_;
+    auto qr_new = qr_params_;
     auto style_new = recognition_target_style_;
 
     bool reload_model = false;
@@ -719,6 +738,16 @@ private:
         enable_union_fallback_classification_ = p.as_bool();
       } else if (name == "circle_marker_debug_log_enabled") {
         circle_marker_debug_log_enabled_ = p.as_bool();
+      } else if (name == "qr_min_number") {
+        qr_new.min_number = p.as_int();
+      } else if (name == "qr_max_number") {
+        qr_new.max_number = p.as_int();
+      } else if (name == "qr_min_side_px") {
+        qr_new.min_side_px = p.as_int();
+      } else if (name == "qr_known_size_m") {
+        qr_new.known_size_m = p.as_double();
+      } else if (name == "qr_confidence") {
+        qr_new.confidence = p.as_double();
       } else if (name == "cabinet_id_min") {
         cabinet_id_min_ = p.as_int();
       } else if (name == "cabinet_id_max") {
@@ -979,7 +1008,18 @@ private:
       result.reason = "circle_marker_max_number 必须 >= circle_marker_min_number";
       return result;
     }
-    if (style_new != "circle_marker" &&
+    if (qr_new.max_number < qr_new.min_number) {
+      result.successful = false;
+      result.reason = "qr_max_number must be >= qr_min_number";
+      return result;
+    }
+    if (qr_new.min_side_px <= 0 || qr_new.known_size_m <= 0.0) {
+      result.successful = false;
+      result.reason = "qr_min_side_px and qr_known_size_m must be positive";
+      return result;
+    }
+    if (style_new != "qr_marker" &&
+      style_new != "circle_marker" &&
       style_new != "legacy_a4_digit")
     {
       result.successful = false;
@@ -991,6 +1031,7 @@ private:
     seg_params_ = seg_new;
     cls_params_ = cls_new;
     circle_params_ = circle_new;
+    qr_params_ = qr_new;
     recognition_target_style_ = style_new;
 
     seg_params_.digit_input_size = std::max(8, seg_params_.digit_input_size);
@@ -1000,6 +1041,7 @@ private:
     detector_.set_params(a4_params_);
     segmenter_.set_params(seg_params_);
     circle_recognizer_.set_params(circle_params_);
+    qr_recognizer_.set_params(qr_params_);
     classifier_.set_params(cls_params_);
 
     if (reload_model && !reload_classifier_model()) {
@@ -1526,6 +1568,59 @@ private:
       circle_result.error_message.c_str());
   }
 
+  void runQrMarker(
+    const sensor_msgs::msg::Image::SharedPtr & msg,
+    const cv::Mat & image,
+    cv::Mat & visualization,
+    const rclcpp::Time & now)
+  {
+    agv_inventory_system::QrMarkerResult qr_result;
+    const bool recognized = qr_recognizer_.recognize(image, qr_result);
+    const bool valid = recognized && qr_result.valid;
+
+    if (valid) {
+      attempts_ = 0;
+    } else if (max_attempts_ > 0 && attempts_ >= max_attempts_) {
+      attempts_ = 0;
+    }
+
+    if (!qr_result.visualization.empty()) {
+      visualization = qr_result.visualization;
+    } else if (!valid) {
+      draw_failure_text(visualization, qr_result.error_message);
+    }
+
+    publish_recognition(
+      valid ? qr_result.number : std::string(""),
+      valid ? qr_result.confidence : 0.0F,
+      valid,
+      qr_result.horizontal_offset,
+      qr_result.estimated_distance);
+    publish_image(debug_a4_pub_, msg->header, qr_result.debug_image.empty() ? visualization : qr_result.debug_image);
+    publish_image(debug_digits_pub_, msg->header, qr_result.straight_qr);
+    publish_image(vis_pub_, msg->header, visualization);
+
+    const bool tracking_dist_fresh =
+      std::isfinite(latest_tracking_distance_) &&
+      (now - latest_tracking_distance_stamp_).seconds() <=
+        std::max(0.05, distance_overlay_timeout_sec_);
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 1200,
+      "qr_marker result: raw=%s number=%s valid=%d recognized=%d conf=%.3f offset=%.1fpx "
+      "dist_track=%.2fm dist_visual=%.2fm corners=%zu err=%s",
+      qr_result.raw_text.c_str(),
+      qr_result.number.c_str(),
+      valid ? 1 : 0,
+      recognized ? 1 : 0,
+      qr_result.confidence,
+      qr_result.horizontal_offset,
+      tracking_dist_fresh ? latest_tracking_distance_ : std::numeric_limits<double>::quiet_NaN(),
+      qr_result.estimated_distance,
+      qr_result.corners.size(),
+      qr_result.error_message.c_str());
+  }
+
   void image_callback(const sensor_msgs::msg::Image::SharedPtr msg)
   {
     if (!enabled_) {
@@ -1537,11 +1632,6 @@ private:
       return;
     }
     last_attempt_time_ = now;
-
-    if (!classifier_.ready()) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "分类模型未就绪，跳过识别");
-      return;
-    }
 
     cv_bridge::CvImagePtr cv_ptr;
     try {
@@ -1559,6 +1649,16 @@ private:
     ++attempts_;
 
     cv::Mat visualization = cv_ptr->image.clone();
+    if (recognition_target_style_ == "qr_marker") {
+      runQrMarker(msg, cv_ptr->image, visualization, now);
+      return;
+    }
+
+    if (!classifier_.ready()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "分类模型未就绪，跳过识别");
+      return;
+    }
+
     if (recognition_target_style_ == "circle_marker") {
       runCircleMarker(msg, cv_ptr->image, visualization, now);
       return;
@@ -2249,11 +2349,13 @@ private:
   agv_inventory_system::DigitSegmenterParams seg_params_;
   agv_inventory_system::DigitClassifierParams cls_params_;
   agv_inventory_system::CircleMarkerParams circle_params_;
+  agv_inventory_system::QrMarkerParams qr_params_;
 
   agv_inventory_system::A4Detector detector_;
   agv_inventory_system::DigitSegmenter segmenter_;
   agv_inventory_system::DigitClassifier classifier_;
   agv_inventory_system::CircleMarkerRecognizer circle_recognizer_;
+  agv_inventory_system::QrMarkerRecognizer qr_recognizer_;
 
   int attempts_{0};
   rclcpp::Time last_attempt_time_{0, 0, RCL_ROS_TIME};
