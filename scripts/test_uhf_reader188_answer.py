@@ -8,6 +8,11 @@ python3 scripts/test_uhf_reader188_answer.py \
   --port /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CTA4b2A7N11-if00-port0 \
   --baud 57600 --info --verbose
 
+# Set power to 15 and verify with reader info:
+python3 scripts/test_uhf_reader188_answer.py \
+  --port /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CTA4b2A7N11-if00-port0 \
+  --baud 57600 --set-power 15 --info --verbose
+
 # Multi-round cell inventory:
 python3 scripts/test_uhf_reader188_answer.py \
   --port /dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller_CTA4b2A7N11-if00-port0 \
@@ -145,6 +150,50 @@ def test_reader_info(reader: UHFReader188, verbose: bool) -> int:
         if verbose and info.raw_data:
             hex_str = " ".join(f"{b:02X}" for b in info.raw_data)
             print(f"\nRaw data: {hex_str}")
+
+        return 0
+    finally:
+        reader.close()
+
+
+def test_set_power(reader: UHFReader188, power: int, verbose: bool) -> int:
+    """Set reader transmit power and optionally verify with reader info."""
+    print("=" * 60)
+    print("UHFReader188 Set Power")
+    print("=" * 60)
+    print(f"Port: {reader.port}")
+    print(f"Baud: {reader.baudrate}")
+    print(f"Address: 0x{reader.address:02X}")
+    print(f"Target power: {power}")
+    print()
+
+    err = reader.open()
+    if err:
+        print(f"ERROR opening port: {err}")
+        return 1
+
+    try:
+        ok, set_err = reader.set_power(power)
+        if set_err:
+            print(f"ERROR setting power: {set_err}")
+            return 1
+
+        print(f"Set power OK: {power}")
+
+        # Verify by reading reader info
+        info, info_err = reader.read_reader_info()
+        if info_err:
+            print(f"WARNING: Could not verify power via reader info: {info_err}")
+        else:
+            print(f"Verified Power: {info.power}")
+            if info.power != power:
+                print(f"WARNING: Expected {power}, got {info.power}")
+            else:
+                print("Power verified OK.")
+
+        if verbose:
+            if info:
+                print(f"\nFull reader info: {info}")
 
         return 0
     finally:
@@ -293,6 +342,9 @@ Examples:
   # Query reader info
   %(prog)s --port /dev/ttyUSB0 --baud 57600 --info --verbose
 
+  # Set power to 15 and verify
+  %(prog)s --port /dev/ttyUSB0 --baud 57600 --set-power 15 --info --verbose
+
   # Multi-round inventory with 30 rounds
   %(prog)s --port /dev/ttyUSB0 --baud 57600 --inventory --q 2 --session 0 --rounds 30 --interval 0.5 --verbose
 
@@ -359,6 +411,13 @@ Examples:
         help="Run single-tag inventory (0x0F)",
     )
     parser.add_argument(
+        "--set-power",
+        type=int,
+        default=None,
+        metavar="POWER",
+        help="Set reader transmit power (0-33)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Print hex frames and detailed round info",
@@ -402,15 +461,22 @@ Examples:
     run_info = args.info
     run_single = args.single
     run_inventory = args.inventory
+    run_set_power = args.set_power is not None
 
     # If no specific action requested, run quick test (info + single + one inventory)
-    if not run_info and not run_single and not run_inventory:
+    if not run_info and not run_single and not run_inventory and not run_set_power:
         run_info = True
         run_single = True
         run_inventory = True
         print("No specific action requested, running quick test...\n")
 
     exit_code = 0
+
+    if run_set_power:
+        code = test_set_power(reader, args.set_power, args.verbose)
+        if code != 0:
+            exit_code = code
+        print()
 
     if run_info:
         code = test_reader_info(reader, args.verbose)

@@ -65,6 +65,7 @@ STATUS_DESCRIPTIONS: Dict[int, str] = {
 CMD_INVENTORY_MULTIPLE = 0x01
 CMD_INVENTORY_SINGLE = 0x0F
 CMD_READER_INFO = 0x21
+CMD_SET_POWER = 0x2F
 
 # Reader type mapping
 READER_TYPES: Dict[int, str] = {
@@ -149,6 +150,20 @@ def build_inventory_single(addr: int) -> bytes:
 def build_reader_info_cmd(addr: int) -> bytes:
     """Build 0x21 reader information query command."""
     return build_cmd(addr, CMD_READER_INFO)
+
+
+def build_set_power_cmd(addr: int, power: int) -> bytes:
+    """Build 0x2F set power command.
+
+    Args:
+        addr: Reader address (0x00 for broadcast)
+        power: Power level (0-33)
+
+    Returns:
+        Complete frame bytes ready to send
+    """
+    data = bytes([power & 0xFF])
+    return build_cmd(addr, CMD_SET_POWER, data)
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +619,29 @@ class UHFReader188:
         info = parse_reader_info(resp.data)
         return info, ""
 
+    def set_power(self, power: int) -> Tuple[bool, str]:
+        """Set reader transmit power.
+
+        Args:
+            power: Power level (0-33)
+
+        Returns:
+            (success, error_string)
+        """
+        if power < 0 or power > 33:
+            return False, f"power={power} out of range [0,33]"
+
+        cmd = build_set_power_cmd(self.address, power)
+        resp, err = self._send_and_receive(cmd)
+        if err:
+            return False, err
+        assert resp is not None
+        if resp.re_cmd != CMD_SET_POWER:
+            return False, f"unexpected reCmd=0x{resp.re_cmd:02X}"
+        if resp.status != STATUS_OK:
+            return False, f"status=0x{resp.status:02X} {resp.status_description()}"
+        return True, ""
+
     def inventory_single(self) -> Tuple[List[TagInfo], int, str]:
         """Perform single-tag inventory (0x0F).
 
@@ -842,6 +880,8 @@ def main() -> int:
     parser.add_argument("--info", action="store_true", help="Query and display reader info")
     parser.add_argument("--inventory", action="store_true", help="Run multi-round cell inventory")
     parser.add_argument("--single", action="store_true", help="Run single-tag inventory (0x0F)")
+    parser.add_argument("--set-power", type=int, default=None, metavar="POWER",
+                        help="Set reader transmit power (0-33)")
     parser.add_argument("--verbose", action="store_true", help="Print hex frames")
     args = parser.parse_args()
 
@@ -863,6 +903,25 @@ def main() -> int:
         return 1
 
     try:
+        if args.set_power is not None:
+            power = args.set_power
+            if power < 0 or power > 33:
+                print(f"ERROR: power={power} out of range [0,33]")
+                return 1
+            ok, set_err = reader.set_power(power)
+            if set_err:
+                print(f"ERROR setting power: {set_err}")
+                return 1
+            print(f"Set power OK: {power}")
+            if args.info:
+                # Also read reader info to verify power changed
+                info, info_err = reader.read_reader_info()
+                if info_err:
+                    print(f"ERROR reading reader info: {info_err}")
+                    return 1
+                print(f"Reader info: {info}")
+            return 0
+
         if args.info:
             info, info_err = reader.read_reader_info()
             if info_err:

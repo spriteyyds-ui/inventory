@@ -468,7 +468,7 @@ mission_manager_node:
     uhf_reader_baudrate: 57600                                          # UHFReader188 串口波特率；必须为 57600
     uhf_reader_address: 0x00                                            # UHFReader188 设备地址；广播地址为 0x00
     uhf_reader_inventory_command: "0x01_short"                          # 询查命令格式：0x01_short 为短格式（仅QValue+Session）
-    uhf_reader_q_value: 2                                               # 0x01 询查 Q 值（0-8）；实测 Q=2 S0 稳定
+    uhf_reader_q_value: 6                                               # 0x01 询查 Q 值（0-8）；实测 Q=2 S0 稳定
     uhf_reader_session: 0                                               # 0x01 询查 Session（0-3，即 S0-S3）；实测 S0 稳定
     uhf_reader_scan_rounds_per_cell: 5                                  # 每个货格扫描轮数；多轮汇总去重
     uhf_reader_scan_interval_sec: 0.5                                   # 两轮之间间隔时间，单位 s
@@ -478,6 +478,8 @@ mission_manager_node:
     uhf_reader_fallback_single_cmd: true                                # 0x01 无标签时是否兜底尝试 0x0F 单标签询查
     uhf_reader_single_cmd_enabled: true                                 # 是否允许使用 0x0F 单标签询查兜底
     uhf_reader_debug_hex_log: true                                      # 是否打印发送帧和接收帧的十六进制调试日志
+    uhf_reader_set_power_on_open: true                                  # 每次打开 UHFReader188 串口后是否设置读写器功率；关闭则使用读写器当前功率
+    uhf_reader_power: 20                                                # UHFReader188 发射功率（0-33）；降低功率可缩短读距、减少跨柜串读
     scanner_enabled: true                                               # 是否启用盘库扫描动作接口；关闭会跳过扫描流程
     scan_duration_sec: 5.0                                              # 单次扫描动作持续时间，单位 s；主动串口模式建议与 rfid_scan_duration_sec 一致
     scan_timeout_sec: 5.0                                               # 等待扫描完成超时，单位 s；调大会允许扫描设备更慢返回

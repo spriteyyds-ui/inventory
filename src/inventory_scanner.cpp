@@ -105,6 +105,11 @@ void InventoryScanner::configure(const InventoryScannerConfig & config)
   config_.uhf_reader_scan_interval_sec = std::max(0.0, config_.uhf_reader_scan_interval_sec);
   config_.uhf_reader_frame_timeout_sec = std::max(0.1, config_.uhf_reader_frame_timeout_sec);
   config_.uhf_reader_max_follow_frames = std::max(0, config_.uhf_reader_max_follow_frames);
+  if (config_.uhf_reader_power < 0 || config_.uhf_reader_power > 33) {
+    std::cerr << "[scanner][RFID][uhf_reader188] WARNING uhf_reader_power="
+              << config_.uhf_reader_power << " out of range [0,33], clamping" << std::endl;
+    config_.uhf_reader_power = std::max(0, std::min(33, config_.uhf_reader_power));
+  }
 }
 
 const InventoryScannerConfig & InventoryScanner::config() const
@@ -321,6 +326,57 @@ std::vector<unsigned char> InventoryScanner::uhf_build_reader_info_cmd(int addr)
   return uhf_build_cmd(addr, 0x21, {});
 }
 
+std::vector<unsigned char> InventoryScanner::uhf_build_set_power_cmd(int addr, int power)
+{
+  std::vector<unsigned char> data = {static_cast<unsigned char>(power & 0xFF)};
+  return uhf_build_cmd(addr, 0x2F, data);
+}
+
+bool InventoryScanner::uhf_apply_power_setting()
+{
+  if (!config_.uhf_reader_set_power_on_open) {
+    return true;
+  }
+
+  int power = config_.uhf_reader_power;
+  auto cmd = uhf_build_set_power_cmd(config_.uhf_reader_address, power);
+
+  if (!uhf_reader188_send_cmd(cmd)) {
+    std::cerr << "[scanner][RFID][uhf_reader188] set power failed: send_cmd_failed" << std::endl;
+    return false;
+  }
+
+  std::vector<unsigned char> frame;
+  if (!uhf_reader188_read_frame(frame)) {
+    std::cerr << "[scanner][RFID][uhf_reader188] set power failed: read_frame_failed" << std::endl;
+    return false;
+  }
+
+  if (frame.size() < 5) {
+    std::cerr << "[scanner][RFID][uhf_reader188] set power failed: short_frame" << std::endl;
+    return false;
+  }
+
+  // frame[2]=reCmd, frame[3]=Status
+  unsigned char re_cmd = frame[2];
+  unsigned char status = frame[3];
+
+  if (re_cmd != 0x2F) {
+    std::cerr << "[scanner][RFID][uhf_reader188] set power failed: unexpected reCmd=0x"
+              << std::hex << static_cast<int>(re_cmd) << std::dec << std::endl;
+    return false;
+  }
+
+  if (status != 0x00) {
+    std::cerr << "[scanner][RFID][uhf_reader188] set power failed status=0x"
+              << std::hex << static_cast<int>(status) << std::dec << std::endl;
+    return false;
+  }
+
+  std::cout << "[scanner][RFID][uhf_reader188] set power ok power=" << power << std::endl;
+  return true;
+}
+
 bool InventoryScanner::start_uhf_reader188(std::string & error_message)
 {
   close_uhf_reader188_device();
@@ -372,6 +428,8 @@ bool InventoryScanner::start_uhf_reader188(std::string & error_message)
             << " session=S" << config_.uhf_reader_session
             << " rounds=" << config_.uhf_reader_scan_rounds_per_cell
             << " interval=" << config_.uhf_reader_scan_interval_sec
+            << " set_power_on_open=" << (config_.uhf_reader_set_power_on_open ? "true" : "false")
+            << " power=" << config_.uhf_reader_power
             << std::endl;
   return true;
 }
@@ -671,6 +729,11 @@ void InventoryScanner::uhf_run_cell_scan()
   if (!start_uhf_reader188(error_message)) {
     finish_uhf_reader188_scan(false, error_message);
     return;
+  }
+
+  // Set power on open (non-fatal: warn and continue on failure)
+  if (config_.uhf_reader_set_power_on_open) {
+    uhf_apply_power_setting();
   }
 
   // Perform multiple rounds of inventory

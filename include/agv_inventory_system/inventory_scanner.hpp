@@ -40,6 +40,8 @@ struct InventoryScannerConfig
   bool uhf_reader_fallback_single_cmd{true};
   bool uhf_reader_single_cmd_enabled{true};
   bool uhf_reader_debug_hex_log{false};
+  bool uhf_reader_set_power_on_open{true};
+  int uhf_reader_power{15};
 };
 
 enum class InventoryScanOutputSource
@@ -106,6 +108,8 @@ private:
     int addr, int q_value, int session);
   static std::vector<unsigned char> uhf_build_inventory_single(int addr);
   static std::vector<unsigned char> uhf_build_reader_info_cmd(int addr);
+  static std::vector<unsigned char> uhf_build_set_power_cmd(int addr, int power);
+  bool uhf_apply_power_setting();
   static bool uhf_parse_tags(
     const unsigned char * data, std::size_t length,
     std::set<std::string> & seen, std::vector<std::string> & rfids);
