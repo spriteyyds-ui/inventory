@@ -53,19 +53,11 @@ routes:
   right_route:
     frame_id: map
     waypoints:
-      - {x: 2.997, y: 0.022, yaw: -0.0611}
-      - {x: 5.516, y: -0.076, yaw: -0.2937}
+      - {x: 0.931, y: -0.061, yaw: 1.5140}
 
-      - {x: 5.534, y: -0.110, yaw: -0.7111}
-      - {x: 5.523, y: -0.116, yaw: -1.1151}
-      - {x: 5.660, y: -0.560, yaw: -1.4353}
-      - {x: 5.635, y: -0.585, yaw: -1.6500}
-      - {x: 5.612, y: -0.600, yaw: -1.8855}
+      - {x: 1.180, y: 6.074, yaw: 1.5039}
 
-      - {x: 5.600, y: -0.615, yaw: -2.1500}
-      - {x: 5.635, y: -0.615, yaw: -2.4000}
-      - {x: 5.690, y: -0.605, yaw: -2.7000}
-      - {x: 5.739, y: -0.592, yaw: 3.0800}
+      - {x: 1.384, y: 6.581, yaw: -0.1322}
 
 side_route_map:
   left: left_route
@@ -148,6 +140,44 @@ cabinet_entry_side_map:
   "36": left
 
 cabinet_gap_search_direction_map:
+  "1": backward
+  "2": forward
+  "3": backward
+  "4": forward
+  "5": backward
+  "6": forward
+  "7": backward
+  "8": forward
+  "9": backward
+  "10": forward
+  "11": backward
+  "12": forward
+  "13": backward
+  "14": forward
+  "15": backward
+  "16": forward
+  "17": backward
+  "18": forward
+  "19": forward
+  "20": backward
+  "21": forward
+  "22": backward
+  "23": forward
+  "24": backward
+  "25": forward
+  "26": backward
+  "27": forward
+  "28": backward
+  "29": forward
+  "30": backward
+  "31": forward
+  "32": backward
+  "33": forward
+  "34": backward
+  "35": forward
+  "36": backward
+
+cabinet_gap_entry_direction_map:
   "1": backward
   "2": forward
   "3": backward

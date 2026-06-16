@@ -253,7 +253,7 @@ inventory_auto_recharger:
     recharge_depart_wait_charging_clear_sec: 5.0                        # 废弃兼容参数；Python cancel 不再等待 charging flag 释放
     recharge_depart_require_set_charge_success: false                   # 废弃兼容参数；cancel 现在 best-effort 快速返回
     nav_goal_frame: map                                                 # 自动回充导航目标坐标系
-    charger_pose_x: 1.01353509531521975                                 # 自动回充导航目标 x 坐标，单位 m
+    charger_pose_x: 1.21353509531521975                                 # 自动回充导航目标 x 坐标，单位 m
     charger_pose_y: -0.226333288560603657                                # 自动回充导航目标 y 坐标，单位 m
     charger_pose_z: -0.121433301285056                                  # 自动回充导航目标姿态 z
     charger_pose_w: 0.9925995936625266                                  # 自动回充导航目标姿态 w
@@ -333,7 +333,7 @@ mission_manager_node:
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
     entry_center_offset_m: 0.40                                         # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
     entry_right_target_yaw_rad: -1.6026                                # 右侧进缝固定目标 yaw，单位 rad；map -Y，新地图方向相反
-    entry_left_target_yaw_rad: 1.5708                                   # 左侧进缝固定目标 yaw，单位 rad；map +Y，新地图方向相反
+    entry_left_target_yaw_rad: -0.1322                                   # 左侧进缝固定目标 yaw，单位 rad；map +Y，新地图方向相反
     entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
@@ -347,7 +347,7 @@ mission_manager_node:
     entry_side_hold_kp: 0.00                                            # 目标侧距离保持比例增益，单位 rad/s/m；调大会更积极贴合目标侧距离
     entry_side_hold_min_valid_points: 5                                 # 启用侧向保持所需最小有效雷达点数，单位 个；调大会更保守
     max_dynamic_entry_distance_m: 10.0                                  # 动态计算进缝距离安全上限，单位 m；调小可防止异常目标导致长距离前进
-    enter_stop_distance: 0.20                                           # 反应式进缝硬停止距离阈值，单位 m；调大会更早停车
+    enter_stop_distance: 0.10                                           # 反应式进缝硬停止距离阈值，单位 m；调大会更早停车
     enter_slow_distance: 0.50                                           # 反应式进缝减速距离阈值，单位 m；调大会更早减速
     enter_front_sector_start_deg: -20.0                                 # 进缝前方安全扇区起始角，单位 deg；调小扩大右前检测
     enter_front_sector_end_deg: 20.0                                    # 进缝前方安全扇区结束角，单位 deg；调大扩大左前检测
@@ -355,7 +355,7 @@ mission_manager_node:
     enter_front_left_sector_end_deg: 75.0                               # 进缝左前安全扇区结束角，单位 deg；调大会扩大左侧覆盖
     enter_left_side_sector_start_deg: 75.0                              # 进缝左侧安全扇区起始角，单位 deg；调大会更偏侧后
     enter_left_side_sector_end_deg: 120.0                               # 进缝左侧安全扇区结束角，单位 deg；调大会扩大后侧覆盖
-    enter_front_right_sector_start_deg: -75.0                           # 进缝右前安全扇区起始角，单位 deg；调小扩大右侧覆盖
+    enter_front_right_sector_start_deg: -55.0                           # 进缝右前安全扇区起始角，单位 deg；调小扩大右侧覆盖
     enter_front_right_sector_end_deg: -20.0                             # 进缝右前安全扇区结束角，单位 deg；调小缩小正前覆盖
     enter_right_side_sector_start_deg: -120.0                           # 进缝右侧安全扇区起始角，单位 deg；调小扩大后侧覆盖
     enter_right_side_sector_end_deg: -75.0                              # 进缝右侧安全扇区结束角，单位 deg；调小更偏侧前
@@ -552,15 +552,18 @@ mission_manager_node:
     same_side_next_search_enabled: true                                 # 退出间隙后是否启用同侧下一目标搜索；关闭会减少连续盘库能力
     same_side_search_speed: 0.15                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
     same_side_search_timeout_sec: 120.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
-    same_side_pose_hold_enabled: true                                   # 同侧搜索时是否保持固定 y 和航向；关闭会减少位姿约束
+    same_side_pose_hold_enabled: true                                   # 同侧搜索期间是否启用 y/yaw 闭环修正；关闭则开环直走
+    same_side_fixed_y_from_current_pose_enabled: true                  # 同侧搜索开始时是否用当前位姿 y 作为 fixed_y；false 则使用 YAML 配置值
     same_side_left_fixed_y_m: -2.009                                     # 左/上排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_left_fixed_yaw_rad: 0.0000                                  # 左/上排同侧搜索保持的航向，单位 rad；新地图方向相反，由 -π 改为 0
-    same_side_right_fixed_y_m: -0.764                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
+    same_side_right_fixed_y_m: 6.581                                   # 右/下排同侧搜索保持的 y 坐标，单位 m；改动会改变横向基准
     same_side_right_fixed_yaw_rad: 0.0                                  # 右/下排同侧搜索保持的航向，单位 rad；新地图方向相反，由 -π 改为 0
     same_side_yaw_kp: 0.40                                              # 同侧搜索航向保持比例增益；调大会纠偏更强
-    same_side_yaw_deadband_rad: 0.08                                    # 同侧搜索航向误差死区，单位 rad；调大会减少小幅修正
-    same_side_y_kp: 0.15                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
-    same_side_y_deadband_m: 0.15                                        # 同侧搜索 y 坐标误差死区，单位 m；调大会减少小幅横向修正
+    same_side_yaw_kd: 0.0                                               # 同侧搜索航向微分增益；大于 0 启用 PD 控制，抑制超调
+    same_side_yaw_deadband_rad: 0.02                                    # 同侧搜索航向误差死区，单位 rad；超过后才施加 yaw 修正
+    same_side_min_angular: 0.03                                         # 同侧搜索最小角速度，单位 rad/s；超过 yaw 死区后保证最小修正
+    same_side_y_kp: 0.30                                                # 同侧搜索 y 坐标保持比例增益；调大会横向修正更强
+    same_side_y_deadband_m: 0.05                                        # 同侧搜索 y 坐标误差死区，单位 m；调大会减少小幅横向修正
     same_side_y_correction_sign: 1.0                                    # 同侧搜索 y 修正方向符号；改为负值会反转横向修正方向
     same_side_max_angular: 0.15                                         # 同侧搜索最大角速度，单位 rad/s；调大会允许更快姿态修正
     full_inventory_same_side_recognition_delay_enabled: true            # 同侧继续搜索下一目标时是否延迟开启/采信识别；仅作用于全量盘库同侧分支
@@ -570,9 +573,12 @@ mission_manager_node:
     rear_target_turn_yaw_tolerance_rad: 0.08                             # 后方目标 yaw 微调收敛阈值，单位 rad；调小更准但耗时更久
     rear_target_turn_timeout_sec: 10.0                                   # 后方目标 yaw 微调超时，单位 s；超时进入全量盘库 ERROR
     rear_target_backup_enabled: true                                     # yaw 微调后是否倒车固定距离，再进入同侧搜索
-    rear_target_backup_distance_m: 4.00                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
+    rear_target_backup_distance_m: 3.00                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
     rear_target_backup_speed: 0.20                                       # 后方目标倒车速度，单位 m/s；低速保证现场安全
     rear_target_backup_timeout_sec: 120.0                                # 后方目标倒车超时，单位 s；1.5m/0.08m/s 约 18.75s
+    rear_target_backup_pose_hold_enabled: true                          # 回退阶段是否启用 y/yaw 闭环修正；关闭则只用 yaw_hold_command
+    rear_target_backup_fixed_y_from_current_pose_enabled: true          # 回退开始时是否用当前位姿 y 作为 fixed_y；false 则用 same_side active fixed_y
+    rear_target_backup_y_correction_sign: -1.0                          # 回退 y 修正方向符号；-1.0 因倒车时 angular.z 横向效应与前进相反
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
