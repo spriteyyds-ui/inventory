@@ -353,10 +353,18 @@ namespace agv_inventory_system
       std::cout << "[web_api_client][PLC] WARNING plc_open_query_param is empty, fallback to "
                 << query_param << std::endl;
     }
+
+    // Map cabinet_id to PLC shelf_id: cabinet 19-36 -> shelfId 25-42
+    int plc_shelf_id = cabinet_id;
+    if (cabinet_id >= 19 && cabinet_id <= 36) {
+      plc_shelf_id = cabinet_id + 6;
+    }
+
     const std::string url = base_url + endpoint + "?" + query_param + "=" +
-                            std::to_string(cabinet_id);
+                            std::to_string(plc_shelf_id);
 
     std::cout << "[web_api_client][PLC] open cabinet request cabinet=" << cabinet_id
+              << " mapped_shelf_id=" << plc_shelf_id
               << " query_param=" << query_param
               << " url=" << url
               << " verify_tls=" << (params_.plc_verify_tls ? "true" : "false")
@@ -364,6 +372,20 @@ namespace agv_inventory_system
               << " timeout_sec=" << params_.plc_request_timeout_sec
               << " retry_count=" << params_.plc_retry_count << std::endl;
     return requestHttpGet("PLC open cabinet", url);
+  }
+
+  bool WebApiClient::requestPlcClose() const
+  {
+    const std::string base_url = trim_trailing_slashes(params_.plc_server_url);
+    const std::string endpoint = ensure_leading_slash(params_.plc_close_endpoint);
+    const std::string url = base_url + endpoint;
+
+    std::cout << "[web_api_client][PLC] close all request"
+              << " url=" << url
+              << " verify_tls=" << (params_.plc_verify_tls ? "true" : "false")
+              << " timeout_sec=" << params_.plc_request_timeout_sec
+              << " retry_count=" << params_.plc_retry_count << std::endl;
+    return requestHttpGet("PLC close all", url);
   }
 
   bool WebApiClient::requestCloseGap(const std::string &gap_id) const

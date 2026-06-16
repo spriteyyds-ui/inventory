@@ -59,6 +59,7 @@ public:
 
   bool requestOpenGap(const std::string & gap_id) const;
   bool requestOpenCabinet(int cabinet_id) const;
+  bool requestPlcClose() const;
   bool requestCloseGap(const std::string & gap_id) const;
   bool reportRobotStatus(const std::string & state) const;
   bool reportInventoryResult(

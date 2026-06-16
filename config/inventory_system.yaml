@@ -367,10 +367,10 @@ mission_manager_node:
 
     distance_tolerance: 0.25                                            # 目标侧向距离对齐允许误差，单位 m；调大会更容易判定稳定，调小对齐更严格
     target_distance_aligned_min_m: 0.25                                 # 目标侧向距离合适区间下限，单位 m；低于该值认为过近并小幅后退
-    target_distance_aligned_max_m: 0.75                                 # 目标侧向距离合适区间上限，单位 m；不高于该值且不低于下限时可稳定后找缝
+    target_distance_aligned_max_m: 2.75                                 # 目标侧向距离合适区间上限，单位 m；不高于该值且不低于下限时可稳定后找缝
     target_distance_gap_threshold_m: 1.50                               # 目标侧向距离开放空间阈值，单位 m；超过该值认为雷达扫到缝隙并停止向前追
     target_distance_gap_confirm_count: 1                                # 开放空间判定连续确认次数，单位 次；调大会更抗噪但可能延迟进入找缝
-    distance_stable_time_sec: 1.2                                       # 距离和航向保持稳定所需时长，单位 s；调大会确认更稳但等待更久
+    distance_stable_time_sec: 0.2                                       # 距离和航向保持稳定所需时长，单位 s；调大会确认更稳但等待更久
     recognition_timeout_sec: 1.0                                        # 跟踪有效性使用的识别超时时间，单位 s；调大会更容忍短暂丢识别
     target_recognition_stable_frames: 3                                 # 停止 Nav2 路线搜索前所需连续识别帧数，单位 帧；调大会更稳但停车更慢
     target_recognition_stable_time_sec: 0.30                            # 目标识别稳定所需最小时长，单位 s；调大会减少误停，调小响应更快
@@ -425,7 +425,7 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 60.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 60.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: false                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
     plc_server_url: "https://192.168.1.100:8099"                         # Java/PLC HTTPS 服务地址；使用 HTTPS 与 Java 8099 网关通信
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
@@ -534,6 +534,14 @@ mission_manager_node:
 
     full_inventory_enabled: true                                        # 是否启用全量盘库队列；关闭会跳过全量任务流程
     inventory_plan: [18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]  # 全量盘库货柜编号计划列表；左侧18→1，右侧19→36，匹配现场巡检顺序
+
+    # --- 全量盘库 map-state 恢复参数 ---
+    full_inventory_start_preopen_cabinets: [18, 19]                      # 全量盘库启动前预开柜列表；复用现有 PLC open 逻辑
+    full_inventory_restore_close_all_wait_sec: 120.0                     # 跨侧/结束前全关后等待时间，单位 s；等待机械复位
+    full_inventory_restore_open_cabinets: [18, 19]                       # 跨侧/结束前恢复开柜列表；复用现有 PLC open 逻辑
+    full_inventory_restore_after_left_enabled: true                      # 左侧完成后是否执行 close all → wait → open 恢复流程
+    full_inventory_restore_after_done_enabled: true                      # 全部完成后是否执行 close all → wait → open 恢复流程
+    full_inventory_preopen_interval_sec: 10.0                           # 连续开柜指令之间的间隔时间，单位 s；open 18 后等待再 open 19
     recognize_in_idle: true                                             # IDLE 状态是否保持货柜编号识别；开启便于待机观察，关闭可省资源
     recognize_during_nav: false                                         # Nav2 导航期间是否保持识别；开启可提前发现目标但占用算力
     inventory_left_route: left_route                                    # 左/上排盘库使用的路线名；需与路线航点配置一致
@@ -560,7 +568,7 @@ mission_manager_node:
     rear_target_turn_yaw_tolerance_rad: 0.08                             # 后方目标 yaw 微调收敛阈值，单位 rad；调小更准但耗时更久
     rear_target_turn_timeout_sec: 10.0                                   # 后方目标 yaw 微调超时，单位 s；超时进入全量盘库 ERROR
     rear_target_backup_enabled: true                                     # yaw 微调后是否倒车固定距离，再进入同侧搜索
-    rear_target_backup_distance_m: 5.00                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
+    rear_target_backup_distance_m: 4.00                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
     rear_target_backup_speed: 0.20                                       # 后方目标倒车速度，单位 m/s；低速保证现场安全
     rear_target_backup_timeout_sec: 120.0                                # 后方目标倒车超时，单位 s；1.5m/0.08m/s 约 18.75s
 

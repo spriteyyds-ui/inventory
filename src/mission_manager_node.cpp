@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <future>
 #include <iomanip>
 #include <iterator>
 #include <limits>
@@ -460,6 +461,26 @@ public:
     full_inventory_sequence_.assign(
       full_inventory_sequence_param.begin(),
       full_inventory_sequence_param.end());
+    {
+      const auto preopen_param = declare_parameter<std::vector<int64_t>>(
+        "full_inventory_start_preopen_cabinets", std::vector<int64_t>{});
+      full_inventory_start_preopen_cabinets_.assign(
+        preopen_param.begin(), preopen_param.end());
+    }
+    full_inventory_restore_close_all_wait_sec_ =
+      declare_parameter<double>("full_inventory_restore_close_all_wait_sec", 120.0);
+    {
+      const auto restore_open_param = declare_parameter<std::vector<int64_t>>(
+        "full_inventory_restore_open_cabinets", std::vector<int64_t>{});
+      full_inventory_restore_open_cabinets_.assign(
+        restore_open_param.begin(), restore_open_param.end());
+    }
+    full_inventory_restore_after_left_enabled_ =
+      declare_parameter<bool>("full_inventory_restore_after_left_enabled", true);
+    full_inventory_restore_after_done_enabled_ =
+      declare_parameter<bool>("full_inventory_restore_after_done_enabled", true);
+    full_inventory_preopen_interval_sec_ =
+      declare_parameter<double>("full_inventory_preopen_interval_sec", 10.0);
     full_inventory_left_route_ =
       declare_parameter<std::string>("inventory_left_route", "left_route");
     full_inventory_right_route_ =
@@ -859,6 +880,7 @@ private:
     FULL_INVENTORY_REAR_TARGET_BACKUP,
     FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
     FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
+    FULL_INVENTORY_RESTORE_CLOSE_WAIT,
     FULL_INVENTORY_COMPLETE,
   };
 
@@ -893,6 +915,8 @@ private:
     FULL_INVENTORY_REAR_TARGET_REORIENT,
     FULL_INVENTORY_ADVANCE_ROUTE,
     FULL_INVENTORY_BETWEEN_SIDE_ROUTE,
+    FULL_INVENTORY_RESTORE_OPEN_BETWEEN_SIDES,
+    FULL_INVENTORY_RESTORE_OPEN_FINAL,
   };
 
   enum class WaitGapPhase
@@ -1159,6 +1183,8 @@ private:
         return "FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH";
       case State::FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES:
         return "FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES";
+      case State::FULL_INVENTORY_RESTORE_CLOSE_WAIT:
+        return "FULL_INVENTORY_RESTORE_CLOSE_WAIT";
       case State::FULL_INVENTORY_COMPLETE:
         return "FULL_INVENTORY_COMPLETE";
       default:
@@ -1181,6 +1207,10 @@ private:
         return "FULL_INVENTORY_ADVANCE_ROUTE";
       case PlcOpenContinuation::FULL_INVENTORY_BETWEEN_SIDE_ROUTE:
         return "FULL_INVENTORY_BETWEEN_SIDE_ROUTE";
+      case PlcOpenContinuation::FULL_INVENTORY_RESTORE_OPEN_BETWEEN_SIDES:
+        return "FULL_INVENTORY_RESTORE_OPEN_BETWEEN_SIDES";
+      case PlcOpenContinuation::FULL_INVENTORY_RESTORE_OPEN_FINAL:
+        return "FULL_INVENTORY_RESTORE_OPEN_FINAL";
       case PlcOpenContinuation::NONE:
       default:
         return "NONE";
@@ -2047,7 +2077,9 @@ private:
       "rear_backup=%s rear_backup_distance=%.2f rear_backup_speed=%.3f rear_backup_timeout=%.2f "
       "final_recognition_wait=%.2f "
       "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
-      "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f",
+      "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f "
+      "preopen_cabinets=%s restore_close_wait=%.2f restore_open_cabinets=%s "
+      "restore_after_left=%s restore_after_done=%s preopen_interval=%.2f",
       full_inventory_enabled_ ? "true" : "false",
       cabinet_unit_to_string(full_inventory_sequence_).c_str(),
       full_inventory_left_route_.c_str(),
@@ -2088,7 +2120,13 @@ private:
       post_gap_detect_advance_enabled_ ? "true" : "false",
       post_gap_detect_advance_distance_m_,
       post_gap_detect_advance_speed_,
-      post_gap_detect_advance_timeout_sec_);
+      post_gap_detect_advance_timeout_sec_,
+      cabinet_unit_to_string(full_inventory_start_preopen_cabinets_).c_str(),
+      full_inventory_restore_close_all_wait_sec_,
+      cabinet_unit_to_string(full_inventory_restore_open_cabinets_).c_str(),
+      full_inventory_restore_after_left_enabled_ ? "true" : "false",
+      full_inventory_restore_after_done_enabled_ ? "true" : "false",
+      full_inventory_preopen_interval_sec_);
     return true;
   }
 
@@ -5536,6 +5574,45 @@ private:
       cabinet_id) != plc_supported_cabinets_.end();
   }
 
+  bool is_full_inventory_preopened_cabinet(int cabinet_id) const
+  {
+    return std::find(
+      full_inventory_preopened_cabinets_.begin(),
+      full_inventory_preopened_cabinets_.end(),
+      cabinet_id) != full_inventory_preopened_cabinets_.end();
+  }
+
+  // Check if cabinet is the first in its two-cabinet group based on inventory_plan index.
+  // Even index = first cabinet in group (needs PLC open), odd index = second cabinet (skip open).
+  bool is_full_inventory_group_open_target(int cabinet_id) const
+  {
+    if (full_inventory_sequence_.empty()) {
+      return true;  // Default to open if no sequence
+    }
+    for (std::size_t i = 0; i < full_inventory_sequence_.size(); ++i) {
+      if (full_inventory_sequence_[i] == cabinet_id) {
+        return (i % 2 == 0);  // Even index = first in group = needs open
+      }
+    }
+    return true;  // Not found in sequence, default to open
+  }
+
+  // Get the group partner cabinet for logging (the other cabinet in the two-cabinet group)
+  int get_full_inventory_group_partner(int cabinet_id) const
+  {
+    for (std::size_t i = 0; i < full_inventory_sequence_.size(); ++i) {
+      if (full_inventory_sequence_[i] == cabinet_id) {
+        if (i % 2 == 0 && i + 1 < full_inventory_sequence_.size()) {
+          return full_inventory_sequence_[i + 1];  // First in group, partner is next
+        } else if (i % 2 == 1 && i > 0) {
+          return full_inventory_sequence_[i - 1];  // Second in group, partner is previous
+        }
+        break;
+      }
+    }
+    return -1;  // No partner found
+  }
+
   bool validate_plc_open_config(std::string & reason) const
   {
     reason.clear();
@@ -5588,11 +5665,13 @@ private:
     }
 
     const std::string fail_policy = normalize_plc_fail_policy(plc_fail_policy_);
+    const int plc_shelf_id = (cabinet_id >= 19 && cabinet_id <= 36) ? cabinet_id + 6 : cabinet_id;
     publish_plc_log(
       "open start mode=" + current_plc_task_mode() +
       " state=" + state_to_string(state_) +
       " context=" + context +
       " target_cabinet=" + std::to_string(cabinet_id) +
+      " mapped_shelf_id=" + std::to_string(plc_shelf_id) +
       " query_param=" + plc_open_query_param_ +
       " server_url=" + plc_server_url_ +
       " endpoint=" + plc_open_endpoint_ +
@@ -5659,6 +5738,49 @@ private:
         " target_cabinet=" + std::to_string(cabinet_id) +
         " continuation=" + plc_open_continuation_to_string(continuation));
       return true;
+    }
+
+    // Skip PLC HTTP open AND duplicate wait for pre-opened cabinets
+    // (open + wait already done in start_preopen phase)
+    if (full_inventory_active_ && is_full_inventory_preopened_cabinet(cabinet_id)) {
+      publish_plc_log(
+        "skip open target=" + std::to_string(cabinet_id) +
+        " because it was preopened continuation=" +
+        plc_open_continuation_to_string(continuation));
+      publish_plc_log(
+        "[PLC] target already preopened and waited, skip duplicate open wait"
+        " target_cabinet=" + std::to_string(cabinet_id) +
+        " continuation=" + plc_open_continuation_to_string(continuation));
+      // Preopen phase already completed plc_open_wait_sec wait; skip re-entering WAIT_OPEN_READY
+      plc_open_wait_required_ = false;
+      handle_plc_open_wait_done(false);
+      return true;
+    }
+
+    // Skip PLC open for second cabinet in two-cabinet group (odd index in inventory_plan)
+    if (full_inventory_active_ && !is_full_inventory_group_open_target(cabinet_id)) {
+      const int partner = get_full_inventory_group_partner(cabinet_id);
+      publish_plc_log(
+        "skip open target=" + std::to_string(cabinet_id) +
+        " because it is the second cabinet in group [" +
+        std::to_string(partner) + "," + std::to_string(cabinet_id) + "]" +
+        " continuation=" + plc_open_continuation_to_string(continuation));
+      plc_open_wait_required_ = false;
+      // Do NOT call clear_plc_open_wait_context() here - handle_plc_open_wait_done() will do it
+      // and needs the continuation to still be set
+      handle_plc_open_wait_done(false);
+      return true;
+    }
+
+    // Log group info for full inventory mode
+    if (full_inventory_active_) {
+      const int partner = get_full_inventory_group_partner(cabinet_id);
+      if (partner > 0) {
+        publish_plc_log(
+          "open group first target=" + std::to_string(cabinet_id) +
+          " group=[" + std::to_string(cabinet_id) + "," + std::to_string(partner) + "]" +
+          " continuation=" + plc_open_continuation_to_string(continuation));
+      }
     }
 
     publish_stop();
@@ -5748,6 +5870,12 @@ private:
         return;
       case PlcOpenContinuation::FULL_INVENTORY_BETWEEN_SIDE_ROUTE:
         (void)start_full_inventory_target_route("PLC open wait done, between-side auto charge finished");
+        return;
+      case PlcOpenContinuation::FULL_INVENTORY_RESTORE_OPEN_BETWEEN_SIDES:
+        on_full_inventory_restore_open_done(false);
+        return;
+      case PlcOpenContinuation::FULL_INVENTORY_RESTORE_OPEN_FINAL:
+        on_full_inventory_restore_open_done(true);
         return;
       case PlcOpenContinuation::NONE:
       default:
@@ -5846,6 +5974,10 @@ private:
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
     clear_full_inventory_rear_target_context("reset_full_inventory_context");
     clear_plc_open_wait_context();
+    full_inventory_preopened_cabinets_.clear();
+    full_inventory_restore_active_ = false;
+    full_inventory_restore_final_ = false;
+    full_inventory_restore_close_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
   }
 
   void clear_full_inventory_rear_target_context(
@@ -6240,6 +6372,47 @@ private:
       fail_full_inventory(reason);
       return false;
     }
+
+    // Pre-open start cabinets (e.g. 18, 19) before first target - sequential with interval
+    full_inventory_preopened_cabinets_.clear();
+    if (plc_http_enabled_ && !full_inventory_start_preopen_cabinets_.empty()) {
+      for (std::size_t i = 0; i < full_inventory_start_preopen_cabinets_.size(); ++i) {
+        const int cab = full_inventory_start_preopen_cabinets_[i];
+        if (!is_plc_supported_cabinet(cab)) {
+          continue;
+        }
+        publish_full_inventory_log(
+          "[start_preopen] open cabinet=" + std::to_string(cab));
+        if (!request_plc_open_for_cabinet(cab, "start_preopen")) {
+          reason = mission_error_reason_.empty() ?
+            "start preopen PLC open 失败" : mission_error_reason_;
+          return false;
+        }
+        full_inventory_preopened_cabinets_.push_back(cab);
+        // Wait interval before next open (except after last cabinet)
+        if (i + 1 < full_inventory_start_preopen_cabinets_.size() &&
+            full_inventory_preopen_interval_sec_ > 0.0) {
+          publish_full_inventory_log(
+            "[start_preopen] wait interval " + format_seconds(full_inventory_preopen_interval_sec_) + " before next open");
+          const auto interval_until = this->now() + rclcpp::Duration::from_seconds(full_inventory_preopen_interval_sec_);
+          while (this->now() < interval_until) {
+            rclcpp::sleep_for(std::chrono::milliseconds(100));
+          }
+        }
+      }
+      // Wait for plc_open_wait_sec before starting route
+      if (plc_open_wait_sec_ > 0.0) {
+        publish_full_inventory_log(
+          "[start_preopen] wait open done " + format_seconds(plc_open_wait_sec_));
+        const auto wait_until = this->now() + rclcpp::Duration::from_seconds(plc_open_wait_sec_);
+        while (this->now() < wait_until) {
+          rclcpp::sleep_for(std::chrono::milliseconds(100));
+        }
+      }
+      publish_full_inventory_log(
+        "[start_preopen] done, start target=" + std::to_string(current_target_cabinet_));
+    }
+
     if (!begin_plc_open_wait_for_target(
         current_target_cabinet_,
         PlcOpenContinuation::FULL_INVENTORY_START_ROUTE,
@@ -7476,6 +7649,19 @@ private:
 
   void start_between_side_auto_charge(int next_target)
   {
+    // If restore-after-left is enabled, do close all → wait → open before auto charge
+    if (full_inventory_restore_after_left_enabled_ &&
+        !full_inventory_restore_open_cabinets_.empty())
+    {
+      start_full_inventory_restore(next_target, false);
+      return;
+    }
+
+    start_between_side_auto_charge_after_restore(next_target);
+  }
+
+  void start_between_side_auto_charge_after_restore(int next_target)
+  {
     clear_full_inventory_rear_target_context("start_between_side_auto_charge");
     reset_between_side_auto_charge_runtime();
     between_side_auto_charge_active_ = true;
@@ -7498,6 +7684,156 @@ private:
     set_state(
       State::FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
       "[FULL_INVENTORY] auto charge between sides target=" + std::to_string(next_target));
+  }
+
+  // --- Full inventory restore: close all → wait → open → continue ---
+  void start_full_inventory_restore(int finished_target, bool is_final)
+  {
+    publish_full_inventory_log(
+      "[restore] after target=" + std::to_string(finished_target) + " close all" +
+      std::string(is_final ? " (final)" : ""));
+
+    if (!plc_http_enabled_) {
+      // PLC disabled, skip close/open but still wait
+      publish_full_inventory_log("[restore] plc_http_enabled=false, skip close/open");
+      full_inventory_restore_active_ = true;
+      full_inventory_restore_final_ = is_final;
+      full_inventory_restore_close_start_time_ = this->now();
+      set_state(
+        State::FULL_INVENTORY_RESTORE_CLOSE_WAIT,
+        "[FULL_INVENTORY] restore close wait (PLC disabled) finished_target=" +
+        std::to_string(finished_target) + " is_final=" + std::string(is_final ? "true" : "false"));
+      return;
+    }
+
+    // Send PLC /close (close all)
+    if (!web_api_client_.requestPlcClose()) {
+      const std::string reason = "PLC close all 失败";
+      if (plc_continue_without_plc()) {
+        RCLCPP_WARN(get_logger(), "[mission_manager][FULL_INVENTORY][restore] %s, continue_without_plc", reason.c_str());
+        publish_full_inventory_log("[restore] WARNING " + reason + ", continue_without_plc");
+      } else {
+        fail_full_inventory("[restore] " + reason);
+        return;
+      }
+    } else {
+      publish_full_inventory_log("[restore] close all request sent");
+    }
+
+    full_inventory_restore_active_ = true;
+    full_inventory_restore_final_ = is_final;
+    full_inventory_restore_close_start_time_ = this->now();
+    set_state(
+      State::FULL_INVENTORY_RESTORE_CLOSE_WAIT,
+      "[FULL_INVENTORY] restore close wait finished_target=" +
+      std::to_string(finished_target) + " is_final=" + std::string(is_final ? "true" : "false"));
+  }
+
+  void handle_full_inventory_restore_close_wait_state()
+  {
+    publish_stop();
+    if (!full_inventory_restore_active_) {
+      fail_full_inventory("[restore] restore_active=false in CLOSE_WAIT state");
+      return;
+    }
+
+    const double wait_sec = std::max(0.0, full_inventory_restore_close_all_wait_sec_);
+    const double elapsed =
+      full_inventory_restore_close_start_time_.nanoseconds() == 0 ?
+      0.0 : (this->now() - full_inventory_restore_close_start_time_).seconds();
+
+    if (elapsed < wait_sec) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 5000,
+        "[mission_manager][FULL_INVENTORY][restore] waiting close all done elapsed=%.1f/%.1f",
+        elapsed, wait_sec);
+      return;
+    }
+
+    publish_full_inventory_log(
+      "[restore] wait close all done " + format_seconds(wait_sec));
+
+    // Open restore cabinets - sequential with interval
+    if (plc_http_enabled_ && !full_inventory_restore_open_cabinets_.empty()) {
+      for (std::size_t i = 0; i < full_inventory_restore_open_cabinets_.size(); ++i) {
+        const int cab = full_inventory_restore_open_cabinets_[i];
+        if (!is_plc_supported_cabinet(cab)) {
+          continue;
+        }
+        publish_full_inventory_log("[restore] open cabinet=" + std::to_string(cab));
+        if (!request_plc_open_for_cabinet(cab, "restore_open")) {
+          if (!plc_continue_without_plc()) {
+            fail_full_inventory("[restore] PLC open failed cabinet=" + std::to_string(cab));
+            return;
+          }
+        }
+        // Mark as preopened so target-level open is skipped
+        if (!is_full_inventory_preopened_cabinet(cab)) {
+          full_inventory_preopened_cabinets_.push_back(cab);
+        }
+        // Wait interval before next open (except after last cabinet)
+        if (i + 1 < full_inventory_restore_open_cabinets_.size() &&
+            full_inventory_preopen_interval_sec_ > 0.0) {
+          publish_full_inventory_log(
+            "[restore] wait interval " + format_seconds(full_inventory_preopen_interval_sec_) + " before next open");
+          const auto interval_until = this->now() + rclcpp::Duration::from_seconds(full_inventory_preopen_interval_sec_);
+          while (this->now() < interval_until) {
+            rclcpp::sleep_for(std::chrono::milliseconds(100));
+          }
+        }
+      }
+      // Wait for plc_open_wait_sec before continuing
+      if (plc_open_wait_sec_ > 0.0) {
+        publish_full_inventory_log(
+          "[restore] wait open done " + format_seconds(plc_open_wait_sec_));
+        const auto wait_until = this->now() + rclcpp::Duration::from_seconds(plc_open_wait_sec_);
+        while (this->now() < wait_until) {
+          rclcpp::sleep_for(std::chrono::milliseconds(100));
+        }
+      }
+    }
+
+    // Enter WAIT_OPEN_READY with appropriate continuation
+    const auto continuation = full_inventory_restore_final_ ?
+      PlcOpenContinuation::FULL_INVENTORY_RESTORE_OPEN_FINAL :
+      PlcOpenContinuation::FULL_INVENTORY_RESTORE_OPEN_BETWEEN_SIDES;
+
+    plc_open_wait_target_cabinet_ = -1;
+    plc_open_wait_continuation_ = continuation;
+    plc_open_wait_context_ = "restore_open";
+    plc_open_wait_required_ = true;
+
+    publish_plc_log(
+      "enter fixed open wait (restore) continuation=" +
+      plc_open_continuation_to_string(continuation) +
+      " wait_sec=" + format_seconds(plc_open_wait_sec_));
+    set_flow_state(
+      State::WAIT_OPEN_READY,
+      "[PLC] restore 开柜后固定等待 wait=" + format_seconds(plc_open_wait_sec_) +
+      " continuation=" + plc_open_continuation_to_string(continuation));
+  }
+
+  void on_full_inventory_restore_open_done(bool is_final)
+  {
+    full_inventory_restore_active_ = false;
+
+    if (is_final) {
+      // Final restore: return/ensure charging point then done
+      publish_full_inventory_log(
+        "[restore] done, return/ensure charging point, mission complete");
+      (void)start_finish_action(
+        "[FULL_INVENTORY] restore done, execute finish_return_mode",
+        mission_force_map_origin_on_finish_);
+      return;
+    }
+
+    // Between-sides restore: return/ensure charging point then start next side
+    const int next_target = full_inventory_index_ < full_inventory_sequence_.size() ?
+      full_inventory_sequence_[full_inventory_index_] : -1;
+    publish_full_inventory_log(
+      "[restore] done, return/ensure charging point, next target=" +
+      std::to_string(next_target));
+    start_between_side_auto_charge_after_restore(next_target);
   }
 
   void continue_full_inventory_after_between_side_auto_charge()
@@ -7696,6 +8032,12 @@ private:
         " next_target=-1 same_side=false");
       if (!flush_inventory_upload_batch_for_mission_complete("all_cabinets_complete")) {
         fail_full_inventory("RFID final batch upload failed at all_cabinets_complete");
+        return;
+      }
+      if (full_inventory_restore_after_done_enabled_ &&
+          !full_inventory_restore_open_cabinets_.empty())
+      {
+        start_full_inventory_restore(finished_target, true);
         return;
       }
       publish_full_inventory_log("all targets completed, execute finish_return_mode=" + finish_return_mode_);
@@ -11464,6 +11806,11 @@ private:
           handle_plc_open_wait_done();
           break;
         }
+        // PLC disabled: dispatch by continuation
+        if (plc_open_wait_continuation_ != PlcOpenContinuation::NONE) {
+          handle_plc_open_wait_done(false);
+          break;
+        }
         if (single_cabinet_motion_active_) {
           const int target_cabinet = active_single_cabinet_scan_cabinet();
           set_single_cabinet_state(
@@ -11817,6 +12164,11 @@ private:
         break;
       }
 
+      case State::FULL_INVENTORY_RESTORE_CLOSE_WAIT: {
+        handle_full_inventory_restore_close_wait_state();
+        break;
+      }
+
       case State::SINGLE_CABINET_NAV_TO_TARGET: {
         handle_nav_route_state();
         break;
@@ -12146,6 +12498,16 @@ private:
   bool single_cabinet_close_gap_after_final_exit_{true};
   bool full_inventory_enabled_{true};
   std::vector<int> full_inventory_sequence_{18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36};
+  std::vector<int> full_inventory_start_preopen_cabinets_{};
+  double full_inventory_restore_close_all_wait_sec_{120.0};
+  std::vector<int> full_inventory_restore_open_cabinets_{};
+  bool full_inventory_restore_after_left_enabled_{true};
+  bool full_inventory_restore_after_done_enabled_{true};
+  double full_inventory_preopen_interval_sec_{10.0};
+  std::vector<int> full_inventory_preopened_cabinets_{};
+  bool full_inventory_restore_active_{false};
+  bool full_inventory_restore_final_{false};
+  rclcpp::Time full_inventory_restore_close_start_time_{0, 0, RCL_ROS_TIME};
   std::string full_inventory_left_route_{"left_route"};
   std::string full_inventory_right_route_{"right_route"};
   bool recognize_in_idle_{true};
