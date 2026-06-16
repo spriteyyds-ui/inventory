@@ -371,6 +371,9 @@ public:
     uhf_reader_single_cmd_enabled_ =
       declare_parameter<bool>("uhf_reader_single_cmd_enabled", true);
     uhf_reader_debug_hex_log_ = declare_parameter<bool>("uhf_reader_debug_hex_log", false);
+    uhf_reader_set_power_on_open_ =
+      declare_parameter<bool>("uhf_reader_set_power_on_open", true);
+    uhf_reader_power_ = declare_parameter<int>("uhf_reader_power", 15);
     scanner_enabled_ = declare_parameter<bool>("scanner_enabled", true);
     scan_duration_sec_ = declare_parameter<double>("scan_duration_sec", 2.0);
     scan_timeout_sec_ = declare_parameter<double>("scan_timeout_sec", 5.0);
@@ -1847,6 +1850,8 @@ private:
     scanner_config.uhf_reader_fallback_single_cmd = uhf_reader_fallback_single_cmd_;
     scanner_config.uhf_reader_single_cmd_enabled = uhf_reader_single_cmd_enabled_;
     scanner_config.uhf_reader_debug_hex_log = uhf_reader_debug_hex_log_;
+    scanner_config.uhf_reader_set_power_on_open = uhf_reader_set_power_on_open_;
+    scanner_config.uhf_reader_power = uhf_reader_power_;
     inventory_scanner_.configure(scanner_config);
 
     lift_up_duration_sec_ = std::max(0.0, lift_up_duration_sec_);
@@ -2019,7 +2024,8 @@ private:
       "require_success=%s reader_enabled=%s reader_mode=%s "
       "serial_device=%s serial_baud=%d serial_scan_duration=%.2f frame_id=00EE00 "
       "frame_min_length=%d frame_max_length=%d local_log=%s local_log_path=%s "
-      "local_log_summary=%s status_path=%s",
+      "local_log_summary=%s status_path=%s "
+      "set_power_on_open=%s power=%d",
       rfid_upload_enabled_ ? "true" : "false",
       rfid_upload_url_.c_str(),
       rfid_upload_verify_tls_ ? "true" : "false",
@@ -2037,7 +2043,9 @@ private:
       rfid_local_log_enabled_ ? "true" : "false",
       rfid_local_log_path_.empty() ? "<empty>" : rfid_local_log_path_.c_str(),
       rfid_local_log_write_batch_summary_ ? "true" : "false",
-      rfid_upload_status_path_.empty() ? "<empty>" : rfid_upload_status_path_.c_str());
+      rfid_upload_status_path_.empty() ? "<empty>" : rfid_upload_status_path_.c_str(),
+      uhf_reader_set_power_on_open_ ? "true" : "false",
+      uhf_reader_power_);
     RCLCPP_INFO(
       get_logger(),
       "侧排盘库配置: enabled=%s name=%s first_gap=%s first_seq=%s "
@@ -12609,6 +12617,8 @@ private:
   bool uhf_reader_fallback_single_cmd_{true};
   bool uhf_reader_single_cmd_enabled_{true};
   bool uhf_reader_debug_hex_log_{false};
+  bool uhf_reader_set_power_on_open_{true};
+  int uhf_reader_power_{15};
   PlcOpenContinuation plc_open_wait_continuation_{PlcOpenContinuation::NONE};
   int plc_open_wait_target_cabinet_{-1};
   bool plc_open_wait_required_{false};
