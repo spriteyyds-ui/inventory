@@ -39,6 +39,7 @@
 #include "tf2_ros/transform_listener.h"
 #include "agv_inventory_system/id_utils.hpp"
 #include "agv_inventory_system/inventory_scanner.hpp"
+#include "agv_inventory_system/stanley_line_controller.hpp"
 #include "agv_inventory_system/msg/gap_status.hpp"
 #include "agv_inventory_system/msg/recognized_number.hpp"
 #include "agv_inventory_system/rfid_scan_log_writer.hpp"
@@ -551,6 +552,16 @@ public:
       declare_parameter<bool>("rear_target_backup_fixed_y_from_current_pose_enabled", true);
     full_inventory_rear_target_backup_y_correction_sign_ =
       declare_parameter<double>("rear_target_backup_y_correction_sign", -1.0);
+    stanley_line_control_enabled_ =
+      declare_parameter<bool>("stanley_line_control_enabled", true);
+    stanley_cte_gain_ = declare_parameter<double>("stanley_cte_gain", 0.30);
+    stanley_softening_speed_ = declare_parameter<double>("stanley_softening_speed", 0.10);
+    stanley_max_yaw_offset_rad_ = declare_parameter<double>("stanley_max_yaw_offset_rad", 0.05);
+    stanley_yaw_kp_ = declare_parameter<double>("stanley_yaw_kp", 0.40);
+    stanley_yaw_kd_ = declare_parameter<double>("stanley_yaw_kd", 0.0);
+    stanley_yaw_deadband_rad_ = declare_parameter<double>("stanley_yaw_deadband_rad", 0.02);
+    stanley_min_angular_ = declare_parameter<double>("stanley_min_angular", 0.015);
+    stanley_max_angular_ = declare_parameter<double>("stanley_max_angular", 0.15);
     full_inventory_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_final_recognition_wait_sec", 5.0);
     full_inventory_recognition_fallback_enabled_ =
@@ -2097,6 +2108,9 @@ private:
       "rear_target=%s rear_mode=%s rear_turn_tolerance=%.3f rear_turn_timeout=%.2f "
       "rear_backup=%s rear_backup_distance=%.2f rear_backup_speed=%.3f rear_backup_timeout=%.2f "
       "rear_backup_pose_hold=%s rear_backup_fixed_y_from_pose=%s rear_backup_y_sign=%.1f "
+      "stanley=%s cte_gain=%.3f softening=%.3f max_yaw_offset=%.4f "
+      "stanley_yaw_kp=%.3f stanley_yaw_kd=%.3f stanley_deadband=%.3f "
+      "stanley_min_angular=%.4f stanley_max_angular=%.3f "
       "final_recognition_wait=%.2f "
       "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
       "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f "
@@ -2139,6 +2153,15 @@ private:
       full_inventory_rear_target_backup_pose_hold_enabled_ ? "true" : "false",
       full_inventory_rear_target_backup_fixed_y_from_current_pose_enabled_ ? "true" : "false",
       full_inventory_rear_target_backup_y_correction_sign_,
+      stanley_line_control_enabled_ ? "true" : "false",
+      stanley_cte_gain_,
+      stanley_softening_speed_,
+      stanley_max_yaw_offset_rad_,
+      stanley_yaw_kp_,
+      stanley_yaw_kd_,
+      stanley_yaw_deadband_rad_,
+      stanley_min_angular_,
+      stanley_max_angular_,
       full_inventory_final_recognition_wait_sec_,
       full_inventory_recognition_fallback_enabled_ ? "true" : "false",
       full_inventory_recognition_fallback_speed_,
@@ -4081,6 +4104,20 @@ private:
     const double yaw_error = normalize_angle(target_yaw - current_yaw);
     const double limit = std::max(0.0, std::abs(max_angular));
     return std::clamp(kp * yaw_error, -limit, limit);
+  }
+
+  agv_inventory_system::StanleyLineConfig build_stanley_config_() const
+  {
+    agv_inventory_system::StanleyLineConfig cfg;
+    cfg.cte_gain = stanley_cte_gain_;
+    cfg.softening_speed = stanley_softening_speed_;
+    cfg.max_yaw_offset_rad = stanley_max_yaw_offset_rad_;
+    cfg.yaw_kp = stanley_yaw_kp_;
+    cfg.yaw_kd = stanley_yaw_kd_;
+    cfg.yaw_deadband_rad = stanley_yaw_deadband_rad_;
+    cfg.min_angular = stanley_min_angular_;
+    cfg.max_angular = stanley_max_angular_;
+    return cfg;
   }
 
   std::string stop_auto_charge_depart_phase_to_string(StopAutoChargeDepartPhase phase) const
@@ -7009,6 +7046,7 @@ private:
 	    full_inventory_rear_target_backup_last_yaw_error_ = 0.0;
 	    full_inventory_rear_target_backup_last_yaw_error_time_ =
 	      rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+	    stanley_controller_.reset();
 	    publish_full_inventory_log(
 	      "[rear_target_backup] start target=" +
 	      std::to_string(full_inventory_rear_target_next_cabinet_) +
@@ -7101,25 +7139,44 @@ private:
 	    }
 
 	    const double linear_cmd = -std::abs(rear_target_backup_speed_);
-	    const double max_angular = std::isfinite(full_inventory_same_side_max_angular_) ?
-	      std::max(0.0, std::abs(full_inventory_same_side_max_angular_)) : 0.15;
-	    const double yaw_kp = std::isfinite(full_inventory_same_side_yaw_kp_) ?
-	      std::max(0.0, full_inventory_same_side_yaw_kp_) : 0.40;
-	    const double yaw_kd = std::isfinite(full_inventory_same_side_yaw_kd_) ?
-	      std::max(0.0, full_inventory_same_side_yaw_kd_) : 0.0;
-	    const double yaw_deadband = std::abs(full_inventory_same_side_yaw_deadband_rad_);
-	    const double y_kp = std::isfinite(full_inventory_same_side_y_kp_) ?
-	      std::max(0.0, full_inventory_same_side_y_kp_) : 0.30;
-	    const double y_deadband = std::abs(full_inventory_same_side_y_deadband_m_);
-	    const double min_angular = std::isfinite(full_inventory_same_side_min_angular_) ?
-	      std::max(0.0, full_inventory_same_side_min_angular_) : 0.0;
-	    const double y_sign = full_inventory_rear_target_backup_y_correction_sign_;
+	    bool stanley_active = false;
+	    agv_inventory_system::StanleyLineOutput stanley_out;
 
-	    double yaw_cmd = 0.0;
-	    double y_cmd = 0.0;
-	    bool min_angular_applied = false;
+	    geometry_msgs::msg::Twist cmd;
+	    cmd.linear.x = linear_cmd;
+	    cmd.angular.z = 0.0;
 
-	    if (full_inventory_rear_target_backup_pose_hold_enabled_) {
+	    if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_) {
+	      // Stanley line tracking control
+	      stanley_active = true;
+	      stanley_controller_.setConfig(build_stanley_config_());
+	      agv_inventory_system::StanleyLineInput si;
+	      si.line_y = full_inventory_rear_target_backup_fixed_y_;
+	      si.line_yaw = hold_yaw;
+	      si.current_y = map_pose.y;
+	      si.current_yaw = map_pose.yaw;
+	      si.linear_x = linear_cmd;
+	      stanley_out = stanley_controller_.compute(si, this->now().seconds());
+	      cmd.angular.z = stanley_out.angular_z;
+	    } else if (full_inventory_rear_target_backup_pose_hold_enabled_) {
+	      // Legacy y/yaw PD control
+	      const double max_angular = std::isfinite(full_inventory_same_side_max_angular_) ?
+	        std::max(0.0, std::abs(full_inventory_same_side_max_angular_)) : 0.15;
+	      const double yaw_kp = std::isfinite(full_inventory_same_side_yaw_kp_) ?
+	        std::max(0.0, full_inventory_same_side_yaw_kp_) : 0.40;
+	      const double yaw_kd = std::isfinite(full_inventory_same_side_yaw_kd_) ?
+	        std::max(0.0, full_inventory_same_side_yaw_kd_) : 0.0;
+	      const double yaw_deadband = std::abs(full_inventory_same_side_yaw_deadband_rad_);
+	      const double y_kp = std::isfinite(full_inventory_same_side_y_kp_) ?
+	        std::max(0.0, full_inventory_same_side_y_kp_) : 0.30;
+	      const double y_deadband = std::abs(full_inventory_same_side_y_deadband_m_);
+	      const double min_angular = std::isfinite(full_inventory_same_side_min_angular_) ?
+	        std::max(0.0, full_inventory_same_side_min_angular_) : 0.0;
+	      const double y_sign = full_inventory_rear_target_backup_y_correction_sign_;
+
+	      double yaw_cmd = 0.0;
+	      double y_cmd = 0.0;
+
 	      // Yaw PD control with deadband
 	      if (std::abs(yaw_error) >= yaw_deadband) {
 	        yaw_cmd = yaw_kp * yaw_error;
@@ -7149,56 +7206,84 @@ private:
 	      if (std::abs(y_error) >= y_deadband) {
 	        y_cmd = y_sign * y_kp * y_error;
 	      }
-	    }
 
-	    double raw_angular = yaw_cmd + y_cmd;
-	    // Enforce minimum angular when any correction is active
-	    if (min_angular > 1e-6 && std::abs(raw_angular) > 1e-6) {
-	      const double sign = raw_angular > 0.0 ? 1.0 : -1.0;
-	      if (std::abs(raw_angular) < min_angular) {
+	      double raw_angular = yaw_cmd + y_cmd;
+	      // Enforce minimum angular when any correction is active
+	      if (min_angular > 1e-6 && std::abs(raw_angular) > 1e-6) {
+	        const double sign = raw_angular > 0.0 ? 1.0 : -1.0;
+	        if (std::abs(raw_angular) < min_angular) {
 	        raw_angular = sign * min_angular;
-	        min_angular_applied = true;
+	        }
 	      }
+	      cmd.angular.z = std::clamp(raw_angular, -max_angular, max_angular);
 	    }
-	    geometry_msgs::msg::Twist cmd;
-	    cmd.linear.x = linear_cmd;
-	    cmd.angular.z = std::clamp(raw_angular, -max_angular, max_angular);
 	    cmd_pub_->publish(cmd);
 
-	    RCLCPP_INFO_THROTTLE(
-	      get_logger(),
-	      *get_clock(),
-	      1000,
-	      "[mission_manager][FULL_INVENTORY][rear_target_backup] target=%d "
-	      "start=(%.2f,%.2f) current=(%.2f,%.2f) "
-	      "backup_fixed_y=%.2f y_error=%.3f y_cmd=%.3f "
-	      "traveled=%.2f/%.2f linear=%.3f "
-	      "hold_yaw=%.4f current_yaw=%.4f yaw_error=%.4f yaw_cmd=%.3f "
-	      "raw_angular=%.3f final_angular=%.3f min_angular_applied=%d "
-	      "pose_hold=%s y_sign=%.1f max_angular=%.3f elapsed=%.2f/%.2f",
-	      full_inventory_rear_target_next_cabinet_,
-	      full_inventory_rear_target_backup_start_pose_.x,
-	      full_inventory_rear_target_backup_start_pose_.y,
-	      map_pose.x,
-	      map_pose.y,
-	      full_inventory_rear_target_backup_fixed_y_,
-	      y_error,
-	      y_cmd,
-	      traveled,
-	      target_distance,
-	      cmd.linear.x,
-	      hold_yaw,
-	      map_pose.yaw,
-	      yaw_error,
-	      yaw_cmd,
-	      raw_angular,
-	      cmd.angular.z,
-	      min_angular_applied ? 1 : 0,
-	      full_inventory_rear_target_backup_pose_hold_enabled_ ? "true" : "false",
-	      y_sign,
-	      max_angular,
-	      elapsed,
-	      timeout);
+	    if (stanley_active) {
+	      RCLCPP_INFO_THROTTLE(
+	        get_logger(),
+	        *get_clock(),
+	        1000,
+	        "[mission_manager][FULL_INVENTORY][rear_target_backup] target=%d "
+	        "stanley_enabled=true "
+	        "line_y=%.3f line_yaw=%.4f "
+	        "current_y=%.3f current_yaw=%.4f linear_x=%.3f "
+	        "cross_track_error=%.4f yaw_offset=%.4f corrected_yaw=%.4f "
+	        "heading_error=%.4f raw_angular=%.4f final_angular=%.4f "
+	        "min_angular_applied=%d direction_sign=%.1f "
+	        "softening_speed=%.3f cte_gain=%.3f max_yaw_offset=%.4f "
+	        "traveled=%.2f/%.2f elapsed=%.2f/%.2f",
+	        full_inventory_rear_target_next_cabinet_,
+	        full_inventory_rear_target_backup_fixed_y_,
+	        hold_yaw,
+	        map_pose.y,
+	        map_pose.yaw,
+	        cmd.linear.x,
+	        stanley_out.cross_track_error,
+	        stanley_out.yaw_offset,
+	        stanley_out.corrected_yaw,
+	        stanley_out.heading_error,
+	        stanley_out.raw_angular,
+	        stanley_out.angular_z,
+	        stanley_out.min_angular_applied ? 1 : 0,
+	        stanley_out.direction_sign,
+	        stanley_softening_speed_,
+	        stanley_cte_gain_,
+	        stanley_max_yaw_offset_rad_,
+	        traveled,
+	        target_distance,
+	        elapsed,
+	        timeout);
+	    } else {
+	      RCLCPP_INFO_THROTTLE(
+	        get_logger(),
+	        *get_clock(),
+	        1000,
+	        "[mission_manager][FULL_INVENTORY][rear_target_backup] target=%d "
+	        "start=(%.2f,%.2f) current=(%.2f,%.2f) "
+	        "backup_fixed_y=%.2f y_error=%.3f "
+	        "traveled=%.2f/%.2f linear=%.3f "
+	        "hold_yaw=%.4f current_yaw=%.4f yaw_error=%.4f "
+	        "final_angular=%.3f "
+	        "pose_hold=%s elapsed=%.2f/%.2f stanley_enabled=false",
+	        full_inventory_rear_target_next_cabinet_,
+	        full_inventory_rear_target_backup_start_pose_.x,
+	        full_inventory_rear_target_backup_start_pose_.y,
+	        map_pose.x,
+	        map_pose.y,
+	        full_inventory_rear_target_backup_fixed_y_,
+	        y_error,
+	        traveled,
+	        target_distance,
+	        cmd.linear.x,
+	        hold_yaw,
+	        map_pose.yaw,
+	        yaw_error,
+	        cmd.angular.z,
+	        full_inventory_rear_target_backup_pose_hold_enabled_ ? "true" : "false",
+	        elapsed,
+	        timeout);
+	    }
 	  }
 
   void start_full_inventory_same_side_next_search(bool use_heading_override = false)
@@ -7231,6 +7316,7 @@ private:
     reset_segment_distance();
     full_inventory_same_side_last_yaw_error_ = 0.0;
     full_inventory_same_side_last_yaw_error_time_ = rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+    stanley_controller_.reset();
     target_visible_ = false;
     has_distance_ = false;
     latest_distance_ = 0.0;
@@ -7342,55 +7428,72 @@ private:
     Pose2D pose;
     std::string pose_note;
     bool pose_hold_active = false;
+    bool stanley_active = false;
     double y_error = 0.0;
     double yaw_error = 0.0;
     double yaw_cmd = 0.0;
     double y_cmd = 0.0;
+    agv_inventory_system::StanleyLineOutput stanley_out;
 
     if (full_inventory_same_side_pose_hold_enabled_) {
       if (current_same_side_pose_hold_pose(pose, pose_note)) {
         pose_hold_active = true;
-        y_error = full_inventory_same_side_active_fixed_y_m_ - pose.y;
-        yaw_error = normalize_angle(full_inventory_same_side_active_fixed_yaw_rad_ - pose.yaw);
-        if (std::abs(yaw_error) >= std::abs(full_inventory_same_side_yaw_deadband_rad_)) {
-          // P term
-          yaw_cmd = full_inventory_same_side_yaw_kp_ * yaw_error;
-          // D term
-          const rclcpp::Time now = this->now();
-          if (full_inventory_same_side_last_yaw_error_time_.nanoseconds() != 0 &&
-            full_inventory_same_side_yaw_kd_ > 1e-6)
-          {
-            const double dt = (now - full_inventory_same_side_last_yaw_error_time_).seconds();
-            if (dt > 1e-6 && dt < 2.0) {
-              const double yaw_error_rate =
-                normalize_angle(yaw_error - full_inventory_same_side_last_yaw_error_) / dt;
-              yaw_cmd += full_inventory_same_side_yaw_kd_ * yaw_error_rate;
-            }
-          }
-          full_inventory_same_side_last_yaw_error_ = yaw_error;
-          full_inventory_same_side_last_yaw_error_time_ = now;
+        if (stanley_line_control_enabled_) {
+          // Stanley line tracking control
+          stanley_active = true;
+          stanley_controller_.setConfig(build_stanley_config_());
+          agv_inventory_system::StanleyLineInput si;
+          si.line_y = full_inventory_same_side_active_fixed_y_m_;
+          si.line_yaw = full_inventory_same_side_active_fixed_yaw_rad_;
+          si.current_y = pose.y;
+          si.current_yaw = pose.yaw;
+          si.linear_x = cmd.linear.x;
+          stanley_out = stanley_controller_.compute(si, this->now().seconds());
+          cmd.angular.z = stanley_out.angular_z;
         } else {
-          // Inside deadband — reset D state to prevent windup on crossing
-          full_inventory_same_side_last_yaw_error_ = 0.0;
-          full_inventory_same_side_last_yaw_error_time_ =
-            rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+          // Legacy y/yaw PD control
+          y_error = full_inventory_same_side_active_fixed_y_m_ - pose.y;
+          yaw_error = normalize_angle(full_inventory_same_side_active_fixed_yaw_rad_ - pose.yaw);
+          if (std::abs(yaw_error) >= std::abs(full_inventory_same_side_yaw_deadband_rad_)) {
+            // P term
+            yaw_cmd = full_inventory_same_side_yaw_kp_ * yaw_error;
+            // D term
+            const rclcpp::Time now = this->now();
+            if (full_inventory_same_side_last_yaw_error_time_.nanoseconds() != 0 &&
+              full_inventory_same_side_yaw_kd_ > 1e-6)
+            {
+              const double dt = (now - full_inventory_same_side_last_yaw_error_time_).seconds();
+              if (dt > 1e-6 && dt < 2.0) {
+                const double yaw_error_rate =
+                  normalize_angle(yaw_error - full_inventory_same_side_last_yaw_error_) / dt;
+                yaw_cmd += full_inventory_same_side_yaw_kd_ * yaw_error_rate;
+              }
+            }
+            full_inventory_same_side_last_yaw_error_ = yaw_error;
+            full_inventory_same_side_last_yaw_error_time_ = now;
+          } else {
+            // Inside deadband — reset D state to prevent windup on crossing
+            full_inventory_same_side_last_yaw_error_ = 0.0;
+            full_inventory_same_side_last_yaw_error_time_ =
+              rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+          }
+          if (std::abs(y_error) >= std::abs(full_inventory_same_side_y_deadband_m_)) {
+            y_cmd = full_inventory_same_side_y_kp_ * y_error;
+          }
+          const double max_angular =
+            std::isfinite(full_inventory_same_side_max_angular_) ?
+            std::max(0.0, std::abs(full_inventory_same_side_max_angular_)) : 0.15;
+          const double min_angular =
+            std::isfinite(full_inventory_same_side_min_angular_) ?
+            std::max(0.0, full_inventory_same_side_min_angular_) : 0.0;
+          double raw_angular = yaw_cmd + full_inventory_same_side_y_correction_sign_ * y_cmd;
+          // Enforce minimum angular output when any correction is active
+          if (min_angular > 1e-6 && std::abs(raw_angular) > 1e-6) {
+            const double sign = raw_angular > 0.0 ? 1.0 : -1.0;
+            raw_angular = sign * std::max(std::abs(raw_angular), min_angular);
+          }
+          cmd.angular.z = std::clamp(raw_angular, -max_angular, max_angular);
         }
-        if (std::abs(y_error) >= std::abs(full_inventory_same_side_y_deadband_m_)) {
-          y_cmd = full_inventory_same_side_y_kp_ * y_error;
-        }
-        const double max_angular =
-          std::isfinite(full_inventory_same_side_max_angular_) ?
-          std::max(0.0, std::abs(full_inventory_same_side_max_angular_)) : 0.15;
-        const double min_angular =
-          std::isfinite(full_inventory_same_side_min_angular_) ?
-          std::max(0.0, full_inventory_same_side_min_angular_) : 0.0;
-        double raw_angular = yaw_cmd + full_inventory_same_side_y_correction_sign_ * y_cmd;
-        // Enforce minimum angular output when any correction is active
-        if (min_angular > 1e-6 && std::abs(raw_angular) > 1e-6) {
-          const double sign = raw_angular > 0.0 ? 1.0 : -1.0;
-          raw_angular = sign * std::max(std::abs(raw_angular), min_angular);
-        }
-        cmd.angular.z = std::clamp(raw_angular, -max_angular, max_angular);
       } else {
         RCLCPP_WARN_THROTTLE(
           get_logger(),
@@ -7401,7 +7504,42 @@ private:
       }
     }
     cmd_pub_->publish(cmd);
-    if (pose_hold_active) {
+    if (pose_hold_active && stanley_active) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(),
+        *get_clock(),
+        1000,
+        "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s "
+        "stanley_enabled=true "
+        "line_y=%.3f line_yaw=%.4f "
+        "current_y=%.3f current_yaw=%.4f linear_x=%.3f "
+        "cross_track_error=%.4f yaw_offset=%.4f corrected_yaw=%.4f "
+        "heading_error=%.4f raw_angular=%.4f final_angular=%.4f "
+        "min_angular_applied=%d direction_sign=%.1f "
+        "softening_speed=%.3f cte_gain=%.3f max_yaw_offset=%.4f "
+        "elapsed=%.2f/%.2f pose=%s",
+        current_target_cabinet_,
+        full_inventory_same_side_active_map_side_.c_str(),
+        full_inventory_same_side_active_fixed_y_m_,
+        full_inventory_same_side_active_fixed_yaw_rad_,
+        pose.y,
+        pose.yaw,
+        cmd.linear.x,
+        stanley_out.cross_track_error,
+        stanley_out.yaw_offset,
+        stanley_out.corrected_yaw,
+        stanley_out.heading_error,
+        stanley_out.raw_angular,
+        stanley_out.angular_z,
+        stanley_out.min_angular_applied ? 1 : 0,
+        stanley_out.direction_sign,
+        stanley_softening_speed_,
+        stanley_cte_gain_,
+        stanley_max_yaw_offset_rad_,
+        elapsed,
+        timeout,
+        pose_note.c_str());
+    } else if (pose_hold_active) {
       RCLCPP_INFO_THROTTLE(
         get_logger(),
         *get_clock(),
@@ -7409,7 +7547,7 @@ private:
         "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s speed=%.3f current_y=%.3f "
         "fixed_y=%.3f y_error=%.3f current_yaw=%.4f fixed_yaw=%.4f "
         "use_heading_override=%s override_yaw=%.4f final_search_yaw=%.4f "
-        "yaw_error=%.4f angular=%.3f elapsed=%.2f/%.2f pose=%s",
+        "yaw_error=%.4f angular=%.3f elapsed=%.2f/%.2f pose=%s stanley_enabled=false",
         current_target_cabinet_,
         full_inventory_same_side_active_map_side_.c_str(),
         cmd.linear.x,
@@ -12763,6 +12901,16 @@ private:
   double rear_target_backup_distance_m_{1.50};
   double rear_target_backup_speed_{0.08};
   double rear_target_backup_timeout_sec_{30.0};
+  bool stanley_line_control_enabled_{true};
+  double stanley_cte_gain_{0.30};
+  double stanley_softening_speed_{0.10};
+  double stanley_max_yaw_offset_rad_{0.05};
+  double stanley_yaw_kp_{0.40};
+  double stanley_yaw_kd_{0.0};
+  double stanley_yaw_deadband_rad_{0.02};
+  double stanley_min_angular_{0.015};
+  double stanley_max_angular_{0.15};
+  agv_inventory_system::StanleyLineController stanley_controller_;
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{0.0};
   std::string full_inventory_same_side_active_map_side_{"left"};
