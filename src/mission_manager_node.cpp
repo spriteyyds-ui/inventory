@@ -833,7 +833,34 @@ public:
       ycfg.kd = yellow_line_kd_;
       ycfg.max_angular = yellow_line_max_angular_;
       ycfg.reverse_invert_angular = yellow_line_reverse_invert_angular_;
+      ycfg.backward_target_x_ratio = yellow_line_backward_target_x_ratio_;
+      ycfg.backward_kp = yellow_line_backward_kp_;
+      ycfg.backward_kd = yellow_line_backward_kd_;
+      ycfg.backward_max_angular = yellow_line_backward_max_angular_;
       yellow_line_follower_.setConfig(ycfg);
+    }
+    // 黄线巡线启动配置日志
+    if (yellow_line_follow_enabled_ || yellow_line_detect_only_) {
+      RCLCPP_INFO(get_logger(),
+        "[yellow_line] 配置: mode=%s enabled=%d detect_only=%d "
+        "rear_target_backup=%d same_side_search=%d restore_backup=%d gap_entry=%d",
+        line_follow_control_mode_.c_str(),
+        yellow_line_follow_enabled_ ? 1 : 0,
+        yellow_line_detect_only_ ? 1 : 0,
+        yellow_line_use_in_rear_target_backup_ ? 1 : 0,
+        yellow_line_use_in_same_side_search_ ? 1 : 0,
+        yellow_line_use_in_restore_backup_ ? 1 : 0,
+        yellow_line_use_in_gap_entry_ ? 1 : 0);
+      RCLCPP_INFO(get_logger(),
+        "[yellow_line] 前进参数: target_x_ratio=%.3f kp=%.2f kd=%.3f max_angular=%.2f",
+        yellow_line_target_x_ratio_, yellow_line_kp_, yellow_line_kd_, yellow_line_max_angular_);
+      RCLCPP_INFO(get_logger(),
+        "[yellow_line] 后退参数: target_x_ratio=%.3f kp=%.2f kd=%.3f max_angular=%.2f reverse_invert=%s",
+        yellow_line_backward_target_x_ratio_ > 0 ? yellow_line_backward_target_x_ratio_ : yellow_line_target_x_ratio_,
+        yellow_line_backward_kp_ > 0 ? yellow_line_backward_kp_ : yellow_line_kp_,
+        yellow_line_backward_kd_ > 0 ? yellow_line_backward_kd_ : yellow_line_kd_,
+        yellow_line_backward_max_angular_ > 0 ? yellow_line_backward_max_angular_ : yellow_line_max_angular_,
+        yellow_line_reverse_invert_angular_ ? "true" : "false");
     }
     if (yellow_line_follow_enabled_ || yellow_line_detect_only_) {
       yellow_line_image_sub_ = create_subscription<sensor_msgs::msg::Image>(
@@ -846,6 +873,25 @@ public:
       RCLCPP_INFO(get_logger(),
         "[yellow_line] image subscriber started on topic=%s mode=%s",
         yellow_line_image_topic_.c_str(), line_follow_control_mode_.c_str());
+      // 5 秒后检查是否有图像发布者
+      yellow_line_image_check_timer_ = create_wall_timer(
+        std::chrono::seconds(5),
+        [this]() {
+          if (yellow_line_image_check_done_) return;
+          yellow_line_image_check_done_ = true;
+          yellow_line_image_check_timer_->cancel();
+          const size_t pub_count = yellow_line_image_sub_->get_publisher_count();
+          if (pub_count == 0) {
+            RCLCPP_ERROR(get_logger(),
+              "[yellow_line] 前方相机未启动！topic='%s' 无发布者。"
+              "黄线巡线无法工作，请确认 launch_front_camera:=true 或手动启动 astra_camera。",
+              yellow_line_image_topic_.c_str());
+          } else {
+            RCLCPP_INFO(get_logger(),
+              "[yellow_line] 前方相机已就绪 topic='%s' publishers=%zu",
+              yellow_line_image_topic_.c_str(), pub_count);
+          }
+        });
     }
     if (yellow_line_debug_image_enabled_) {
       yellow_line_debug_pub_ =
@@ -4245,6 +4291,14 @@ private:
     const double now_sec = this->now().seconds();
     yellow_line_follower_.processImage(cv_ptr->image, now_sec);
 
+    // 首帧图像到达日志
+    if (!yellow_line_first_image_received_) {
+      yellow_line_first_image_received_ = true;
+      RCLCPP_INFO(get_logger(),
+        "[yellow_line] 首帧图像已收到 topic=%s size=%dx%d",
+        yellow_line_image_topic_.c_str(), cv_ptr->image.cols, cv_ptr->image.rows);
+    }
+
     // 发布 debug 图像
     if (yellow_line_debug_image_enabled_ && yellow_line_debug_pub_) {
       cv::Mat dbg = yellow_line_follower_.drawDebug(cv_ptr->image, now_sec);
@@ -4347,6 +4401,15 @@ private:
           scene_name.c_str());
       }
       return true;
+    }
+
+    // 检查图像订阅是否已启动
+    if (!yellow_line_image_sub_started_) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+        "[yellow_line] scene=%s 黄线已启用但图像订阅未启动！"
+        "请确认 yellow_line_follow_enabled=true 且 launch_front_camera:=true",
+        scene_name.c_str());
+      return false;
     }
 
     // 更新 follower 配置（支持运行时参数热更新）
@@ -13345,7 +13408,10 @@ private:
   agv_inventory_system::YellowLineFollower yellow_line_follower_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr yellow_line_image_sub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr yellow_line_debug_pub_;
+  rclcpp::TimerBase::SharedPtr yellow_line_image_check_timer_;
   bool yellow_line_image_sub_started_{false};
+  bool yellow_line_image_check_done_{false};
+  bool yellow_line_first_image_received_{false};
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{0.0};
   std::string full_inventory_same_side_active_map_side_{"left"};
