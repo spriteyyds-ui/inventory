@@ -597,6 +597,34 @@ mission_manager_node:
     stanley_max_angular: 0.15                                            # 最大角速度，单位 rad/s
     stanley_yaw_offset_lpf_tau_sec: 1.0                                 # yaw_offset 低通滤波时间常数，单位 s；0=不滤波
 
+    # ===== 黄线巡线控制 =====
+    line_follow_control_mode: "stanley"                                  # 巡线控制模式：stanley=原逻辑, yellow_line=黄线巡线, auto=黄线优先+Stanley回退, off=无横向修正
+    yellow_line_follow_enabled: false                                    # 是否启用黄线巡线功能；关闭时所有黄线逻辑不生效
+    yellow_line_use_in_same_side_search: false                           # 同侧搜索是否使用黄线巡线；默认关闭，避免现场一次性改动过大
+    yellow_line_use_in_rear_target_backup: true                          # 后方目标回退是否使用黄线巡线；首次重点接入场景
+    yellow_line_use_in_restore_backup: false                             # 出缝回退是否使用黄线巡线；默认关闭
+    yellow_line_use_in_gap_entry: false                                  # 入缝是否使用黄线巡线；默认关闭，先不让黄线影响入缝
+    yellow_line_detect_only: false                                       # 只识别不控制模式；true 时只运行图像识别和发布 debug，不改变小车控制
+    yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题；Orbbec ASTRA S 默认话题
+    yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例；图像高度的 55% 处开始
+    yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例；图像高度的 95% 处结束
+    yellow_line_target_x_ratio: 0.65                                     # 黄线目标 x 位置比例；0.65 因为黄线在右轮下方不在车体中心
+    yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素；用于现场手动标定微调
+    yellow_h_min: 15                                                     # 黄色 HSV H 最小值
+    yellow_h_max: 40                                                     # 黄色 HSV H 最大值
+    yellow_s_min: 80                                                     # 黄色 HSV S 最小值
+    yellow_s_max: 255                                                    # 黄色 HSV S 最大值
+    yellow_v_min: 80                                                     # 黄色 HSV V 最小值
+    yellow_v_max: 255                                                    # 黄色 HSV V 最大值
+    yellow_line_min_area: 300.0                                          # 最小轮廓面积；过滤噪声
+    yellow_line_lost_timeout_sec: 0.5                                    # 丢线超时，单位 s；yellow_line 模式超时停车，auto 模式超时 fallback
+    yellow_line_kp: 0.8                                                  # 巡线 P 增益；调大纠偏更快但可能振荡
+    yellow_line_kd: 0.05                                                 # 巡线 D 增益；抑制超调
+    yellow_line_max_angular: 0.25                                        # 最大角速度，单位 rad/s；安全限幅
+    yellow_line_reverse_invert_angular: true                             # 后退时是否翻转角速度方向；true 时后退纠偏方向与前进相反
+    yellow_line_debug_image_enabled: false                               # 是否发布调试图像；开启后可在 rv2 中查看识别效果
+    yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题名
+
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错
     recognition_fallback_speed: 0.10                                    # 识别兜底移动速度，单位 m/s；调大会搜索更快但可能错过目标
@@ -668,3 +696,31 @@ robot_inventory_client:
     upload_retry_count: 3                                                           # 上传失败重试次数
     api_host: "0.0.0.0"                                                             # FastAPI uvicorn 监听地址
     api_port: 8000                                                                  # FastAPI uvicorn 监听端口
+
+# ==========================================================================
+# yellow_line_test_node 参数块
+# 独立测试节点，只做黄线识别和 debug 发布，不控制小车。
+# 参数名与 mission_manager_node 的黄线参数一致，方便统一配置。
+# ==========================================================================
+yellow_line_test_node:
+  ros__parameters:
+    yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题
+    yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例
+    yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例
+    yellow_line_target_x_ratio: 0.65                                     # 黄线目标 x 位置比例
+    yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
+    yellow_h_min: 15                                                     # 黄色 HSV H 最小值
+    yellow_h_max: 40                                                     # 黄色 HSV H 最大值
+    yellow_s_min: 80                                                     # 黄色 HSV S 最小值
+    yellow_s_max: 255                                                    # 黄色 HSV S 最大值
+    yellow_v_min: 80                                                     # 黄色 HSV V 最小值
+    yellow_v_max: 255                                                    # 黄色 HSV V 最大值
+    yellow_line_min_area: 300.0                                          # 最小轮廓面积
+    yellow_line_lost_timeout_sec: 0.5                                    # 丢线超时
+    yellow_line_kp: 0.8                                                  # 巡线 P 增益
+    yellow_line_kd: 0.05                                                 # 巡线 D 增益
+    yellow_line_max_angular: 0.25                                        # 最大角速度
+    yellow_line_reverse_invert_angular: true                             # 后退时翻转角速度
+    yellow_line_debug_image_enabled: true                                # 测试节点默认开启 debug 图像
+    yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题
+    test_linear_x: 0.15                                                  # 测试用线速度（仅用于打印计算结果）
