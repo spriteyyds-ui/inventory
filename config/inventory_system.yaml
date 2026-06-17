@@ -618,6 +618,7 @@ mission_manager_node:
     yellow_v_max: 255                                                    # 黄色 HSV V 最大值
     yellow_line_min_area: 300.0                                          # 最小轮廓面积；过滤噪声
     yellow_line_lost_timeout_sec: 0.5                                    # 丢线超时，单位 s；yellow_line 模式超时停车，auto 模式超时 fallback
+    yellow_line_initial_grace_sec: 2.0                                   # 首帧图像后宽限期，单位 s；宽限期内不触发 lost 停车，等待相机稳定
     yellow_line_kp: 0.5                                                  # 巡线 P 增益；现场标定值，适中响应
     yellow_line_kd: 0.03                                                 # 巡线 D 增益；现场标定值，轻微抑制超调
     yellow_line_max_angular: 0.15                                        # 最大角速度，单位 rad/s；现场标定值，安全限幅
@@ -720,7 +721,7 @@ yellow_line_test_node:
     yellow_v_min: 80                                                     # 黄色 HSV V 最小值
     yellow_v_max: 255                                                    # 黄色 HSV V 最大值
     yellow_line_min_area: 300.0                                          # 最小轮廓面积
-    yellow_line_lost_timeout_sec: 0.5                                    # 丢线超时
+    yellow_line_lost_timeout_sec: 2.5                                    # 丢线超时
     yellow_line_kp: 0.5                                                  # 巡线 P 增益；现场标定值
     yellow_line_kd: 0.03                                                 # 巡线 D 增益；现场标定值
     yellow_line_max_angular: 0.15                                        # 最大角速度；现场标定值
@@ -748,7 +749,7 @@ yellow_line_drive_test_node:
     yellow_v_min: 80                                                     # 黄色 HSV V 最小值
     yellow_v_max: 255                                                    # 黄色 HSV V 最大值
     yellow_line_min_area: 300.0                                          # 最小轮廓面积
-    yellow_line_lost_timeout_sec: 0.5                                    # 丢线超时停车
+    yellow_line_lost_timeout_sec: 2.5                                    # 丢线超时停车
     yellow_line_kp: 0.5                                                  # 前进巡线 P 增益；现场标定值
     yellow_line_kd: 0.03                                                 # 前进巡线 D 增益；现场标定值
     yellow_line_max_angular: 0.15                                        # 前进最大角速度；现场标定值

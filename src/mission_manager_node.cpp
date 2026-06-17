@@ -625,6 +625,8 @@ public:
       declare_parameter<double>("yellow_line_backward_kd", -1.0);
     yellow_line_backward_max_angular_ =
       declare_parameter<double>("yellow_line_backward_max_angular", -1.0);
+    yellow_line_initial_grace_sec_ =
+      declare_parameter<double>("yellow_line_initial_grace_sec", 2.0);
     // 调试图像
     yellow_line_debug_image_enabled_ =
       declare_parameter<bool>("yellow_line_debug_image_enabled", false);
@@ -4291,12 +4293,15 @@ private:
     const double now_sec = this->now().seconds();
     yellow_line_follower_.processImage(cv_ptr->image, now_sec);
 
-    // 首帧图像到达日志
+    // 首帧图像到达日志 + 标记相机就绪
     if (!yellow_line_first_image_received_) {
       yellow_line_first_image_received_ = true;
+      yellow_line_camera_ready_ = true;
+      yellow_line_first_image_time_ = now_sec;
       RCLCPP_INFO(get_logger(),
-        "[yellow_line] 首帧图像已收到 topic=%s size=%dx%d",
-        yellow_line_image_topic_.c_str(), cv_ptr->image.cols, cv_ptr->image.rows);
+        "[yellow_line] 首帧图像已收到 topic=%s size=%dx%d camera_ready=true grace=%.1fs",
+        yellow_line_image_topic_.c_str(), cv_ptr->image.cols, cv_ptr->image.rows,
+        yellow_line_initial_grace_sec_);
     }
 
     // 发布 debug 图像
@@ -4410,6 +4415,25 @@ private:
         "请确认 yellow_line_follow_enabled=true 且 launch_front_camera:=true",
         scene_name.c_str());
       return false;
+    }
+
+    // 相机未就绪（未收到首帧）→ 不接管控制，不触发 lost 停车
+    if (!yellow_line_camera_ready_) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+        "[yellow_line] scene=%s 等待前方相机就绪（尚未收到图像），使用原控制逻辑",
+        scene_name.c_str());
+      return false;
+    }
+
+    // 首帧后宽限期：相机刚启动时检测不稳定，宽限期内不接管控制
+    {
+      const double elapsed = this->now().seconds() - yellow_line_first_image_time_;
+      if (elapsed < yellow_line_initial_grace_sec_) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+          "[yellow_line] scene=%s 相机刚就绪 %.1fs/%.1fs，宽限期内使用原控制逻辑",
+          scene_name.c_str(), elapsed, yellow_line_initial_grace_sec_);
+        return false;
+      }
     }
 
     // 更新 follower 配置（支持运行时参数热更新）
@@ -13412,6 +13436,9 @@ private:
   bool yellow_line_image_sub_started_{false};
   bool yellow_line_image_check_done_{false};
   bool yellow_line_first_image_received_{false};
+  bool yellow_line_camera_ready_{false};
+  double yellow_line_first_image_time_{0.0};
+  double yellow_line_initial_grace_sec_{2.0};
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{0.0};
   std::string full_inventory_same_side_active_map_side_{"left"};

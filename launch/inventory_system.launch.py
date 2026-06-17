@@ -118,13 +118,19 @@ def generate_launch_description():
     )
 
     # 前方 Astra 相机（黄线巡线需要）
+    # 延迟 5 秒启动，避免与 c100 USB 相机同时争抢 USB 资源导致 SIGSEGV
     astra_launch_file = os.path.join(
         get_package_share_directory('astra_camera'),
         'launch',
         'astra.launch.xml'
     )
-    front_camera_launch = IncludeLaunchDescription(
+    front_camera_launch_raw = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(astra_launch_file),
+        condition=IfCondition(launch_front_camera)
+    )
+    front_camera_launch = TimerAction(
+        period=5.0,
+        actions=[front_camera_launch_raw],
         condition=IfCondition(launch_front_camera)
     )
 
