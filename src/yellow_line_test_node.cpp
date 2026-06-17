@@ -41,7 +41,7 @@ public:
     const bool debug_enabled = declare_parameter<bool>("yellow_line_debug_image_enabled", true);
     const std::string debug_topic =
       declare_parameter<std::string>("yellow_line_debug_image_topic", "/yellow_line/debug_image");
-    const double linear_x = declare_parameter<double>("test_linear_x", 0.15);
+    const double linear_x = declare_parameter<double>("test_linear_speed", 0.15);
 
     // 配置 follower
     agv_inventory_system::YellowLineFollowerConfig cfg;
@@ -77,7 +77,7 @@ public:
       std::bind(&YellowLineTestNode::on_image, this, std::placeholders::_1));
 
     RCLCPP_INFO(get_logger(),
-      "[yellow_line_test] started. topic=%s debug=%s test_linear_x=%.3f",
+      "[yellow_line_test] started. topic=%s debug=%s test_linear_speed=%.3f",
       image_topic.c_str(), debug_enabled ? "true" : "false", linear_x);
     RCLCPP_INFO(get_logger(),
       "[yellow_line_test] target_x_ratio=%.2f kp=%.2f kd=%.3f max_angular=%.2f",
@@ -104,6 +104,7 @@ private:
     // 计算角速度（仅用于打印，不发布 cmd_vel）
     double angular_z = 0.0;
     const bool ok = follower_.getAngularCorrection(linear_x_, angular_z);
+    (void)ok;
 
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
       "[yellow_line_test] detected=%d line_x=%.1f target_x=%.1f "

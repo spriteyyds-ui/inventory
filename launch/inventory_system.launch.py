@@ -6,7 +6,7 @@ from launch.actions import (
     TimerAction,
 )
 from launch.conditions import IfCondition
-from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.launch_description_sources import AnyLaunchDescriptionSource, PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
@@ -90,6 +90,12 @@ def generate_launch_description():
         description='相机启动后是否自动初始化 v4l2 参数'
     )
 
+    launch_front_camera_arg = DeclareLaunchArgument(
+        'launch_front_camera',
+        default_value='false',
+        description='是否启动前方 Astra 相机（黄线巡线需要）'
+    )
+
     launch_nav2 = LaunchConfiguration('launch_nav2')
     enable_inventory_operation_gui = LaunchConfiguration('enable_inventory_operation_gui')
     enable_robot_api_server = LaunchConfiguration('enable_robot_api_server')
@@ -99,6 +105,7 @@ def generate_launch_description():
     c100_right_video_device = LaunchConfiguration('c100_right_video_device')
     c100_left_video_device = LaunchConfiguration('c100_left_video_device')
     enable_camera_controls_init = LaunchConfiguration('enable_camera_controls_init')
+    launch_front_camera = LaunchConfiguration('launch_front_camera')
     nav2_launch_file = os.path.join(
         get_package_share_directory('wheeltec_nav2'),
         'launch',
@@ -108,6 +115,17 @@ def generate_launch_description():
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(nav2_launch_file),
         condition=IfCondition(launch_nav2)
+    )
+
+    # 前方 Astra 相机（黄线巡线需要）
+    astra_launch_file = os.path.join(
+        get_package_share_directory('astra_camera'),
+        'launch',
+        'astra.launch.xml'
+    )
+    front_camera_launch = IncludeLaunchDescription(
+        AnyLaunchDescriptionSource(astra_launch_file),
+        condition=IfCondition(launch_front_camera)
     )
 
     robot_api_server_process = ExecuteProcess(
@@ -269,8 +287,10 @@ def generate_launch_description():
         c100_right_video_device_arg,
         c100_left_video_device_arg,
         enable_camera_controls_init_arg,
+        launch_front_camera_arg,
         robot_api_server_process,
         nav2_launch,
+        front_camera_launch,
         corridor_follower_node,
         c100_left_camera_node,
         c100_right_camera_timer,

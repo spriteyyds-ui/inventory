@@ -37,11 +37,17 @@ struct YellowLineFollowerConfig
   // 丢线超时（秒）
   double lost_timeout_sec{0.5};
 
-  // PD 控制参数
+  // PD 控制参数（前进）
   double kp{0.8};
   double kd{0.05};
   double max_angular{0.25};
   bool reverse_invert_angular{true};
+
+  // 后退独立参数（<0 时使用前进参数的默认值）
+  double backward_target_x_ratio{-1.0};  // <0 表示复用前进 target_x_ratio
+  double backward_kp{-1.0};              // <0 表示复用前进 kp
+  double backward_kd{-1.0};              // <0 表示复用前进 kd
+  double backward_max_angular{-1.0};     // <0 表示复用前进 max_angular
 };
 
 struct YellowLineDetectResult
@@ -65,11 +71,15 @@ public:
 
   void setConfig(const YellowLineFollowerConfig & config) {config_ = config;}
 
+  // 设置当前行驶方向（true=前进, false=后退），影响 target_x 选择
+  void setDirection(bool forward) {forward_ = forward;}
+
   void reset()
   {
     result_ = YellowLineDetectResult{};
     last_angular_z_ = 0.0;
     last_time_sec_ = -1.0;
+    forward_ = true;
   }
 
   // 图像识别：处理一帧 BGR 图像，更新内部检测结果
@@ -131,7 +141,10 @@ public:
       if (mu.m00 > 1e-6) {
         const double cx_roi = mu.m10 / mu.m00;
         result_.line_x = cx_roi;  // 在 ROI 坐标系中，x 与原图一致
-        result_.target_x = img_w * config_.target_x_ratio + config_.target_x_offset_px;
+        const double active_target_ratio =
+          (!forward_ && config_.backward_target_x_ratio >= 0.0)
+          ? config_.backward_target_x_ratio : config_.target_x_ratio;
+        result_.target_x = img_w * active_target_ratio + config_.target_x_offset_px;
         result_.error_px = result_.line_x - result_.target_x;
         result_.error_norm = result_.error_px / static_cast<double>(img_w);
         result_.detected = true;
@@ -164,6 +177,15 @@ public:
       return false;
     }
 
+    // 选择前进/后退参数
+    const bool backward = (linear_x < 0.0);
+    const double eff_kp = (backward && config_.backward_kp >= 0.0)
+      ? config_.backward_kp : config_.kp;
+    const double eff_kd = (backward && config_.backward_kd >= 0.0)
+      ? config_.backward_kd : config_.kd;
+    const double eff_max = (backward && config_.backward_max_angular >= 0.0)
+      ? config_.backward_max_angular : config_.max_angular;
+
     // PD 控制律
     double d_error_norm = 0.0;
     if (last_time_sec_ > 0.0 && result_.last_detect_time_sec > 0.0) {
@@ -173,15 +195,15 @@ public:
       }
     }
 
-    double raw_angular = -config_.kp * result_.error_norm - config_.kd * d_error_norm;
+    double raw_angular = -eff_kp * result_.error_norm - eff_kd * d_error_norm;
 
     // 后退时翻转角速度方向
-    if (linear_x < 0.0 && config_.reverse_invert_angular) {
+    if (backward && config_.reverse_invert_angular) {
       raw_angular *= -1.0;
     }
 
     // 限幅
-    angular_z = std::clamp(raw_angular, -config_.max_angular, config_.max_angular);
+    angular_z = std::clamp(raw_angular, -eff_max, eff_max);
     last_angular_z_ = angular_z;
     return true;
   }
@@ -271,6 +293,7 @@ private:
   double last_angular_z_{0.0};
   double last_time_sec_{-1.0};
   double last_error_norm_{0.0};
+  bool forward_{true};
 };
 
 }  // namespace agv_inventory_system
