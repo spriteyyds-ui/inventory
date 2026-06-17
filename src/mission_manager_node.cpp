@@ -616,6 +616,15 @@ public:
     yellow_line_max_angular_ = declare_parameter<double>("yellow_line_max_angular", 0.25);
     yellow_line_reverse_invert_angular_ =
       declare_parameter<bool>("yellow_line_reverse_invert_angular", true);
+    // 后退独立参数
+    yellow_line_backward_target_x_ratio_ =
+      declare_parameter<double>("yellow_line_backward_target_x_ratio", -1.0);
+    yellow_line_backward_kp_ =
+      declare_parameter<double>("yellow_line_backward_kp", -1.0);
+    yellow_line_backward_kd_ =
+      declare_parameter<double>("yellow_line_backward_kd", -1.0);
+    yellow_line_backward_max_angular_ =
+      declare_parameter<double>("yellow_line_backward_max_angular", -1.0);
     // 调试图像
     yellow_line_debug_image_enabled_ =
       declare_parameter<bool>("yellow_line_debug_image_enabled", false);
@@ -4273,6 +4282,10 @@ private:
     cfg.kd = yellow_line_kd_;
     cfg.max_angular = yellow_line_max_angular_;
     cfg.reverse_invert_angular = yellow_line_reverse_invert_angular_;
+    cfg.backward_target_x_ratio = yellow_line_backward_target_x_ratio_;
+    cfg.backward_kp = yellow_line_backward_kp_;
+    cfg.backward_kd = yellow_line_backward_kd_;
+    cfg.backward_max_angular = yellow_line_backward_max_angular_;
     return cfg;
   }
 
@@ -4338,6 +4351,8 @@ private:
 
     // 更新 follower 配置（支持运行时参数热更新）
     yellow_line_follower_.setConfig(build_yellow_line_config_());
+    // 设置行驶方向（影响 target_x_ratio 和 PD 参数选择）
+    yellow_line_follower_.setDirection(linear_x >= 0.0);
 
     const double now_sec = this->now().seconds();
 
@@ -4351,10 +4366,11 @@ private:
       output_angular_z = yellow_angular_z;
       const auto & r = yellow_line_follower_.getResult();
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-        "[yellow_line] detected=1 line_x=%.1f target_x=%.1f error_norm=%.4f "
-        "angular_z=%.4f direction=%s scene=%s",
-        r.line_x, r.target_x, r.error_norm, yellow_angular_z,
-        linear_x >= 0.0 ? "forward" : "backward", scene_name.c_str());
+        "[yellow_line][%s] mode=yellow_line detected=1 line_x=%.1f target_x=%.1f "
+        "error=%.4f angular_z=%.4f linear_x=%.3f direction=%s",
+        scene_name.c_str(),
+        r.line_x, r.target_x, r.error_norm, yellow_angular_z, linear_x,
+        linear_x >= 0.0 ? "forward" : "backward");
       return true;
     }
 
@@ -7406,6 +7422,7 @@ private:
 
 	    const double linear_cmd = -std::abs(rear_target_backup_speed_);
 	    bool stanley_active = false;
+	    (void)stanley_active;
 	    agv_inventory_system::StanleyLineOutput stanley_out;
 
 	    geometry_msgs::msg::Twist cmd;
@@ -13319,6 +13336,10 @@ private:
   double yellow_line_kd_{0.05};
   double yellow_line_max_angular_{0.25};
   bool yellow_line_reverse_invert_angular_{true};
+  double yellow_line_backward_target_x_ratio_{-1.0};
+  double yellow_line_backward_kp_{-1.0};
+  double yellow_line_backward_kd_{-1.0};
+  double yellow_line_backward_max_angular_{-1.0};
   bool yellow_line_debug_image_enabled_{false};
   std::string yellow_line_debug_image_topic_{"/yellow_line/debug_image"};
   agv_inventory_system::YellowLineFollower yellow_line_follower_;
