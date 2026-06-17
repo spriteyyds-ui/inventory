@@ -18,7 +18,12 @@
 #include <vector>
 
 #include "ament_index_cpp/get_package_share_directory.hpp"
+#include "cv_bridge/cv_bridge.h"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "image_transport/image_transport.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include "geometry_msgs/msg/twist.hpp"
 #include "nav2_msgs/action/navigate_to_pose.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -40,6 +45,7 @@
 #include "agv_inventory_system/id_utils.hpp"
 #include "agv_inventory_system/inventory_scanner.hpp"
 #include "agv_inventory_system/stanley_line_controller.hpp"
+#include "agv_inventory_system/yellow_line_follower.hpp"
 #include "agv_inventory_system/msg/gap_status.hpp"
 #include "agv_inventory_system/msg/recognized_number.hpp"
 #include "agv_inventory_system/rfid_scan_log_writer.hpp"
@@ -566,6 +572,55 @@ public:
     line_tracking_cte_control_enabled_ = declare_parameter<bool>("line_tracking_cte_control_enabled", false);
     line_tracking_cte_warn_threshold_m_ = declare_parameter<double>("line_tracking_cte_warn_threshold_m", 0.20);
     line_tracking_cte_fallback_to_config_threshold_m_ = declare_parameter<double>("line_tracking_cte_fallback_to_config_threshold_m", 0.35);
+
+    // ===== 黄线巡线控制参数 =====
+    line_follow_control_mode_ =
+      declare_parameter<std::string>("line_follow_control_mode", "stanley");
+    yellow_line_follow_enabled_ =
+      declare_parameter<bool>("yellow_line_follow_enabled", false);
+    yellow_line_use_in_same_side_search_ =
+      declare_parameter<bool>("yellow_line_use_in_same_side_search", false);
+    yellow_line_use_in_rear_target_backup_ =
+      declare_parameter<bool>("yellow_line_use_in_rear_target_backup", true);
+    yellow_line_use_in_restore_backup_ =
+      declare_parameter<bool>("yellow_line_use_in_restore_backup", false);
+    yellow_line_use_in_gap_entry_ =
+      declare_parameter<bool>("yellow_line_use_in_gap_entry", false);
+    yellow_line_detect_only_ =
+      declare_parameter<bool>("yellow_line_detect_only", false);
+    // 相机图像话题
+    yellow_line_image_topic_ =
+      declare_parameter<std::string>("yellow_line_image_topic", "/camera/color/image_raw");
+    // ROI 裁剪
+    yellow_line_roi_y_min_ratio_ =
+      declare_parameter<double>("yellow_line_roi_y_min_ratio", 0.55);
+    yellow_line_roi_y_max_ratio_ =
+      declare_parameter<double>("yellow_line_roi_y_max_ratio", 0.95);
+    yellow_line_target_x_ratio_ =
+      declare_parameter<double>("yellow_line_target_x_ratio", 0.65);
+    yellow_line_target_x_offset_px_ =
+      declare_parameter<double>("yellow_line_target_x_offset_px", 0.0);
+    // 黄色 HSV 阈值
+    yellow_h_min_ = declare_parameter<int>("yellow_h_min", 15);
+    yellow_h_max_ = declare_parameter<int>("yellow_h_max", 40);
+    yellow_s_min_ = declare_parameter<int>("yellow_s_min", 80);
+    yellow_s_max_ = declare_parameter<int>("yellow_s_max", 255);
+    yellow_v_min_ = declare_parameter<int>("yellow_v_min", 80);
+    yellow_v_max_ = declare_parameter<int>("yellow_v_max", 255);
+    // 轮廓与丢线
+    yellow_line_min_area_ = declare_parameter<double>("yellow_line_min_area", 300.0);
+    yellow_line_lost_timeout_sec_ = declare_parameter<double>("yellow_line_lost_timeout_sec", 0.5);
+    // PD 控制
+    yellow_line_kp_ = declare_parameter<double>("yellow_line_kp", 0.8);
+    yellow_line_kd_ = declare_parameter<double>("yellow_line_kd", 0.05);
+    yellow_line_max_angular_ = declare_parameter<double>("yellow_line_max_angular", 0.25);
+    yellow_line_reverse_invert_angular_ =
+      declare_parameter<bool>("yellow_line_reverse_invert_angular", true);
+    // 调试图像
+    yellow_line_debug_image_enabled_ =
+      declare_parameter<bool>("yellow_line_debug_image_enabled", false);
+    yellow_line_debug_image_topic_ =
+      declare_parameter<std::string>("yellow_line_debug_image_topic", "/yellow_line/debug_image");
     full_inventory_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_final_recognition_wait_sec", 5.0);
     full_inventory_recognition_fallback_enabled_ =
@@ -749,6 +804,44 @@ public:
       create_publisher<std_msgs::msg::Bool>(gap_detector_enable_topic_, control_qos);
     distance_estimator_enable_pub_ =
       create_publisher<std_msgs::msg::Bool>(distance_estimator_enable_topic_, control_qos);
+
+    // 黄线巡线：初始化 follower 配置、订阅图像、发布 debug
+    {
+      agv_inventory_system::YellowLineFollowerConfig ycfg;
+      ycfg.roi_y_min_ratio = yellow_line_roi_y_min_ratio_;
+      ycfg.roi_y_max_ratio = yellow_line_roi_y_max_ratio_;
+      ycfg.target_x_ratio = yellow_line_target_x_ratio_;
+      ycfg.target_x_offset_px = yellow_line_target_x_offset_px_;
+      ycfg.yellow_h_min = yellow_h_min_;
+      ycfg.yellow_h_max = yellow_h_max_;
+      ycfg.yellow_s_min = yellow_s_min_;
+      ycfg.yellow_s_max = yellow_s_max_;
+      ycfg.yellow_v_min = yellow_v_min_;
+      ycfg.yellow_v_max = yellow_v_max_;
+      ycfg.min_area = yellow_line_min_area_;
+      ycfg.lost_timeout_sec = yellow_line_lost_timeout_sec_;
+      ycfg.kp = yellow_line_kp_;
+      ycfg.kd = yellow_line_kd_;
+      ycfg.max_angular = yellow_line_max_angular_;
+      ycfg.reverse_invert_angular = yellow_line_reverse_invert_angular_;
+      yellow_line_follower_.setConfig(ycfg);
+    }
+    if (yellow_line_follow_enabled_ || yellow_line_detect_only_) {
+      yellow_line_image_sub_ = create_subscription<sensor_msgs::msg::Image>(
+        yellow_line_image_topic_,
+        rclcpp::SensorDataQoS(),
+        [this](const sensor_msgs::msg::Image::SharedPtr msg) {
+          on_yellow_line_image(msg);
+        });
+      yellow_line_image_sub_started_ = true;
+      RCLCPP_INFO(get_logger(),
+        "[yellow_line] image subscriber started on topic=%s mode=%s",
+        yellow_line_image_topic_.c_str(), line_follow_control_mode_.c_str());
+    }
+    if (yellow_line_debug_image_enabled_) {
+      yellow_line_debug_pub_ =
+        create_publisher<sensor_msgs::msg::Image>(yellow_line_debug_image_topic_, 10);
+    }
 
     start_srv_ = create_service<agv_inventory_system::srv::StartMission>(
       start_service_name_,
@@ -4125,6 +4218,174 @@ private:
     return cfg;
   }
 
+  // ===== 黄线巡线：图像回调 =====
+  void on_yellow_line_image(const sensor_msgs::msg::Image::SharedPtr msg)
+  {
+    if (!yellow_line_follow_enabled_ && !yellow_line_detect_only_) {
+      return;
+    }
+    cv_bridge::CvImagePtr cv_ptr;
+    try {
+      cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
+    } catch (const cv_bridge::Exception & e) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+        "[yellow_line] cv_bridge exception: %s", e.what());
+      return;
+    }
+
+    const double now_sec = this->now().seconds();
+    yellow_line_follower_.processImage(cv_ptr->image, now_sec);
+
+    // 发布 debug 图像
+    if (yellow_line_debug_image_enabled_ && yellow_line_debug_pub_) {
+      cv::Mat dbg = yellow_line_follower_.drawDebug(cv_ptr->image, now_sec);
+      auto dbg_msg = cv_bridge::CvImage(msg->header, "bgr8", dbg).toImageMsg();
+      yellow_line_debug_pub_->publish(*dbg_msg);
+    }
+
+    // detect_only 模式下只打印不控制
+    if (yellow_line_detect_only_) {
+      const auto & r = yellow_line_follower_.getResult();
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+        "[yellow_line][detect_only] detected=%d line_x=%.1f target_x=%.1f "
+        "error_norm=%.4f",
+        r.detected ? 1 : 0, r.line_x, r.target_x, r.error_norm);
+    }
+  }
+
+  // ===== 黄线巡线：构建当前 follower 配置（运行时参数可热更新） =====
+  agv_inventory_system::YellowLineFollowerConfig build_yellow_line_config_() const
+  {
+    agv_inventory_system::YellowLineFollowerConfig cfg;
+    cfg.roi_y_min_ratio = yellow_line_roi_y_min_ratio_;
+    cfg.roi_y_max_ratio = yellow_line_roi_y_max_ratio_;
+    cfg.target_x_ratio = yellow_line_target_x_ratio_;
+    cfg.target_x_offset_px = yellow_line_target_x_offset_px_;
+    cfg.yellow_h_min = yellow_h_min_;
+    cfg.yellow_h_max = yellow_h_max_;
+    cfg.yellow_s_min = yellow_s_min_;
+    cfg.yellow_s_max = yellow_s_max_;
+    cfg.yellow_v_min = yellow_v_min_;
+    cfg.yellow_v_max = yellow_v_max_;
+    cfg.min_area = yellow_line_min_area_;
+    cfg.lost_timeout_sec = yellow_line_lost_timeout_sec_;
+    cfg.kp = yellow_line_kp_;
+    cfg.kd = yellow_line_kd_;
+    cfg.max_angular = yellow_line_max_angular_;
+    cfg.reverse_invert_angular = yellow_line_reverse_invert_angular_;
+    return cfg;
+  }
+
+  // ===== 黄线巡线：场景是否允许使用黄线 =====
+  bool yellow_line_scene_enabled(const std::string & scene_name) const
+  {
+    if (scene_name == "rear_target_backup") {
+      return yellow_line_use_in_rear_target_backup_;
+    } else if (scene_name == "same_side_search") {
+      return yellow_line_use_in_same_side_search_;
+    } else if (scene_name == "restore_backup") {
+      return yellow_line_use_in_restore_backup_;
+    } else if (scene_name == "gap_entry") {
+      return yellow_line_use_in_gap_entry_;
+    }
+    return false;
+  }
+
+  // ===== 黄线巡线：统一控制模式封装 =====
+  // scene_name: 当前场景名（用于分场景开关判断）
+  // linear_x: 当前线速度（用于判断前进/后退）
+  // original_angular_z: 原有控制逻辑输出的角速度（Stanley/yaw_only/legacy）
+  // output_angular_z: 最终输出角速度
+  // should_stop: 如果黄线丢失且需要停车，设为 true
+  // 返回 true 表示成功接管角速度
+  bool apply_line_follow_control(
+    const std::string & scene_name,
+    double linear_x,
+    double original_angular_z,
+    double & output_angular_z,
+    bool & should_stop)
+  {
+    should_stop = false;
+    output_angular_z = original_angular_z;
+
+    // stanley 模式：完全使用原逻辑
+    if (line_follow_control_mode_ == "stanley") {
+      return true;
+    }
+
+    // off 模式：不使用任何横向修正
+    if (line_follow_control_mode_ == "off") {
+      output_angular_z = 0.0;
+      return true;
+    }
+
+    // yellow_line 或 auto 模式
+    if (line_follow_control_mode_ != "yellow_line" && line_follow_control_mode_ != "auto") {
+      output_angular_z = original_angular_z;
+      return true;
+    }
+
+    // 检查场景开关
+    if (!yellow_line_follow_enabled_ || !yellow_line_scene_enabled(scene_name)) {
+      // 场景未启用黄线，使用原逻辑
+      if (line_follow_control_mode_ == "yellow_line") {
+        RCLCPP_INFO_ONCE(get_logger(),
+          "[yellow_line] scene=%s not enabled, using original control",
+          scene_name.c_str());
+      }
+      return true;
+    }
+
+    // 更新 follower 配置（支持运行时参数热更新）
+    yellow_line_follower_.setConfig(build_yellow_line_config_());
+
+    const double now_sec = this->now().seconds();
+
+    // 检查黄线是否可用
+    double yellow_angular_z = 0.0;
+    const bool line_ok = yellow_line_follower_.getAngularCorrection(linear_x, yellow_angular_z);
+    const bool lost_timeout = yellow_line_follower_.isLostTimeout(now_sec);
+
+    if (line_ok) {
+      // 黄线可用，使用黄线角速度
+      output_angular_z = yellow_angular_z;
+      const auto & r = yellow_line_follower_.getResult();
+      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+        "[yellow_line] detected=1 line_x=%.1f target_x=%.1f error_norm=%.4f "
+        "angular_z=%.4f direction=%s scene=%s",
+        r.line_x, r.target_x, r.error_norm, yellow_angular_z,
+        linear_x >= 0.0 ? "forward" : "backward", scene_name.c_str());
+      return true;
+    }
+
+    // 黄线丢失
+    if (line_follow_control_mode_ == "yellow_line") {
+      // yellow_line 模式：丢线超时则停车
+      if (lost_timeout) {
+        should_stop = true;
+        output_angular_z = 0.0;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+          "[yellow_line] lost line for %.2f sec, action=stop scene=%s",
+          yellow_line_lost_timeout_sec_, scene_name.c_str());
+        return true;
+      }
+      // 丢线未超时，保持上一次角速度
+      output_angular_z = yellow_angular_z;
+      return true;
+    }
+
+    if (line_follow_control_mode_ == "auto") {
+      // auto 模式：丢线 fallback 到原 Stanley 逻辑
+      output_angular_z = original_angular_z;
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+        "[yellow_line] line lost, fallback to stanley angular_z=%.4f scene=%s",
+        original_angular_z, scene_name.c_str());
+      return true;
+    }
+
+    return true;
+  }
+
   std::string stop_auto_charge_depart_phase_to_string(StopAutoChargeDepartPhase phase) const
   {
     switch (phase) {
@@ -7251,9 +7512,30 @@ private:
 	      }
 	      cmd.angular.z = std::clamp(raw_angular, -max_angular, max_angular);
 	    }
+	    // ===== 黄线巡线：接管 rear_target_backup 角速度 =====
+	    {
+	      const double original_angular_z = cmd.angular.z;
+	      double output_angular_z = original_angular_z;
+	      bool should_stop = false;
+	      if (apply_line_follow_control(
+	        "rear_target_backup", cmd.linear.x, original_angular_z,
+	        output_angular_z, should_stop))
+	      {
+	        if (should_stop) {
+	          publish_stop();
+	          RCLCPP_WARN(get_logger(),
+	            "[rear_target_backup] yellow line lost, stopping");
+	          return;
+	        }
+	        cmd.angular.z = output_angular_z;
+	      }
+	    }
 	    {
 	      const char * branch_name = "unknown";
-	      if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_ && line_tracking_cte_control_enabled_) {
+	      if (line_follow_control_mode_ == "yellow_line" && yellow_line_follow_enabled_ &&
+	        yellow_line_use_in_rear_target_backup_) {
+	        branch_name = "yellow_line";
+	      } else if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_ && line_tracking_cte_control_enabled_) {
 	        branch_name = "stanley";
 	      } else if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_) {
 	        branch_name = "yaw_only";
@@ -7610,6 +7892,24 @@ private:
           1000,
           "[FULL_INVENTORY] same-side pose hold unavailable: %s, fallback to open-loop search",
           pose_note.c_str());
+      }
+    }
+    // ===== 黄线巡线：接管 same_side_search 角速度（预留接入点，默认不启用） =====
+    {
+      const double original_angular_z = cmd.angular.z;
+      double output_angular_z = original_angular_z;
+      bool should_stop = false;
+      if (apply_line_follow_control(
+        "same_side_search", cmd.linear.x, original_angular_z,
+        output_angular_z, should_stop))
+      {
+        if (should_stop) {
+          publish_stop();
+          RCLCPP_WARN(get_logger(),
+            "[same_side_search] yellow line lost, stopping");
+          return;
+        }
+        cmd.angular.z = output_angular_z;
       }
     }
     cmd_pub_->publish(cmd);
@@ -12994,6 +13294,37 @@ private:
   double line_tracking_cte_warn_threshold_m_{0.20};
   double line_tracking_cte_fallback_to_config_threshold_m_{0.35};
   agv_inventory_system::StanleyLineController stanley_controller_;
+  // ===== 黄线巡线控制 =====
+  std::string line_follow_control_mode_{"stanley"};
+  bool yellow_line_follow_enabled_{false};
+  bool yellow_line_use_in_same_side_search_{false};
+  bool yellow_line_use_in_rear_target_backup_{true};
+  bool yellow_line_use_in_restore_backup_{false};
+  bool yellow_line_use_in_gap_entry_{false};
+  bool yellow_line_detect_only_{false};
+  std::string yellow_line_image_topic_{"/camera/color/image_raw"};
+  double yellow_line_roi_y_min_ratio_{0.55};
+  double yellow_line_roi_y_max_ratio_{0.95};
+  double yellow_line_target_x_ratio_{0.65};
+  double yellow_line_target_x_offset_px_{0.0};
+  int yellow_h_min_{15};
+  int yellow_h_max_{40};
+  int yellow_s_min_{80};
+  int yellow_s_max_{255};
+  int yellow_v_min_{80};
+  int yellow_v_max_{255};
+  double yellow_line_min_area_{300.0};
+  double yellow_line_lost_timeout_sec_{0.5};
+  double yellow_line_kp_{0.8};
+  double yellow_line_kd_{0.05};
+  double yellow_line_max_angular_{0.25};
+  bool yellow_line_reverse_invert_angular_{true};
+  bool yellow_line_debug_image_enabled_{false};
+  std::string yellow_line_debug_image_topic_{"/yellow_line/debug_image"};
+  agv_inventory_system::YellowLineFollower yellow_line_follower_;
+  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr yellow_line_image_sub_;
+  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr yellow_line_debug_pub_;
+  bool yellow_line_image_sub_started_{false};
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{0.0};
   std::string full_inventory_same_side_active_map_side_{"left"};
