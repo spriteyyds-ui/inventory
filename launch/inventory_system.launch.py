@@ -92,7 +92,7 @@ def generate_launch_description():
 
     launch_front_camera_arg = DeclareLaunchArgument(
         'launch_front_camera',
-        default_value='false',
+        default_value='true',
         description='是否启动前方 Astra 相机（黄线巡线需要）'
     )
 

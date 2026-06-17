@@ -598,17 +598,17 @@ mission_manager_node:
     stanley_yaw_offset_lpf_tau_sec: 1.0                                 # yaw_offset 低通滤波时间常数，单位 s；0=不滤波
 
     # ===== 黄线巡线控制 =====
-    line_follow_control_mode: "stanley"                                  # 巡线控制模式：stanley=原逻辑, yellow_line=黄线巡线, auto=黄线优先+Stanley回退, off=无横向修正
-    yellow_line_follow_enabled: false                                    # 是否启用黄线巡线功能；关闭时所有黄线逻辑不生效
-    yellow_line_use_in_same_side_search: false                           # 同侧搜索是否使用黄线巡线；默认关闭，避免现场一次性改动过大
-    yellow_line_use_in_rear_target_backup: true                          # 后方目标回退是否使用黄线巡线；首次重点接入场景
+    line_follow_control_mode: "yellow_line"                              # 巡线控制模式：stanley=原逻辑, yellow_line=黄线巡线, auto=黄线优先+Stanley回退, off=无横向修正
+    yellow_line_follow_enabled: true                                     # 启用黄线巡线；rear_target_backup 和 same_side_search 均使用黄线
+    yellow_line_use_in_same_side_search: true                            # 同侧搜索使用黄线巡线；前进时黄线横向纠偏
+    yellow_line_use_in_rear_target_backup: true                          # 后方目标回退使用黄线巡线；后退时黄线横向纠偏
     yellow_line_use_in_restore_backup: false                             # 出缝回退是否使用黄线巡线；默认关闭
     yellow_line_use_in_gap_entry: false                                  # 入缝是否使用黄线巡线；默认关闭，先不让黄线影响入缝
     yellow_line_detect_only: false                                       # 只识别不控制模式；true 时只运行图像识别和发布 debug，不改变小车控制
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题；Orbbec ASTRA S 默认话题
     yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例；图像高度的 55% 处开始
     yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例；图像高度的 95% 处结束
-    yellow_line_target_x_ratio: 0.88                                     # 黄线目标 x 位置比例；现场标定值，黄线在右轮下方
+    yellow_line_target_x_ratio: 0.924                                    # 前进时黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素；用于现场手动标定微调
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
     yellow_h_max: 40                                                     # 黄色 HSV H 最大值
@@ -626,7 +626,7 @@ mission_manager_node:
     yellow_line_backward_kp: 0.8                                         # 后退巡线 P 增益；后退时可能需要更强纠偏
     yellow_line_backward_kd: 0.05                                        # 后退巡线 D 增益
     yellow_line_backward_max_angular: 0.25                               # 后退最大角速度；允许更大纠偏范围
-    yellow_line_debug_image_enabled: false                               # 是否发布调试图像；开启后可在 rv2 中查看识别效果
+    yellow_line_debug_image_enabled: true                                # 发布调试图像；可在 rv2 中查看识别效果
     yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题名
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
