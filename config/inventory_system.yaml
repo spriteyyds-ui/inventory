@@ -518,7 +518,7 @@ mission_manager_node:
     exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
     exit_gap_speed: 0.20                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
-    exit_gap_extra_distance_m: 0.20                                     # 退出间隙额外距离，单位 m；调大会多退一些
+    exit_gap_extra_distance_m: 0.00                                     # 退出间隙额外距离，单位 m；调大会多退一些
     exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
     exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
@@ -580,16 +580,22 @@ mission_manager_node:
     rear_target_backup_fixed_y_from_current_pose_enabled: true          # 回退开始时是否用当前位姿 y 作为 fixed_y；false 则用 same_side active fixed_y
     rear_target_backup_y_correction_sign: -1.0                          # 回退 y 修正方向符号；-1.0 因倒车时 angular.z 横向效应与前进相反
 
-    # Stanley 直线跟踪控制器参数
-    stanley_line_control_enabled: true                                  # 是否启用 Stanley 直线跟踪；关闭回退到旧 y/yaw PD 逻辑
-    stanley_cte_gain: 0.30                                              # 横向误差增益；调大横向纠偏更强
-    stanley_softening_speed: 0.10                                       # 低速软化项；防止低速时 yaw_offset 过大
-    stanley_max_yaw_offset_rad: 0.05                                    # yaw_offset 最大值，单位 rad；限制横向误差对航向的影响
-    stanley_yaw_kp: 0.40                                                # 航向误差比例增益
+    # 直线跟踪控制模式
+    stanley_line_control_enabled: true                                  # 是否启用直线跟踪；关闭回退到旧 y/yaw PD 逻辑
+    line_tracking_cte_control_enabled: false                            # false=yaw-only 模式（默认），CTE 只记录不参与控制；true=Stanley CTE 控制
+    line_tracking_cte_warn_threshold_m: 0.20                            # 出缝 current_y 与 configured_y 差距超此值打 WARN
+    line_tracking_cte_fallback_to_config_threshold_m: 0.35              # 差距超此值 fallback 到配置 fixed_y
+
+    # Stanley 统一参数（line_tracking_cte_control_enabled=true 时生效）
+    stanley_cte_gain: 0.15                                              # 横向误差增益
+    stanley_softening_speed: 0.12                                       # 低速软化项
+    stanley_max_yaw_offset_rad: 0.05                                    # yaw_offset 最大值，单位 rad
+    stanley_yaw_kp: 0.50                                                # 航向误差比例增益（yaw-only 模式也使用）
     stanley_yaw_kd: 0.0                                                 # 航向误差微分增益；默认 0 不启用 D 项
-    stanley_yaw_deadband_rad: 0.02                                      # 航向误差死区，单位 rad
-    stanley_min_angular: 0.015                                           # 最小角速度，单位 rad/s；超过死区后保证最小修正
+    stanley_yaw_deadband_rad: 0.012                                     # 航向误差死区，单位 rad
+    stanley_min_angular: 0.008                                           # 最小角速度，单位 rad/s
     stanley_max_angular: 0.15                                            # 最大角速度，单位 rad/s
+    stanley_yaw_offset_lpf_tau_sec: 1.0                                 # yaw_offset 低通滤波时间常数，单位 s；0=不滤波
 
     overall_final_recognition_wait_sec: 20.0                            # 全量盘库最终识别等待时间，单位 s；调大会等待最终结果更久
     recognition_fallback_enabled: true                                  # 是否启用识别失败兜底搜索；关闭会在识别失败时更快报错

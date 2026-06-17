@@ -562,6 +562,10 @@ public:
     stanley_yaw_deadband_rad_ = declare_parameter<double>("stanley_yaw_deadband_rad", 0.02);
     stanley_min_angular_ = declare_parameter<double>("stanley_min_angular", 0.015);
     stanley_max_angular_ = declare_parameter<double>("stanley_max_angular", 0.15);
+    stanley_yaw_offset_lpf_tau_sec_ = declare_parameter<double>("stanley_yaw_offset_lpf_tau_sec", 0.0);
+    line_tracking_cte_control_enabled_ = declare_parameter<bool>("line_tracking_cte_control_enabled", false);
+    line_tracking_cte_warn_threshold_m_ = declare_parameter<double>("line_tracking_cte_warn_threshold_m", 0.20);
+    line_tracking_cte_fallback_to_config_threshold_m_ = declare_parameter<double>("line_tracking_cte_fallback_to_config_threshold_m", 0.35);
     full_inventory_final_recognition_wait_sec_ =
       declare_parameter<double>("overall_final_recognition_wait_sec", 5.0);
     full_inventory_recognition_fallback_enabled_ =
@@ -4117,6 +4121,7 @@ private:
     cfg.yaw_deadband_rad = stanley_yaw_deadband_rad_;
     cfg.min_angular = stanley_min_angular_;
     cfg.max_angular = stanley_max_angular_;
+    cfg.yaw_offset_lpf_tau_sec = stanley_yaw_offset_lpf_tau_sec_;
     return cfg;
   }
 
@@ -7146,8 +7151,8 @@ private:
 	    cmd.linear.x = linear_cmd;
 	    cmd.angular.z = 0.0;
 
-	    if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_) {
-	      // Stanley line tracking control
+	    if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_ && line_tracking_cte_control_enabled_) {
+	      // Stanley line tracking control — CTE 参与控制
 	      stanley_active = true;
 	      stanley_controller_.setConfig(build_stanley_config_());
 	      agv_inventory_system::StanleyLineInput si;
@@ -7158,6 +7163,35 @@ private:
 	      si.linear_x = linear_cmd;
 	      stanley_out = stanley_controller_.compute(si, this->now().seconds());
 	      cmd.angular.z = stanley_out.angular_z;
+	    } else if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_) {
+	      // yaw-only 模式：CTE 只记录不参与控制
+	      const double yaw_kp = stanley_yaw_kp_;
+	      const double yaw_kd = stanley_yaw_kd_;
+	      const double yaw_deadband = stanley_yaw_deadband_rad_;
+	      double yaw_cmd = 0.0;
+	      if (std::abs(yaw_error) >= yaw_deadband) {
+	        yaw_cmd = yaw_kp * yaw_error;
+	        const rclcpp::Time now = this->now();
+	        if (full_inventory_rear_target_backup_last_yaw_error_time_.nanoseconds() != 0 && yaw_kd > 1e-6) {
+	          const double dt = (now - full_inventory_rear_target_backup_last_yaw_error_time_).seconds();
+	          if (dt > 1e-6 && dt < 2.0) {
+	            const double yaw_error_rate =
+	              normalize_angle(yaw_error - full_inventory_rear_target_backup_last_yaw_error_) / dt;
+	            yaw_cmd += yaw_kd * yaw_error_rate;
+	          }
+	        }
+	        full_inventory_rear_target_backup_last_yaw_error_ = yaw_error;
+	        full_inventory_rear_target_backup_last_yaw_error_time_ = now;
+	      } else {
+	        full_inventory_rear_target_backup_last_yaw_error_ = 0.0;
+	        full_inventory_rear_target_backup_last_yaw_error_time_ =
+		  rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+	      }
+	      if (std::abs(yaw_cmd) > 1e-6 && std::abs(yaw_cmd) < stanley_min_angular_) {
+	        const double sign = yaw_cmd > 0.0 ? 1.0 : -1.0;
+	        yaw_cmd = sign * stanley_min_angular_;
+	      }
+	      cmd.angular.z = std::clamp(yaw_cmd, -stanley_max_angular_, stanley_max_angular_);
 	    } else if (full_inventory_rear_target_backup_pose_hold_enabled_) {
 	      // Legacy y/yaw PD control
 	      const double max_angular = std::isfinite(full_inventory_same_side_max_angular_) ?
@@ -7217,39 +7251,60 @@ private:
 	      }
 	      cmd.angular.z = std::clamp(raw_angular, -max_angular, max_angular);
 	    }
+	    {
+	      const char * branch_name = "unknown";
+	      if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_ && line_tracking_cte_control_enabled_) {
+	        branch_name = "stanley";
+	      } else if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_) {
+	        branch_name = "yaw_only";
+	      } else if (full_inventory_rear_target_backup_pose_hold_enabled_) {
+	        branch_name = "legacy";
+	      } else {
+	        branch_name = "open_loop";
+	      }
+	      RCLCPP_INFO_THROTTLE(
+	        get_logger(),
+	        *get_clock(),
+	        1000,
+	        "[rear_target_backup][publish] branch=%s "
+	        "hold_yaw=%.4f current_yaw=%.4f yaw_error=%.4f "
+	        "yaw_deadband=%.4f "
+        "min_angular=%.4f "
+	        "cmd_linear_x=%.3f cmd_angular_z=%.4f "
+	        "cte_control=%s pose_hold=%s",
+	        branch_name,
+	        hold_yaw, map_pose.yaw, yaw_error,
+	        stanley_yaw_deadband_rad_,
+        stanley_min_angular_,
+	        cmd.linear.x, cmd.angular.z,
+	        line_tracking_cte_control_enabled_ ? "true" : "false",
+	        full_inventory_rear_target_backup_pose_hold_enabled_ ? "true" : "false");
+	    }
 	    cmd_pub_->publish(cmd);
 
-	    if (stanley_active) {
+	    if (full_inventory_rear_target_backup_pose_hold_enabled_ && stanley_line_control_enabled_) {
 	      RCLCPP_INFO_THROTTLE(
 	        get_logger(),
 	        *get_clock(),
 	        1000,
 	        "[mission_manager][FULL_INVENTORY][rear_target_backup] target=%d "
-	        "stanley_enabled=true "
+	        "cte_control=%s "
 	        "line_y=%.3f line_yaw=%.4f "
 	        "current_y=%.3f current_yaw=%.4f linear_x=%.3f "
-	        "cross_track_error=%.4f yaw_offset=%.4f corrected_yaw=%.4f "
-	        "heading_error=%.4f raw_angular=%.4f final_angular=%.4f "
-	        "min_angular_applied=%d direction_sign=%.1f "
-	        "softening_speed=%.3f cte_gain=%.3f max_yaw_offset=%.4f "
+	        "cte=%.4f yaw_error=%.4f "
+	        "raw_angular=%.4f final_angular=%.4f "
 	        "traveled=%.2f/%.2f elapsed=%.2f/%.2f",
 	        full_inventory_rear_target_next_cabinet_,
+	        line_tracking_cte_control_enabled_ ? "true" : "false",
 	        full_inventory_rear_target_backup_fixed_y_,
 	        hold_yaw,
 	        map_pose.y,
 	        map_pose.yaw,
 	        cmd.linear.x,
-	        stanley_out.cross_track_error,
-	        stanley_out.yaw_offset,
-	        stanley_out.corrected_yaw,
-	        stanley_out.heading_error,
-	        stanley_out.raw_angular,
-	        stanley_out.angular_z,
-	        stanley_out.min_angular_applied ? 1 : 0,
-	        stanley_out.direction_sign,
-	        stanley_softening_speed_,
-	        stanley_cte_gain_,
-	        stanley_max_yaw_offset_rad_,
+	        y_error,
+	        yaw_error,
+	        cmd.angular.z,
+	        cmd.angular.z,
 	        traveled,
 	        target_distance,
 	        elapsed,
@@ -7305,9 +7360,29 @@ private:
     if (full_inventory_same_side_fixed_y_from_current_pose_enabled_) {
       Pose2D start_pose;
       if (current_same_side_pose_hold_pose(start_pose, fixed_y_pose_note)) {
-        full_inventory_same_side_active_fixed_y_m_ = start_pose.y;
         fixed_y_start_current_y = start_pose.y;
-        fixed_y_source = "current_pose";
+        const double gap = std::abs(start_pose.y - configured_fixed_y);
+        if (gap > line_tracking_cte_fallback_to_config_threshold_m_) {
+          // 出缝位置与配置值差距过大，fallback 到配置 fixed_y
+          full_inventory_same_side_active_fixed_y_m_ = configured_fixed_y;
+          fixed_y_source = "config_fallback";
+          RCLCPP_WARN(get_logger(),
+            "[FULL_INVENTORY] same-side fixed_y fallback: current_y=%.3f too far from "
+            "configured_y=%.3f (gap=%.3f > threshold=%.3f), using configured_y",
+            start_pose.y, configured_fixed_y, gap,
+            line_tracking_cte_fallback_to_config_threshold_m_);
+        } else {
+          // 使用出缝时 current_pose.y 作为行驶基准
+          full_inventory_same_side_active_fixed_y_m_ = start_pose.y;
+          fixed_y_source = "current_pose";
+          if (gap > line_tracking_cte_warn_threshold_m_) {
+            RCLCPP_WARN(get_logger(),
+              "[FULL_INVENTORY] same-side fixed_y gap warning: current_y=%.3f "
+              "configured_y=%.3f gap=%.3f > warn_threshold=%.3f",
+              start_pose.y, configured_fixed_y, gap,
+              line_tracking_cte_warn_threshold_m_);
+          }
+        }
       }
     } else {
       fixed_y_source = "configured";
@@ -7438,8 +7513,8 @@ private:
     if (full_inventory_same_side_pose_hold_enabled_) {
       if (current_same_side_pose_hold_pose(pose, pose_note)) {
         pose_hold_active = true;
-        if (stanley_line_control_enabled_) {
-          // Stanley line tracking control
+        if (stanley_line_control_enabled_ && line_tracking_cte_control_enabled_) {
+          // Stanley line tracking control — CTE 参与控制
           stanley_active = true;
           stanley_controller_.setConfig(build_stanley_config_());
           agv_inventory_system::StanleyLineInput si;
@@ -7450,6 +7525,40 @@ private:
           si.linear_x = cmd.linear.x;
           stanley_out = stanley_controller_.compute(si, this->now().seconds());
           cmd.angular.z = stanley_out.angular_z;
+        } else if (stanley_line_control_enabled_) {
+          // yaw-only 模式：CTE 只记录不参与控制，车头稳定优先
+          const double target_yaw = full_inventory_same_side_active_fixed_yaw_rad_;
+          yaw_error = normalize_angle(target_yaw - pose.yaw);
+          const double yaw_kp = stanley_yaw_kp_;
+          const double yaw_kd = stanley_yaw_kd_;
+          const double yaw_deadband = stanley_yaw_deadband_rad_;
+          if (std::abs(yaw_error) >= yaw_deadband) {
+            yaw_cmd = yaw_kp * yaw_error;
+            // D term
+            const rclcpp::Time now = this->now();
+            if (full_inventory_same_side_last_yaw_error_time_.nanoseconds() != 0 && yaw_kd > 1e-6) {
+              const double dt = (now - full_inventory_same_side_last_yaw_error_time_).seconds();
+              if (dt > 1e-6 && dt < 2.0) {
+                const double yaw_error_rate =
+                  normalize_angle(yaw_error - full_inventory_same_side_last_yaw_error_) / dt;
+                yaw_cmd += yaw_kd * yaw_error_rate;
+              }
+            }
+            full_inventory_same_side_last_yaw_error_ = yaw_error;
+            full_inventory_same_side_last_yaw_error_time_ = now;
+          } else {
+            full_inventory_same_side_last_yaw_error_ = 0.0;
+            full_inventory_same_side_last_yaw_error_time_ =
+              rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
+          }
+          // min_angular enforcement
+          if (std::abs(yaw_cmd) > 1e-6 && std::abs(yaw_cmd) < stanley_min_angular_) {
+            const double sign = yaw_cmd > 0.0 ? 1.0 : -1.0;
+            yaw_cmd = sign * stanley_min_angular_;
+          }
+          cmd.angular.z = std::clamp(yaw_cmd, -stanley_max_angular_, stanley_max_angular_);
+          // 计算 CTE 仅用于日志
+          y_error = full_inventory_same_side_active_fixed_y_m_ - pose.y;
         } else {
           // Legacy y/yaw PD control
           y_error = full_inventory_same_side_active_fixed_y_m_ - pose.y;
@@ -7504,62 +7613,32 @@ private:
       }
     }
     cmd_pub_->publish(cmd);
-    if (pose_hold_active && stanley_active) {
+    if (pose_hold_active) {
+      const double cte_val = full_inventory_same_side_active_fixed_y_m_ - pose.y;
+      const double target_yaw = full_inventory_same_side_active_fixed_yaw_rad_;
+      const double yaw_err = normalize_angle(target_yaw - pose.yaw);
       RCLCPP_INFO_THROTTLE(
         get_logger(),
         *get_clock(),
         1000,
         "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s "
-        "stanley_enabled=true "
+        "cte_control=%s "
         "line_y=%.3f line_yaw=%.4f "
         "current_y=%.3f current_yaw=%.4f linear_x=%.3f "
-        "cross_track_error=%.4f yaw_offset=%.4f corrected_yaw=%.4f "
-        "heading_error=%.4f raw_angular=%.4f final_angular=%.4f "
-        "min_angular_applied=%d direction_sign=%.1f "
-        "softening_speed=%.3f cte_gain=%.3f max_yaw_offset=%.4f "
+        "cte=%.4f yaw_error=%.4f "
+        "raw_angular=%.4f final_angular=%.4f "
         "elapsed=%.2f/%.2f pose=%s",
         current_target_cabinet_,
         full_inventory_same_side_active_map_side_.c_str(),
+        line_tracking_cte_control_enabled_ ? "true" : "false",
         full_inventory_same_side_active_fixed_y_m_,
-        full_inventory_same_side_active_fixed_yaw_rad_,
+        target_yaw,
         pose.y,
         pose.yaw,
         cmd.linear.x,
-        stanley_out.cross_track_error,
-        stanley_out.yaw_offset,
-        stanley_out.corrected_yaw,
-        stanley_out.heading_error,
-        stanley_out.raw_angular,
-        stanley_out.angular_z,
-        stanley_out.min_angular_applied ? 1 : 0,
-        stanley_out.direction_sign,
-        stanley_softening_speed_,
-        stanley_cte_gain_,
-        stanley_max_yaw_offset_rad_,
-        elapsed,
-        timeout,
-        pose_note.c_str());
-    } else if (pose_hold_active) {
-      RCLCPP_INFO_THROTTLE(
-        get_logger(),
-        *get_clock(),
-        1000,
-        "[FULL_INVENTORY] same_side_next_search target=%d map_side=%s speed=%.3f current_y=%.3f "
-        "fixed_y=%.3f y_error=%.3f current_yaw=%.4f fixed_yaw=%.4f "
-        "use_heading_override=%s override_yaw=%.4f final_search_yaw=%.4f "
-        "yaw_error=%.4f angular=%.3f elapsed=%.2f/%.2f pose=%s stanley_enabled=false",
-        current_target_cabinet_,
-        full_inventory_same_side_active_map_side_.c_str(),
-        cmd.linear.x,
-        pose.y,
-        full_inventory_same_side_active_fixed_y_m_,
-        y_error,
-        pose.yaw,
-        full_inventory_same_side_active_fixed_yaw_rad_,
-        full_inventory_same_side_heading_override_valid_ ? "true" : "false",
-        full_inventory_same_side_heading_override_yaw_rad_,
-        full_inventory_same_side_active_fixed_yaw_rad_,
-        yaw_error,
+        cte_val,
+        yaw_err,
+        stanley_active ? stanley_out.raw_angular : yaw_cmd,
         cmd.angular.z,
         elapsed,
         timeout,
@@ -12910,6 +12989,10 @@ private:
   double stanley_yaw_deadband_rad_{0.02};
   double stanley_min_angular_{0.015};
   double stanley_max_angular_{0.15};
+  double stanley_yaw_offset_lpf_tau_sec_{0.0};
+  bool line_tracking_cte_control_enabled_{false};
+  double line_tracking_cte_warn_threshold_m_{0.20};
+  double line_tracking_cte_fallback_to_config_threshold_m_{0.35};
   agv_inventory_system::StanleyLineController stanley_controller_;
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{0.0};

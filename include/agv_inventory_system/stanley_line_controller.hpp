@@ -17,6 +17,7 @@ struct StanleyLineConfig
   double yaw_deadband_rad{0.02};
   double min_angular{0.015};
   double max_angular{0.15};
+  double yaw_offset_lpf_tau_sec{0.0};  // yaw_offset 低通滤波时间常数；0 = 不滤波
 };
 
 struct StanleyLineInput
@@ -52,6 +53,7 @@ public:
   {
     last_heading_error_ = 0.0;
     last_time_sec_ = -1.0;
+    filtered_yaw_offset_ = 0.0;
   }
 
   StanleyLineOutput compute(const StanleyLineInput & input, double now_sec)
@@ -72,6 +74,18 @@ public:
       out.yaw_offset,
       -config_.max_yaw_offset_rad,
       config_.max_yaw_offset_rad);
+
+    // 2b. yaw_offset 低通滤波（航向优先模式：防止频繁正负切换）
+    if (config_.yaw_offset_lpf_tau_sec > 1e-6 && last_time_sec_ >= 0.0) {
+      const double dt = now_sec - last_time_sec_;
+      if (dt > 1e-6 && dt < 2.0) {
+        const double alpha = 1.0 - std::exp(-dt / config_.yaw_offset_lpf_tau_sec);
+        filtered_yaw_offset_ += alpha * (out.yaw_offset - filtered_yaw_offset_);
+        out.yaw_offset = filtered_yaw_offset_;
+      }
+    } else {
+      filtered_yaw_offset_ = out.yaw_offset;
+    }
 
     // 3. corrected yaw based on direction
     const double direction_sign = input.linear_x >= 0.0 ? 1.0 : -1.0;
@@ -126,6 +140,7 @@ private:
   StanleyLineConfig config_;
   double last_heading_error_{0.0};
   double last_time_sec_{-1.0};
+  double filtered_yaw_offset_{0.0};
 
   static double normalize_angle(double angle)
   {
