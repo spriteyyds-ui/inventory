@@ -591,6 +591,10 @@ public:
       declare_parameter<bool>("yellow_line_use_in_rear_target_backup", true);
     yellow_line_use_in_restore_backup_ =
       declare_parameter<bool>("yellow_line_use_in_restore_backup", false);
+    yellow_line_use_in_gap_search_ =
+      declare_parameter<bool>("yellow_line_use_in_gap_search", false);
+    yellow_line_use_in_post_gap_detect_advance_ =
+      declare_parameter<bool>("yellow_line_use_in_post_gap_detect_advance", false);
     yellow_line_use_in_gap_entry_ =
       declare_parameter<bool>("yellow_line_use_in_gap_entry", false);
     yellow_line_detect_only_ =
@@ -852,13 +856,16 @@ public:
     if (yellow_line_follow_enabled_ || yellow_line_detect_only_) {
       RCLCPP_INFO(get_logger(),
         "[yellow_line] 配置: mode=%s enabled=%d detect_only=%d "
-        "rear_target_backup=%d same_side_search=%d restore_backup=%d gap_entry=%d",
+        "rear_target_backup=%d same_side_search=%d restore_backup=%d "
+        "gap_search=%d post_gap_advance=%d gap_entry=%d",
         line_follow_control_mode_.c_str(),
         yellow_line_follow_enabled_ ? 1 : 0,
         yellow_line_detect_only_ ? 1 : 0,
         yellow_line_use_in_rear_target_backup_ ? 1 : 0,
         yellow_line_use_in_same_side_search_ ? 1 : 0,
         yellow_line_use_in_restore_backup_ ? 1 : 0,
+        yellow_line_use_in_gap_search_ ? 1 : 0,
+        yellow_line_use_in_post_gap_detect_advance_ ? 1 : 0,
         yellow_line_use_in_gap_entry_ ? 1 : 0);
       RCLCPP_INFO(get_logger(),
         "[yellow_line] 前进参数: target_x_ratio=%.3f kp=%.2f kd=%.3f max_angular=%.2f",
@@ -4387,6 +4394,10 @@ private:
       return yellow_line_use_in_same_side_search_;
     } else if (scene_name == "restore_backup") {
       return yellow_line_use_in_restore_backup_;
+    } else if (scene_name == "gap_search") {
+      return yellow_line_use_in_gap_search_;
+    } else if (scene_name == "post_gap_detect_advance") {
+      return yellow_line_use_in_post_gap_detect_advance_;
     } else if (scene_name == "gap_entry") {
       return yellow_line_use_in_gap_entry_;
     }
@@ -10609,39 +10620,63 @@ private:
           return;
         }
 
-        std::string yaw_reason;
-        if (!current_odom_ready_for_entry(yaw_reason)) {
-          RCLCPP_WARN(
+        // ---- use map TF yaw (same frame as entry_turn_start_yaw_) ----
+        EnteringYawControl exit_yaw_control;
+        if (!std::isfinite(entry_turn_start_yaw_)) {
+          const std::string reason =
+            "出缝转向无法恢复航向：entry_turn_start_yaw 无效，无法确定目标朝向";
+          RCLCPP_ERROR(
             get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 原地转回走廊无法获取有效yaw，降级完成: %s",
-            yaw_reason.c_str());
-          publish_motion_log(
-            "[exit_gap] yaw invalid before turn_to_corridor, finish " + exit_motion_label +
-            " only entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
-            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
-            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
-            " exit_motion_label=" + exit_motion_label);
-          finish_single_cabinet_exit_gap();
+            "[mission_manager][single_cabinet][exit_gap] %s",
+            reason.c_str());
+          publish_motion_log("[exit_gap] " + reason);
+          if (full_inventory_active_) {
+            fail_full_inventory(reason);
+          } else {
+            fail_single_cabinet_motion(reason);
+          }
           return;
         }
-
-        const Pose2D current = current_pose_2d();
-        if (!current.valid || !std::isfinite(current.yaw) || !std::isfinite(entry_turn_start_yaw_)) {
-          RCLCPP_WARN(
-            get_logger(),
-            "[mission_manager][single_cabinet][exit_gap] 原地转回走廊yaw数据无效，降级完成");
+        if (!current_map_yaw_strict(exit_yaw_control)) {
+          // TF failure: check total exit timeout before retrying.
+          const double tf_elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
+          const double tf_timeout = std::max(0.1, single_cabinet_exit_effective_timeout_sec_);
+          if (tf_elapsed > tf_timeout) {
+            const std::string reason =
+              "出缝转向 map TF yaw 连续不可用且出缝超时 elapsed=" +
+              format_fixed(tf_elapsed, 2) + " timeout=" + format_fixed(tf_timeout, 2) +
+              " tf_reason=" + exit_yaw_control.pose_note;
+            publish_stop();
+            RCLCPP_ERROR(
+              get_logger(),
+              "[mission_manager][single_cabinet][exit_gap] %s",
+              reason.c_str());
+            publish_motion_log("[exit_gap] " + reason);
+            if (full_inventory_active_) {
+              fail_full_inventory(reason);
+            } else {
+              fail_single_cabinet_motion(reason);
+            }
+            return;
+          }
+          // Not timed out yet: publish zero velocity, stay in STRAIGHT_REVERSE
+          // so next control cycle retries.
+          publish_stop();
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 2000,
+            "[mission_manager][single_cabinet][exit_gap] map TF yaw unavailable "
+            "before turn_to_corridor, retrying: %s elapsed=%.2f/%.2f",
+            exit_yaw_control.pose_note.c_str(), tf_elapsed, tf_timeout);
           publish_motion_log(
-            "[exit_gap] yaw data invalid before turn_to_corridor, finish " + exit_motion_label +
-            " only entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
-            " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
-            " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
-            " exit_motion_label=" + exit_motion_label);
-          finish_single_cabinet_exit_gap();
+            "[exit_gap] map_yaw_unavailable_before_turn_to_corridor reason=" +
+            exit_yaw_control.pose_note + " elapsed=" + format_fixed(tf_elapsed, 2) +
+            " timeout=" + format_fixed(tf_timeout, 2) + " retrying");
           return;
         }
 
         const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
-        const double yaw_error = normalize_angle(target_exit_yaw - current.yaw);
+        const double current_exit_yaw = normalize_angle(exit_yaw_control.yaw);
+        const double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
         const double yaw_tolerance =
           std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
           std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
@@ -10649,13 +10684,16 @@ private:
           RCLCPP_INFO(
             get_logger(),
             "[mission_manager][single_cabinet][exit_gap] 出缝完成：%s + turn_to_corridor "
-            "yaw already aligned current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+            "yaw already aligned current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+            "yaw_frame=%s yaw_source=%s "
             "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
             "exit_motion_label=%s",
             exit_motion_label.c_str(),
-            current.yaw,
+            current_exit_yaw,
             target_exit_yaw,
             yaw_error,
+            exit_yaw_control.yaw_frame.c_str(),
+            exit_yaw_control.pose_note.c_str(),
             entry_motion_mode_to_string(entry_motion_mode_).c_str(),
             finished_exit_linear_cmd,
             finished_exit_linear_cmd,
@@ -10665,6 +10703,8 @@ private:
             " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
             " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
             " exit_motion_label=" + exit_motion_label +
+            " yaw_frame=" + exit_yaw_control.yaw_frame +
+            " yaw_source=" + exit_yaw_control.pose_note +
             " turn_to_corridor yaw already aligned");
           finish_single_cabinet_exit_gap();
           return;
@@ -10674,16 +10714,21 @@ private:
         single_cabinet_exit_phase_start_time_ = this->now();
         RCLCPP_INFO(
           get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] switch phase=%s entry_side=%s current_yaw=%.3f "
-          "target_exit_yaw=%.3f yaw_error=%.3f",
+          "[mission_manager][single_cabinet][exit_gap] switch phase=%s entry_side=%s "
+          "current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+          "yaw_frame=%s yaw_source=%s",
           single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           current_entry_side_.c_str(),
-          current.yaw,
+          current_exit_yaw,
           target_exit_yaw,
-          yaw_error);
+          yaw_error,
+          exit_yaw_control.yaw_frame.c_str(),
+          exit_yaw_control.pose_note.c_str());
         publish_motion_log(
           "[exit_gap] switch phase=" + single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_) +
-          " entry_side=" + current_entry_side_);
+          " entry_side=" + current_entry_side_ +
+          " yaw_frame=" + exit_yaw_control.yaw_frame +
+          " yaw_source=" + exit_yaw_control.pose_note);
         return;
       }
 
@@ -10712,36 +10757,73 @@ private:
     }
 
     if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::TURN_TO_CORRIDOR) {
-      std::string yaw_reason;
-      if (!current_odom_ready_for_entry(yaw_reason)) {
+      // ---- map TF yaw only (same frame as entry_turn_start_yaw_) ----
+      if (!std::isfinite(entry_turn_start_yaw_)) {
         publish_stop();
-        RCLCPP_WARN(
+        const std::string reason =
+          "出缝转向无法恢复航向：entry_turn_start_yaw 无效，无法确定目标朝向";
+        RCLCPP_ERROR(
           get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] phase=%s yaw无效，结束出缝避免卡死: %s",
-          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
-          yaw_reason.c_str());
-        publish_motion_log("[exit_gap] turn_to_corridor yaw invalid, finish to avoid blocking");
-        finish_single_cabinet_exit_gap();
+          "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR %s",
+          reason.c_str());
+        publish_motion_log("[exit_gap] turn_to_corridor " + reason);
+        if (full_inventory_active_) {
+          fail_full_inventory(reason);
+        } else {
+          fail_single_cabinet_motion(reason);
+        }
         return;
       }
 
-      const Pose2D current = current_pose_2d();
-      if (!current.valid || !std::isfinite(current.yaw) || !std::isfinite(entry_turn_start_yaw_)) {
+      // Compute elapsed BEFORE the TF check so timeout is always enforced.
+      const double elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
+      const double turn_timeout =
+        std::isfinite(single_cabinet_exit_turn_timeout_sec_) ?
+        std::max(0.1, single_cabinet_exit_turn_timeout_sec_) : 8.0;
+
+      EnteringYawControl exit_yaw_control;
+      if (!current_map_yaw_strict(exit_yaw_control)) {
+        // TF failure: check total timeout first.
+        if (elapsed > turn_timeout) {
+          const std::string reason =
+            "出缝转向 map TF yaw 连续不可用且超时 elapsed=" +
+            format_fixed(elapsed, 2) + " timeout=" + format_fixed(turn_timeout, 2) +
+            " tf_reason=" + exit_yaw_control.pose_note;
+          publish_stop();
+          RCLCPP_ERROR(
+            get_logger(),
+            "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR %s",
+            reason.c_str());
+          publish_motion_log("[exit_gap] turn_to_corridor " + reason);
+          if (full_inventory_active_) {
+            fail_full_inventory(reason);
+          } else {
+            fail_single_cabinet_motion(reason);
+          }
+          return;
+        }
+        // Not timed out yet: publish zero velocity, stay in TURN_TO_CORRIDOR
+        // to retry next control cycle.
         publish_stop();
-        RCLCPP_WARN(
-          get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] phase=%s yaw数据无效，结束出缝避免卡死",
-          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str());
-        publish_motion_log("[exit_gap] turn_to_corridor yaw data invalid, finish to avoid blocking");
-        finish_single_cabinet_exit_gap();
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 2000,
+          "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+          "map TF yaw unavailable, retrying: %s elapsed=%.2f/%.2f",
+          exit_yaw_control.pose_note.c_str(), elapsed, turn_timeout);
+        publish_motion_log(
+          "[exit_gap] turn_to_corridor map_yaw_unavailable reason=" +
+          exit_yaw_control.pose_note + " elapsed=" + format_fixed(elapsed, 2) +
+          " timeout=" + format_fixed(turn_timeout, 2) + " retrying");
         return;
       }
 
       const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
-      const double yaw_error = normalize_angle(target_exit_yaw - current.yaw);
+      const double current_exit_yaw = normalize_angle(exit_yaw_control.yaw);
+      const double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
       const double yaw_tolerance =
         std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
         std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
+
       if (std::abs(yaw_error) <= yaw_tolerance) {
         publish_stop();
         const double finished_exit_linear_cmd = apply_exit_motion_direction(speed);
@@ -10750,45 +10832,62 @@ private:
         RCLCPP_INFO(
           get_logger(),
           "[mission_manager][single_cabinet][exit_gap] 出缝完成：%s + turn_to_corridor "
-          "entry_side=%s current_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+          "entry_side=%s current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+          "yaw_frame=%s yaw_source=%s "
           "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
-          "exit_motion_label=%s",
+          "exit_motion_label=%s elapsed=%.2f completion_reason=stable_yaw_in_tolerance",
           exit_motion_label.c_str(),
           current_entry_side_.c_str(),
-          current.yaw,
+          current_exit_yaw,
           target_exit_yaw,
           yaw_error,
+          exit_yaw_control.yaw_frame.c_str(),
+          exit_yaw_control.pose_note.c_str(),
           entry_motion_mode_to_string(entry_motion_mode_).c_str(),
           finished_exit_linear_cmd,
           finished_exit_linear_cmd,
-          exit_motion_label.c_str());
+          exit_motion_label.c_str(),
+          elapsed);
         publish_motion_log(
           "[exit_gap] entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
           " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
           " published_cmd_linear_x=" + format_fixed(finished_exit_linear_cmd, 3) +
           " exit_motion_label=" + exit_motion_label +
-          " turn_to_corridor");
+          " yaw_frame=" + exit_yaw_control.yaw_frame +
+          " yaw_source=" + exit_yaw_control.pose_note +
+          " current_exit_yaw=" + format_fixed(current_exit_yaw, 4) +
+          " target_exit_yaw=" + format_fixed(target_exit_yaw, 4) +
+          " yaw_error=" + format_fixed(yaw_error, 4) +
+          " elapsed=" + format_fixed(elapsed, 2) +
+          " turn_to_corridor completion_reason=stable_yaw_in_tolerance");
         finish_single_cabinet_exit_gap();
         return;
       }
 
-      const double elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
-      const double turn_timeout =
-        std::isfinite(single_cabinet_exit_turn_timeout_sec_) ?
-        std::max(0.1, single_cabinet_exit_turn_timeout_sec_) : 8.0;
       if (elapsed > turn_timeout) {
         publish_stop();
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] phase=%s timeout entry_side=%s current_yaw=%.3f "
-          "target_exit_yaw=%.3f yaw_error=%.3f elapsed=%.2f",
-          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
+          "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR timeout "
+          "entry_side=%s current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+          "yaw_frame=%s yaw_source=%s elapsed=%.2f timeout=%.2f",
           current_entry_side_.c_str(),
-          current.yaw,
+          current_exit_yaw,
           target_exit_yaw,
           yaw_error,
-          elapsed);
-        publish_motion_log("[exit_gap] turn_to_corridor timeout, finish to avoid blocking");
+          exit_yaw_control.yaw_frame.c_str(),
+          exit_yaw_control.pose_note.c_str(),
+          elapsed,
+          turn_timeout);
+        publish_motion_log(
+          "[exit_gap] turn_to_corridor timeout"
+          " yaw_frame=" + exit_yaw_control.yaw_frame +
+          " yaw_source=" + exit_yaw_control.pose_note +
+          " current_exit_yaw=" + format_fixed(current_exit_yaw, 4) +
+          " target_exit_yaw=" + format_fixed(target_exit_yaw, 4) +
+          " yaw_error=" + format_fixed(yaw_error, 4) +
+          " elapsed=" + format_fixed(elapsed, 2) +
+          " completion_reason=timeout");
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -10799,8 +10898,8 @@ private:
         publish_stop();
         RCLCPP_WARN(
           get_logger(),
-          "[mission_manager][single_cabinet][exit_gap] phase=%s angular speed invalid, finish to avoid blocking",
-          single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str());
+          "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+          "angular speed invalid, finish to avoid blocking");
         publish_motion_log("[exit_gap] turn_to_corridor angular speed invalid, finish to avoid blocking");
         finish_single_cabinet_exit_gap();
         return;
@@ -10815,16 +10914,20 @@ private:
         get_logger(),
         *get_clock(),
         1000,
-        "[mission_manager][single_cabinet][exit_gap] phase=%s entry_side=%s current_yaw=%.3f "
-        "target_exit_yaw=%.3f yaw_error=%.3f cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f",
-        single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
+        "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+        "entry_side=%s current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
+        "yaw_frame=%s yaw_source=%s "
+        "cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f timeout=%.2f",
         current_entry_side_.c_str(),
-        current.yaw,
+        current_exit_yaw,
         target_exit_yaw,
         yaw_error,
+        exit_yaw_control.yaw_frame.c_str(),
+        exit_yaw_control.pose_note.c_str(),
         cmd.linear.x,
         cmd.angular.z,
-        elapsed);
+        elapsed,
+        turn_timeout);
       return;
     }
 
@@ -11954,6 +12057,42 @@ private:
     }
   }
 
+  // Strict map-yaw getter for exit gap turn — NO odom fallback.
+  // Returns true only when a real map→base_footprint TF yaw is available.
+  // On TF failure, control.valid=false and control.yaw is NaN so it can
+  // never be accidentally used in a mixed-frame error calculation.
+  bool current_map_yaw_strict(EnteringYawControl & control)
+  {
+    control = EnteringYawControl{};
+    control.yaw = std::numeric_limits<double>::quiet_NaN();
+    control.valid = false;
+
+    const std::string target_frame =
+      sanitize_frame_id(nav2_goal_frame_.empty() ? "map" : nav2_goal_frame_);
+    const std::string source_frame = sanitize_frame_id("base_footprint");
+    try {
+      const auto tf_msg = tf_buffer_->lookupTransform(
+        target_frame,
+        source_frame,
+        tf2::TimePointZero,
+        tf2::durationFromSec(0.05));
+      const double yaw = yaw_from_quaternion(tf_msg.transform.rotation);
+      if (!std::isfinite(yaw)) {
+        control.pose_note = "tf_yaw_not_finite";
+        return false;
+      }
+      control.yaw = yaw;
+      control.yaw_frame = target_frame;
+      control.pose_note = "tf_latest " + target_frame + "<-" + source_frame;
+      control.valid = true;
+      return true;
+    } catch (const tf2::TransformException & ex) {
+      control.pose_note =
+        "tf_error=" + std::string(ex.what());
+      return false;
+    }
+  }
+
   void fail_entering_gap(const std::string & reason)
   {
     publish_stop();
@@ -12205,11 +12344,12 @@ private:
 
     const double direction =
       effective_gap_search_direction() == SearchDirection::BACKWARD ? -1.0 : 1.0;
-    const bool done = run_wait_gap_linear_motion(
-      direction,
-      post_gap_detect_advance_speed_,
-      std::abs(post_gap_detect_advance_distance_m_));
-    if (done) {
+    const double target_distance = std::abs(post_gap_detect_advance_distance_m_);
+    const double traveled = segment_distance();
+
+    // 到达目标距离 → 停车，进入入缝流程
+    if (traveled >= target_distance) {
+      publish_stop();
       full_inventory_post_gap_advance_start_ =
         rclcpp::Time(0, 0, get_clock()->get_clock_type());
       publish_full_inventory_log(
@@ -12219,17 +12359,44 @@ private:
       return;
     }
 
+    // 构造运动指令
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = direction * std::abs(post_gap_detect_advance_speed_);
+    cmd.angular.z = 0.0;
+
+    // ===== 黄线巡线：接管 post_gap_detect_advance 角速度 =====
+    {
+      const double original_angular_z = cmd.angular.z;
+      double output_angular_z = original_angular_z;
+      bool should_stop = false;
+      if (apply_line_follow_control(
+        "post_gap_detect_advance", cmd.linear.x, original_angular_z,
+        output_angular_z, should_stop))
+      {
+        if (should_stop) {
+          publish_stop();
+          RCLCPP_WARN(get_logger(),
+            "[post_gap_advance] yellow line lost, stopping");
+          return;
+        }
+        cmd.angular.z = output_angular_z;
+      }
+    }
+
+    cmd_pub_->publish(cmd);
+
     RCLCPP_INFO_THROTTLE(
       get_logger(),
       *get_clock(),
       1000,
       "[mission_manager][FULL_INVENTORY] post_gap_advance target=%d direction=%s traveled=%.2f/%.2f "
-      "speed=%.3f elapsed=%.2f/%.2f",
+      "speed=%.3f cmd.angular.z=%.4f elapsed=%.2f/%.2f",
       current_target_cabinet_,
       search_direction_to_string(effective_gap_search_direction()).c_str(),
-      segment_distance(),
-      std::abs(post_gap_detect_advance_distance_m_),
+      traveled,
+      target_distance,
       post_gap_detect_advance_speed_,
+      cmd.angular.z,
       elapsed,
       timeout);
   }
@@ -12281,6 +12448,26 @@ private:
     geometry_msgs::msg::Twist cmd;
     cmd.linear.x = direction * std::abs(search_gap_speed_);
     cmd.angular.z = 0.0;
+
+    // ===== 黄线巡线：接管 gap_search 角速度 =====
+    {
+      const double original_angular_z = cmd.angular.z;
+      double output_angular_z = original_angular_z;
+      bool should_stop = false;
+      if (apply_line_follow_control(
+        "gap_search", cmd.linear.x, original_angular_z,
+        output_angular_z, should_stop))
+      {
+        if (should_stop) {
+          publish_stop();
+          RCLCPP_WARN(get_logger(),
+            "[gap_search] yellow line lost, stopping");
+          return;
+        }
+        cmd.angular.z = output_angular_z;
+      }
+    }
+
     cmd_pub_->publish(cmd);
 
     RCLCPP_INFO_THROTTLE(
@@ -12289,7 +12476,7 @@ private:
       1000,
       "search_gap: target_cabinet=%d target_side=%s entry_side=%s gap_search_direction=%s "
       "original_gap_search_direction=%s override_valid=%s timeout_sec=%.2f elapsed_sec=%.2f "
-      "expected_gap=%s cmd.linear.x=%.3f",
+      "expected_gap=%s cmd.linear.x=%.3f cmd.angular.z=%.4f",
       current_target_cabinet_,
       current_target_side_.c_str(),
       current_entry_side_.c_str(),
@@ -12299,7 +12486,8 @@ private:
       timeout_sec,
       elapsed_sec,
       gap_plan_to_string(current_gap_plan_).c_str(),
-      cmd.linear.x);
+      cmd.linear.x,
+      cmd.angular.z);
   }
 
   void handle_waiting_gap_state()
@@ -13721,6 +13909,8 @@ private:
   bool yellow_line_use_in_same_side_search_{false};
   bool yellow_line_use_in_rear_target_backup_{true};
   bool yellow_line_use_in_restore_backup_{false};
+  bool yellow_line_use_in_gap_search_{false};
+  bool yellow_line_use_in_post_gap_detect_advance_{false};
   bool yellow_line_use_in_gap_entry_{false};
   bool yellow_line_detect_only_{false};
   std::string yellow_line_image_topic_{"/camera/color/image_raw"};

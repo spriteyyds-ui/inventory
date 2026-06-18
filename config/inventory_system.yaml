@@ -606,6 +606,8 @@ mission_manager_node:
     yellow_line_use_in_same_side_search: true                            # 同侧搜索使用黄线巡线；前进时黄线横向纠偏
     yellow_line_use_in_rear_target_backup: true                          # 后方目标回退使用黄线巡线；后退时黄线横向纠偏
     yellow_line_use_in_restore_backup: false                             # 出缝回退是否使用黄线巡线；默认关闭
+    yellow_line_use_in_gap_search: true                                  # SEARCH_GAP 搜缝阶段使用黄线巡线；沿走廊前进/后退时横向纠偏
+    yellow_line_use_in_post_gap_detect_advance: true                     # 缝隙检测后前进对齐阶段使用黄线巡线；沿走廊直行时横向纠偏
     yellow_line_use_in_gap_entry: false                                  # 入缝是否使用黄线巡线；默认关闭，先不让黄线影响入缝
     yellow_line_detect_only: false                                       # 只识别不控制模式；true 时只运行图像识别和发布 debug，不改变小车控制
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题；Orbbec ASTRA S 默认话题
@@ -638,7 +640,7 @@ mission_manager_node:
     recognition_fallback_speed: 0.10                                    # 识别兜底移动速度，单位 m/s；调大会搜索更快但可能错过目标
     recognition_fallback_wait_sec: 5.0                                  # 每次识别兜底动作后的等待时间，单位 s；调大会给识别更多稳定时间
     recognition_fallback_timeout_sec: 20.0                              # 识别兜底总超时，单位 s；调大会允许更长搜索
-    recognition_fallback_sequence_m: [0.20, -0.20, 0.30]                # 识别兜底移动距离序列，单位 m；正负号决定前后搜索方向
+    recognition_fallback_sequence_m: [-0.20, 0.40, -0.30]                # 识别兜底移动距离序列，单位 m；正负号决定前后搜索方向
 
 
     scan_layers: 2                                                      # 盘库扫描层数，单位 层；调大会扫描更多高度层
