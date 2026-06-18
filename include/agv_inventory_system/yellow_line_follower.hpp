@@ -205,6 +205,7 @@ public:
     // 限幅
     angular_z = std::clamp(raw_angular, -eff_max, eff_max);
     last_angular_z_ = angular_z;
+    last_raw_angular_ = raw_angular;
     return true;
   }
 
@@ -222,6 +223,9 @@ public:
 
   // 获取最近一次检测结果
   const YellowLineDetectResult & getResult() const {return result_;}
+
+  // 获取上一次 raw_angular（限幅前、反转后）
+  double getLastRawAngular() const {return last_raw_angular_;}
 
   // 是否最近一次检测到黄线
   bool isDetected() const {return result_.detected;}
@@ -291,6 +295,7 @@ private:
   YellowLineFollowerConfig config_;
   YellowLineDetectResult result_;
   double last_angular_z_{0.0};
+  double last_raw_angular_{0.0};
   double last_time_sec_{-1.0};
   double last_error_norm_{0.0};
   bool forward_{true};

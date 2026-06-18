@@ -48,6 +48,7 @@ set(srv_files
   "srv/StartMission.srv"
   "srv/LiftMoveTimed.srv"
   "srv/LiftMoveToHeight.srv"
+  "srv/SwitchCamera.srv"
 )
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -221,6 +222,7 @@ install(TARGETS
 
 install(PROGRAMS
   scripts/init_camera_controls.sh
+  scripts/camera_manager_node.py
   scripts/inventory_operation_gui.py
   scripts/inventory_auto_recharger.py
   scripts/lift_relay_controller.py

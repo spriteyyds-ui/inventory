@@ -315,6 +315,9 @@ mission_manager_node:
     stop_auto_charge_depart_stop_before_sec: 0.5                        # 自动回充取消成功后、离桩前停车等待时间，单位 s
     stop_auto_charge_depart_stop_after_sec: 0.5                         # 离桩到位后停车等待时间，单位 s
     recognizer_trigger_service: /inventory/trigger_recognition          # 可选识别器触发服务名；用于手动控制识别流程
+    camera_manager_switch_service: /inventory/camera_manager/switch_camera  # camera_manager 切换相机服务名
+    camera_manager_status_topic: /inventory/camera_manager/status           # camera_manager 状态话题
+    camera_switch_timeout_sec: 30.0                                         # 等待相机切换完成的超时，单位 s
 
     target_list: ["2-3-1-2"]                                            # 默认任务目标列表；元素描述目标组合，外部未传入时使用
     route_waypoints_file: config/route_waypoints.yaml                   # 路线航点配置文件路径；可用包内相对路径或绝对路径
@@ -332,7 +335,7 @@ mission_manager_node:
     left_max_depth_index: 4                                             # 左/上排货柜允许的最大深度索引，单位 层；调大允许更深目标
     right_max_depth_index: 3                                            # 右/下排货柜允许的最大深度索引，单位 层；调大允许更深目标
     entry_center_offset_m: 0.40                                         # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
-    entry_right_target_yaw_rad: -1.6026                                # 右侧进缝固定目标 yaw，单位 rad；map -Y，新地图方向相反
+    entry_right_target_yaw_rad: -1.5526                                # 右侧进缝固定目标 yaw，单位 rad；map -Y，新地图方向相反
     entry_left_target_yaw_rad: -0.1322                                   # 左侧进缝固定目标 yaw，单位 rad；map +Y，新地图方向相反
     entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
@@ -550,7 +553,7 @@ mission_manager_node:
     inventory_right_route: right_route                                  # 右/下排盘库使用的路线名；需与路线航点配置一致
 
     same_side_next_search_enabled: true                                 # 退出间隙后是否启用同侧下一目标搜索；关闭会减少连续盘库能力
-    same_side_search_speed: 0.15                                        # 同侧下一目标搜索速度，单位 m/s；调大会搜索更快但识别时间更短
+    same_side_search_speed: 0.15                                        # 同侧下一目标搜索速度，单位 m/s；与前进巡线速度统一
     same_side_search_timeout_sec: 120.0                                  # 同侧下一目标搜索超时，单位 s；调大会搜索更久
     same_side_pose_hold_enabled: true                                   # 同侧搜索期间是否启用 y/yaw 闭环修正；关闭则开环直走
     same_side_fixed_y_from_current_pose_enabled: true                  # 同侧搜索开始时是否用当前位姿 y 作为 fixed_y；false 则使用 YAML 配置值
@@ -573,9 +576,9 @@ mission_manager_node:
     rear_target_turn_yaw_tolerance_rad: 0.08                             # 后方目标 yaw 微调收敛阈值，单位 rad；调小更准但耗时更久
     rear_target_turn_timeout_sec: 10.0                                   # 后方目标 yaw 微调超时，单位 s；超时进入全量盘库 ERROR
     rear_target_backup_enabled: true                                     # yaw 微调后是否倒车固定距离，再进入同侧搜索
-    rear_target_backup_distance_m: 3.00                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
-    rear_target_backup_speed: 0.20                                       # 后方目标倒车速度，单位 m/s；低速保证现场安全
-    rear_target_backup_timeout_sec: 120.0                                # 后方目标倒车超时，单位 s；1.5m/0.08m/s 约 18.75s
+    rear_target_backup_distance_m: 3.60                                  # 后方目标倒车距离，单位 m；3->2 首版按现场确认使用 1.5m
+    rear_target_backup_speed: 0.15                                       # 后方目标倒车速度，单位 m/s；现场验证后正式值
+    rear_target_backup_timeout_sec: 120.0                                # 后方目标倒车超时，单位 s；2.80m/0.20m/s 约 14s
     rear_target_backup_pose_hold_enabled: true                          # 回退阶段是否启用 y/yaw 闭环修正；关闭则只用 yaw_hold_command
     rear_target_backup_fixed_y_from_current_pose_enabled: true          # 回退开始时是否用当前位姿 y 作为 fixed_y；false 则用 same_side active fixed_y
     rear_target_backup_y_correction_sign: -1.0                          # 回退 y 修正方向符号；-1.0 因倒车时 angular.z 横向效应与前进相反
@@ -608,7 +611,7 @@ mission_manager_node:
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题；Orbbec ASTRA S 默认话题
     yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例；图像高度的 55% 处开始
     yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例；图像高度的 95% 处结束
-    yellow_line_target_x_ratio: 0.924                                    # 前进时黄线目标 x 位置比例；现场标定值
+    yellow_line_target_x_ratio: 0.84                                    # 前进时黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素；用于现场手动标定微调
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
     yellow_h_max: 40                                                     # 黄色 HSV H 最大值
@@ -617,16 +620,16 @@ mission_manager_node:
     yellow_v_min: 80                                                     # 黄色 HSV V 最小值
     yellow_v_max: 255                                                    # 黄色 HSV V 最大值
     yellow_line_min_area: 300.0                                          # 最小轮廓面积；过滤噪声
-    yellow_line_lost_timeout_sec: 0.5                                    # 丢线超时，单位 s；yellow_line 模式超时停车，auto 模式超时 fallback
+    yellow_line_lost_timeout_sec: 5.5                                    # 丢线超时，单位 s；yellow_line 模式超时停车，auto 模式超时 fallback
     yellow_line_initial_grace_sec: 2.0                                   # 首帧图像后宽限期，单位 s；宽限期内不触发 lost 停车，等待相机稳定
     yellow_line_kp: 0.5                                                  # 巡线 P 增益；现场标定值，适中响应
     yellow_line_kd: 0.03                                                 # 巡线 D 增益；现场标定值，轻微抑制超调
     yellow_line_max_angular: 0.15                                        # 最大角速度，单位 rad/s；现场标定值，安全限幅
-    yellow_line_reverse_invert_angular: true                             # 后退时是否翻转角速度方向；true 时后退纠偏方向与前进相反
-    yellow_line_backward_target_x_ratio: 0.924                           # 后退时黄线目标 x 位置比例；后退视角不同可能需要独立标定
-    yellow_line_backward_kp: 0.8                                         # 后退巡线 P 增益；后退时可能需要更强纠偏
-    yellow_line_backward_kd: 0.05                                        # 后退巡线 D 增益
-    yellow_line_backward_max_angular: 0.25                               # 后退最大角速度；允许更大纠偏范围
+    yellow_line_reverse_invert_angular: false                            # 后退时不翻转角速度方向；标准 PD 符号对后退同样适用
+    yellow_line_backward_target_x_ratio: 0.84                           # 后退时黄线目标 x 比例；与前进一致
+    yellow_line_backward_kp: 0.40                                        # 后退巡线 P 增益；符号验证阶段保守值
+    yellow_line_backward_kd: 0.00                                        # 后退巡线 D 增益；符号验证阶段关闭 D
+    yellow_line_backward_max_angular: 0.05                               # 后退最大角速度；符号验证阶段严格限幅
     yellow_line_debug_image_enabled: true                                # 发布调试图像；可在 rv2 中查看识别效果
     yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题名
 
@@ -712,7 +715,7 @@ yellow_line_test_node:
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题
     yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例
     yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例
-    yellow_line_target_x_ratio: 0.924                                     # 黄线目标 x 位置比例；现场标定值
+    yellow_line_target_x_ratio: 0.84                                     # 黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
     yellow_h_max: 40                                                     # 黄色 HSV H 最大值
@@ -721,11 +724,11 @@ yellow_line_test_node:
     yellow_v_min: 80                                                     # 黄色 HSV V 最小值
     yellow_v_max: 255                                                    # 黄色 HSV V 最大值
     yellow_line_min_area: 300.0                                          # 最小轮廓面积
-    yellow_line_lost_timeout_sec: 2.5                                    # 丢线超时
+    yellow_line_lost_timeout_sec: 5.5                                    # 丢线超时；与正式盘库一致
     yellow_line_kp: 0.5                                                  # 巡线 P 增益；现场标定值
     yellow_line_kd: 0.03                                                 # 巡线 D 增益；现场标定值
     yellow_line_max_angular: 0.15                                        # 最大角速度；现场标定值
-    yellow_line_reverse_invert_angular: true                             # 后退时翻转角速度
+    yellow_line_reverse_invert_angular: false                            # 后退时不翻转角速度方向
     yellow_line_debug_image_enabled: true                                # 测试节点默认开启 debug 图像
     yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题
     test_linear_speed: 0.15                                              # 测试用线速度（仅用于打印计算结果）
@@ -740,7 +743,7 @@ yellow_line_drive_test_node:
     cmd_vel_topic: "/cmd_vel"                                            # 速度发布话题
     yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例
     yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例
-    yellow_line_target_x_ratio: 0.924                                    # 前进时黄线目标 x 位置比例；现场标定值
+    yellow_line_target_x_ratio: 0.84                                    # 前进时黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
     yellow_h_max: 40                                                     # 黄色 HSV H 最大值
@@ -749,16 +752,16 @@ yellow_line_drive_test_node:
     yellow_v_min: 80                                                     # 黄色 HSV V 最小值
     yellow_v_max: 255                                                    # 黄色 HSV V 最大值
     yellow_line_min_area: 300.0                                          # 最小轮廓面积
-    yellow_line_lost_timeout_sec: 2.5                                    # 丢线超时停车
+    yellow_line_lost_timeout_sec: 5.5                                    # 丢线超时停车；与正式盘库一致
     yellow_line_kp: 0.5                                                  # 前进巡线 P 增益；现场标定值
     yellow_line_kd: 0.03                                                 # 前进巡线 D 增益；现场标定值
     yellow_line_max_angular: 0.15                                        # 前进最大角速度；现场标定值
-    yellow_line_reverse_invert_angular: true                             # 后退时翻转角速度
+    yellow_line_reverse_invert_angular: false                            # 后退时不翻转角速度方向；与正式盘库参数一致
     yellow_line_debug_image_enabled: true                                # 发布调试图像
     yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题
-    test_linear_speed: 0.15                                              # 前进线速度，单位 m/s
-    test_backward_linear_speed: 0.08                                     # 后退线速度，单位 m/s；比前进慢以增加纠偏窗口；-1 表示复用前进速度
-    yellow_line_backward_target_x_ratio: 0.924                           # 后退时黄线目标 x 位置比例；可能需与前进不同
-    yellow_line_backward_kp: 0.8                                         # 后退巡线 P 增益；后退视角不同可能需要更强纠偏
-    yellow_line_backward_kd: 0.05                                        # 后退巡线 D 增益
-    yellow_line_backward_max_angular: 0.25                               # 后退最大角速度；允许更大纠偏
+    test_linear_speed: 0.20                                              # 前进线速度，单位 m/s
+    test_backward_linear_speed: 0.20                                     # 后退线速度，单位 m/s；与 rear_target_backup_speed 一致
+    yellow_line_backward_target_x_ratio: 0.84                          # 后退时黄线目标 x 位置比例；与正式盘库参数一致
+    yellow_line_backward_kp: 0.40                                        # 后退巡线 P 增益；与正式盘库参数一致
+    yellow_line_backward_kd: 0.00                                        # 后退巡线 D 增益；与正式盘库参数一致
+    yellow_line_backward_max_angular: 0.05                               # 后退最大角速度；与正式盘库参数一致

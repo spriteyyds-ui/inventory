@@ -15,15 +15,10 @@ import os
 
 
 RIGHT_CAMERA_DEVICE_DEFAULT = (
-    '/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1.1:1.0-video-index0'
+    '/dev/v4l/by-path/platform-3610000.usb-usb-0:2.4.1:1.0-video-index0'
 )
 LEFT_CAMERA_DEVICE_DEFAULT = (
-    '/dev/v4l/by-path/platform-3610000.usb-usb-0:2.1.2:1.0-video-index0'
-)
-
-INIT_CAMERA_SCRIPT = os.path.join(
-    get_package_prefix('agv_inventory_system'),
-    'lib', 'agv_inventory_system', 'init_camera_controls.sh'
+    '/dev/v4l/by-path/platform-3610000.usb-usb-0:2.4.2:1.0-video-index0'
 )
 
 ROBOT_API_SERVER_DIR = (
@@ -84,12 +79,6 @@ def generate_launch_description():
         description='C100 左相机稳定 by-path 设备路径'
     )
 
-    enable_camera_controls_init_arg = DeclareLaunchArgument(
-        'enable_camera_controls_init',
-        default_value='true',
-        description='相机启动后是否自动初始化 v4l2 参数'
-    )
-
     launch_front_camera_arg = DeclareLaunchArgument(
         'launch_front_camera',
         default_value='true',
@@ -104,7 +93,6 @@ def generate_launch_description():
     inventory_params_file = LaunchConfiguration('inventory_params_file')
     c100_right_video_device = LaunchConfiguration('c100_right_video_device')
     c100_left_video_device = LaunchConfiguration('c100_left_video_device')
-    enable_camera_controls_init = LaunchConfiguration('enable_camera_controls_init')
     launch_front_camera = LaunchConfiguration('launch_front_camera')
     nav2_launch_file = os.path.join(
         get_package_share_directory('wheeltec_nav2'),
@@ -118,7 +106,7 @@ def generate_launch_description():
     )
 
     # 前方 Astra 相机（黄线巡线需要）
-    # 延迟 5 秒启动，避免与 c100 USB 相机同时争抢 USB 资源导致 SIGSEGV
+    # 延迟 15 秒启动，等待 Nav2 等重节点完成初始化后再独占 USB/带宽资源
     astra_launch_file = os.path.join(
         get_package_share_directory('astra_camera'),
         'launch',
@@ -129,7 +117,7 @@ def generate_launch_description():
         condition=IfCondition(launch_front_camera)
     )
     front_camera_launch = TimerAction(
-        period=5.0,
+        period=15.0,
         actions=[front_camera_launch_raw],
         condition=IfCondition(launch_front_camera)
     )
@@ -160,63 +148,25 @@ def generate_launch_description():
         parameters=[inventory_params_file]
     )
 
-    c100_right_camera_node = Node(
-        package='usb_cam',
-        executable='usb_cam_node_exe',
-        name='c100_right_camera',
+    # Camera manager: manages HJ camera processes on demand (left/right).
+    # No static usb_cam nodes or init_camera_controls.sh needed.
+    camera_manager_node = Node(
+        package='agv_inventory_system',
+        executable='camera_manager_node.py',
+        name='camera_manager_node',
         output='screen',
-        parameters=[{
-            'video_device': c100_right_video_device,
-            'camera_name': 'c100_right',
+        parameters=[inventory_params_file, {
+            'left_camera_device': c100_left_video_device,
+            'right_camera_device': c100_right_video_device,
+            'left_camera_topic': '/c100_left/image_raw',
+            'right_camera_topic': '/c100_right/image_raw',
             'image_width': 640,
             'image_height': 480,
-            'framerate': 15.0,
             'pixel_format': 'mjpeg2rgb',
-        }],
-        remappings=[
-            ('image_raw', '/c100_right/image_raw'),
-            ('camera_info', '/c100_right/camera_info'),
-        ]
-    )
-
-    c100_left_camera_node = Node(
-        package='usb_cam',
-        executable='usb_cam_node_exe',
-        name='c100_left_camera',
-        output='screen',
-        parameters=[{
-            'video_device': c100_left_video_device,
-            'camera_name': 'c100_left',
-            'image_width': 640,
-            'image_height': 480,
-            'framerate': 15.0,
-            'pixel_format': 'mjpeg2rgb',
-        }],
-        remappings=[
-            ('image_raw', '/c100_left/image_raw'),
-            ('camera_info', '/c100_left/camera_info'),
-        ]
-    )
-
-    c100_right_camera_timer = TimerAction(
-        period=10.0,
-        actions=[c100_right_camera_node]
-    )
-
-    # v4l2 参数初始化：两个相机都已启动后统一执行，延迟 15 秒
-    init_camera_controls_action = ExecuteProcess(
-        cmd=[
-            'bash', INIT_CAMERA_SCRIPT,
-            LaunchConfiguration('c100_right_video_device'),
-            LaunchConfiguration('c100_left_video_device'),
-        ],
-        output='screen',
-    )
-
-    init_camera_controls_timer = TimerAction(
-        period=15.0,
-        actions=[init_camera_controls_action],
-        condition=IfCondition(enable_camera_controls_init),
+            'startup_timeout_sec': 10.0,
+            'startup_retry_count': 1,
+            'first_frame_timeout_sec': 10.0,
+        }]
     )
 
     number_recognizer_node = Node(
@@ -292,15 +242,12 @@ def generate_launch_description():
         inventory_params_file_arg,
         c100_right_video_device_arg,
         c100_left_video_device_arg,
-        enable_camera_controls_init_arg,
         launch_front_camera_arg,
         robot_api_server_process,
         nav2_launch,
         front_camera_launch,
         corridor_follower_node,
-        c100_left_camera_node,
-        c100_right_camera_timer,
-        init_camera_controls_timer,
+        camera_manager_node,
         number_recognizer_node,
         distance_estimator_node,
         gap_detector_node,

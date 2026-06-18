@@ -162,13 +162,14 @@ public:
       "[drive_test] 前进参数: linear_speed=%.3f kp=%.2f kd=%.3f max_angular=%.2f target_x_ratio=%.3f",
       linear_speed_, kp, kd, max_angular, target_x_ratio);
     RCLCPP_INFO(get_logger(),
-      "[drive_test] 后退参数: linear_speed=%.3f kp=%.2f kd=%.3f max_angular=%.2f target_x_ratio=%.3f reverse_invert=%s",
+      "[drive_test] 后退参数: linear_speed=%.3f kp=%.2f kd=%.3f max_angular=%.2f target_x_ratio=%.3f reverse_invert=%s lost_timeout=%.1f",
       backward_linear_speed_ > 0 ? backward_linear_speed_ : linear_speed_,
       backward_kp > 0 ? backward_kp : kp,
       backward_kd > 0 ? backward_kd : kd,
       backward_max_angular > 0 ? backward_max_angular : max_angular,
       backward_target_x_ratio > 0 ? backward_target_x_ratio : target_x_ratio,
-      reverse_invert ? "true" : "false");
+      reverse_invert ? "true" : "false",
+      lost_timeout);
     RCLCPP_INFO(get_logger(),
       "[drive_test] 注意: 请确认底盘驱动已启动，运行 'ros2 topic info %s -v' 查看 Subscription count",
       cmd_vel_topic.c_str());
@@ -241,15 +242,22 @@ private:
     if (line_ok) {
       cmd.angular.z = angular_z;
       const auto & r = follower_.getResult();
+      const double raw_angular = follower_.getLastRawAngular();
+      // 记录上一帧 line_x 用于判断收敛方向
+      const double line_x_delta = r.line_x - prev_line_x_;
+      prev_line_x_ = r.line_x;
       // 详细后退调试日志（每 300ms 输出一次）
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
-        "[drive_test] ctrl direction=%s linear_x=%.3f error=%.4f d_error=%.4f "
-        "final_ang=%.4f reverse_invert=%s line_x=%.1f target_x=%.1f",
+        "[drive_test] ctrl direction=%s linear_x=%.3f "
+        "line_x=%.1f target_x=%.1f error=%.4f "
+        "raw_ang=%.4f final_ang=%.4f "
+        "reverse_invert=%s line_x_delta=%.1f",
         is_forward ? "forward" : "backward",
-        linear_x, r.error_norm, 0.0,  // d_error 内部计算，此处用 0 占位
-        angular_z,
+        linear_x,
+        r.line_x, r.target_x, r.error_norm,
+        raw_angular, angular_z,
         (config_has_reverse_invert_ ? "true" : "false"),
-        r.line_x, r.target_x);
+        line_x_delta);
     } else if (lost_timeout) {
       // 丢线超时 → 停车
       cmd.linear.x = 0.0;
@@ -282,6 +290,7 @@ private:
   double backward_linear_speed_{-1.0};
   double lost_timeout_sec_{0.5};
   bool config_has_reverse_invert_{true};
+  double prev_line_x_{0.0};
   std::string cmd_vel_topic_;
 };
 

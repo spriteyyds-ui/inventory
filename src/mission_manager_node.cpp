@@ -52,6 +52,7 @@
 #include "agv_inventory_system/scan_sequence_generator.hpp"
 #include "agv_inventory_system/srv/lift_move_timed.hpp"
 #include "agv_inventory_system/srv/start_mission.hpp"
+#include "agv_inventory_system/srv/switch_camera.hpp"
 #include "agv_inventory_system/web_api_client.hpp"
 #include "yaml-cpp/yaml.h"
 
@@ -149,6 +150,12 @@ public:
       declare_parameter<double>("stop_auto_charge_depart_stop_after_sec", 0.5);
     recognizer_trigger_service_ =
       declare_parameter<std::string>("recognizer_trigger_service", "/inventory/trigger_recognition");
+    camera_manager_switch_service_ = declare_parameter<std::string>(
+      "camera_manager_switch_service", "/inventory/camera_manager/switch_camera");
+    camera_manager_status_topic_ = declare_parameter<std::string>(
+      "camera_manager_status_topic", "/inventory/camera_manager/status");
+    camera_switch_timeout_sec_ = declare_parameter<double>(
+      "camera_switch_timeout_sec", 30.0);
 
     target_list_param_ = declare_parameter<std::vector<std::string>>("target_list", std::vector<std::string>{});
     route_waypoints_file_ =
@@ -549,7 +556,7 @@ public:
     rear_target_backup_distance_m_ =
       declare_parameter<double>("rear_target_backup_distance_m", 1.50);
     rear_target_backup_speed_ =
-      declare_parameter<double>("rear_target_backup_speed", 0.08);
+      declare_parameter<double>("rear_target_backup_speed", 0.20);
     rear_target_backup_timeout_sec_ =
       declare_parameter<double>("rear_target_backup_timeout_sec", 30.0);
     full_inventory_rear_target_backup_pose_hold_enabled_ =
@@ -857,12 +864,14 @@ public:
         "[yellow_line] 前进参数: target_x_ratio=%.3f kp=%.2f kd=%.3f max_angular=%.2f",
         yellow_line_target_x_ratio_, yellow_line_kp_, yellow_line_kd_, yellow_line_max_angular_);
       RCLCPP_INFO(get_logger(),
-        "[yellow_line] 后退参数: target_x_ratio=%.3f kp=%.2f kd=%.3f max_angular=%.2f reverse_invert=%s",
+        "[yellow_line] 后退参数: speed=%.3f target_x_ratio=%.3f kp=%.2f kd=%.3f max_angular=%.2f reverse_invert=%s lost_timeout=%.1f",
+        rear_target_backup_speed_,
         yellow_line_backward_target_x_ratio_ > 0 ? yellow_line_backward_target_x_ratio_ : yellow_line_target_x_ratio_,
         yellow_line_backward_kp_ > 0 ? yellow_line_backward_kp_ : yellow_line_kp_,
         yellow_line_backward_kd_ > 0 ? yellow_line_backward_kd_ : yellow_line_kd_,
         yellow_line_backward_max_angular_ > 0 ? yellow_line_backward_max_angular_ : yellow_line_max_angular_,
-        yellow_line_reverse_invert_angular_ ? "true" : "false");
+        yellow_line_reverse_invert_angular_ ? "true" : "false",
+        yellow_line_lost_timeout_sec_);
     }
     if (yellow_line_follow_enabled_ || yellow_line_detect_only_) {
       yellow_line_image_sub_ = create_subscription<sensor_msgs::msg::Image>(
@@ -875,9 +884,9 @@ public:
       RCLCPP_INFO(get_logger(),
         "[yellow_line] image subscriber started on topic=%s mode=%s",
         yellow_line_image_topic_.c_str(), line_follow_control_mode_.c_str());
-      // 5 秒后检查是否有图像发布者
+      // 20 秒后检查是否有图像发布者（Astra 延迟 15 秒启动 + 5 秒初始化余量）
       yellow_line_image_check_timer_ = create_wall_timer(
-        std::chrono::seconds(5),
+        std::chrono::seconds(20),
         [this]() {
           if (yellow_line_image_check_done_) return;
           yellow_line_image_check_done_ = true;
@@ -970,6 +979,17 @@ public:
       lift_home_service_name_);
     lift_stop_client_ = create_client<std_srvs::srv::Trigger>(lift_stop_service_name_);
     lift_all_off_client_ = create_client<std_srvs::srv::Trigger>(lift_all_off_service_name_);
+
+    camera_manager_client_ = create_client<agv_inventory_system::srv::SwitchCamera>(
+      camera_manager_switch_service_);
+    auto camera_status_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
+    camera_manager_status_sub_ = create_subscription<std_msgs::msg::String>(
+      camera_manager_status_topic_,
+      camera_status_qos,
+      [this](const std_msgs::msg::String::SharedPtr msg) {
+        on_camera_manager_status(msg);
+      });
+
     nav2_client_ = rclcpp_action::create_client<NavigateToPose>(this, nav2_action_name_);
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -1062,6 +1082,7 @@ private:
     FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
     FULL_INVENTORY_RESTORE_CLOSE_WAIT,
     FULL_INVENTORY_COMPLETE,
+    CAMERA_SWITCH_WAIT,
   };
 
   enum class FullInventoryRecognitionFallbackPhase
@@ -1167,6 +1188,13 @@ private:
   {
     IDLE,
     FULL_INVENTORY_BETWEEN_SIDES,
+  };
+
+  enum class CameraSwitchContinuation
+  {
+    NONE,
+    FULL_INVENTORY_START_ROUTE,
+    SINGLE_CABINET_START_SEARCH,
   };
 
   enum class SearchDirection
@@ -1368,6 +1396,8 @@ private:
         return "FULL_INVENTORY_RESTORE_CLOSE_WAIT";
       case State::FULL_INVENTORY_COMPLETE:
         return "FULL_INVENTORY_COMPLETE";
+      case State::CAMERA_SWITCH_WAIT:
+        return "CAMERA_SWITCH_WAIT";
       default:
         return "UNKNOWN";
     }
@@ -2048,7 +2078,7 @@ private:
       std::abs(rear_target_backup_distance_m_) : 1.50);
     rear_target_backup_speed_ =
       std::max(0.0, std::isfinite(rear_target_backup_speed_) ?
-      std::abs(rear_target_backup_speed_) : 0.08);
+      std::abs(rear_target_backup_speed_) : 0.20);
     rear_target_backup_timeout_sec_ =
       std::max(0.1, std::isfinite(rear_target_backup_timeout_sec_) ?
       rear_target_backup_timeout_sec_ : 30.0);
@@ -6472,6 +6502,7 @@ private:
     full_inventory_restore_active_ = false;
     full_inventory_restore_final_ = false;
     full_inventory_restore_close_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    reset_camera_switch_context();
   }
 
   void clear_full_inventory_rear_target_context(
@@ -6793,6 +6824,31 @@ private:
 
   bool start_full_inventory_target_route(const std::string & context)
   {
+    // Check if camera is ready for the target side before starting route
+    // MUST use current_entry_side_ (cabinet_entry_side_map) for camera selection,
+    // NOT current_target_side_ (cabinet_side_map which is the warehouse row side).
+    if (current_entry_side_ != "left" && current_entry_side_ != "right") {
+      RCLCPP_ERROR(get_logger(),
+        "[FULL_INVENTORY] entry_side invalid: '%s' for cabinet=%d, cannot select camera. "
+        "context=%s",
+        current_entry_side_.c_str(), current_target_cabinet_, context.c_str());
+      fail_full_inventory("entry_side invalid for camera selection: " + current_entry_side_);
+      return false;
+    }
+    if (camera_active_side_ != current_entry_side_ || camera_state_ != "READY") {
+      RCLCPP_INFO(get_logger(),
+        "[FULL_INVENTORY] camera not ready for entry_side=%s "
+        "(cabinet_side=%s, active_camera=%s state=%s), "
+        "switching camera before route start context=%s",
+        current_entry_side_.c_str(), current_target_side_.c_str(),
+        camera_active_side_.c_str(), camera_state_.c_str(), context.c_str());
+      (void)ensure_inventory_camera_ready(
+        current_entry_side_,
+        CameraSwitchContinuation::FULL_INVENTORY_START_ROUTE,
+        context);
+      return false;
+    }
+
     clear_full_inventory_rear_target_context("start_full_inventory_target_route");
     mission_active_ = true;
     cancel_requested_ = false;
@@ -6959,6 +7015,7 @@ private:
     reset_single_cabinet_scan_runtime();
     reset_between_side_auto_charge_runtime();
     clear_full_inventory_rear_target_context("fail_full_inventory");
+    reset_camera_switch_context();
     mission_error_reason_ = reason;
     set_flow_state(State::ERROR, "[FULL_INVENTORY] " + reason);
   }
@@ -8857,6 +8914,235 @@ private:
     }
   }
 
+  // ===== Camera Manager Integration =====
+
+  void on_camera_manager_status(const std_msgs::msg::String::SharedPtr msg)
+  {
+    if (!msg || msg->data.empty()) {
+      return;
+    }
+    // Parse JSON status: {"requested_side": "...", "active_side": "...", "state": "...", "error_message": "..."}
+    try {
+      const std::string & json = msg->data;
+      auto parse_field = [&json](const std::string & key) -> std::string {
+        const std::string needle = "\"" + key + "\":";
+        const auto pos = json.find(needle);
+        if (pos == std::string::npos) {
+          return "";
+        }
+        auto start = json.find_first_not_of(" \t", pos + needle.size());
+        if (start == std::string::npos) {
+          return "";
+        }
+        if (json[start] == '"') {
+          ++start;
+          auto end = json.find('"', start);
+          if (end == std::string::npos) {
+            return "";
+          }
+          return json.substr(start, end - start);
+        }
+        auto end = json.find_first_of(",}", start);
+        if (end == std::string::npos) {
+          return json.substr(start);
+        }
+        return json.substr(start, end - start);
+      };
+      camera_active_side_ = parse_field("active_side");
+      camera_state_ = parse_field("state");
+      camera_error_message_ = parse_field("error_message");
+    } catch (const std::exception & ex) {
+      RCLCPP_WARN(get_logger(), "camera_manager status parse failed: %s", ex.what());
+    }
+  }
+
+  bool request_camera_switch(const std::string & side, const std::string & context)
+  {
+    if (!camera_manager_client_->service_is_ready()) {
+      RCLCPP_ERROR(get_logger(), "camera_manager service not ready, side=%s context=%s",
+        side.c_str(), context.c_str());
+      return false;
+    }
+
+    auto request = std::make_shared<agv_inventory_system::srv::SwitchCamera::Request>();
+    request->side = side;
+
+    RCLCPP_INFO(get_logger(),
+      "[camera_switch] requesting camera_side=%s (entry_side) context=%s "
+      "current_active_camera=%s current_state=%s",
+      side.c_str(), context.c_str(), camera_active_side_.c_str(), camera_state_.c_str());
+
+    camera_manager_client_->async_send_request(request,
+      [this, side, context](rclcpp::Client<agv_inventory_system::srv::SwitchCamera>::SharedFuture future) {
+        auto result = future.get();
+        if (!result->success) {
+          RCLCPP_ERROR(get_logger(),
+            "[camera_switch] service call failed: side=%s message=%s context=%s",
+            side.c_str(), result->message.c_str(), context.c_str());
+        } else {
+          RCLCPP_INFO(get_logger(),
+            "[camera_switch] service accepted: side=%s message=%s",
+            side.c_str(), result->message.c_str());
+        }
+      });
+
+    return true;
+  }
+
+  bool ensure_inventory_camera_ready(
+    const std::string & target_side,
+    CameraSwitchContinuation continuation,
+    const std::string & context)
+  {
+    // If already on correct side and READY, no switch needed
+    if (camera_active_side_ == target_side && camera_state_ == "READY") {
+      RCLCPP_INFO(get_logger(),
+        "[camera_switch] already READY on side=%s, no switch needed context=%s",
+        target_side.c_str(), context.c_str());
+      return true;
+    }
+
+    // If a switch is already pending for the same side, just wait
+    if (camera_switch_pending_ && camera_active_side_ == target_side &&
+        camera_state_ == "READY")
+    {
+      RCLCPP_INFO(get_logger(),
+        "[camera_switch] previous switch to %s now READY, resuming context=%s",
+        target_side.c_str(), context.c_str());
+      camera_switch_pending_ = false;
+      return true;
+    }
+
+    // Need to initiate a switch
+    RCLCPP_INFO(get_logger(),
+      "[camera_switch] need switch: requested_camera_side=%s (entry_side) "
+      "cabinet_side=%s current_active_camera=%s current_state=%s "
+      "context=%s, initiating CAMERA_SWITCH_WAIT",
+      target_side.c_str(), current_target_side_.c_str(),
+      camera_active_side_.c_str(), camera_state_.c_str(), context.c_str());
+
+    if (!request_camera_switch(target_side, context)) {
+      return false;
+    }
+
+    camera_switch_pending_ = true;
+    camera_switch_start_time_ = this->now();
+    camera_switch_continuation_ = continuation;
+    camera_switch_saved_context_ = context;
+    camera_switch_expected_side_ = target_side;
+
+    // Stop robot motion during camera switch
+    publish_stop();
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+
+    set_state(State::CAMERA_SWITCH_WAIT,
+      "[CAMERA_SWITCH] waiting for camera side=" + target_side +
+      " continuation=" + std::to_string(static_cast<int>(continuation)) +
+      " context=" + context);
+
+    return false;  // false means "not ready yet, state machine should wait"
+  }
+
+  void handle_camera_switch_wait_state()
+  {
+    publish_stop();  // Keep robot stopped during camera switch
+
+    // Check if camera is now READY on the correct side
+    if (camera_state_ == "READY" && camera_active_side_ == camera_switch_expected_side_) {
+      camera_switch_pending_ = false;
+      RCLCPP_INFO(get_logger(),
+        "[CAMERA_SWITCH] camera READY on expected_side=%s (cabinet_side=%s), "
+        "resuming continuation=%d context=%s",
+        camera_switch_expected_side_.c_str(), current_target_side_.c_str(),
+        static_cast<int>(camera_switch_continuation_),
+        camera_switch_saved_context_.c_str());
+      resume_camera_switch_continuation();
+      return;
+    }
+
+    // Check for ERROR state
+    if (camera_state_ == "ERROR") {
+      RCLCPP_ERROR(get_logger(),
+        "[CAMERA_SWITCH] camera_manager ERROR: side=%s error=%s",
+        camera_active_side_.c_str(), camera_error_message_.c_str());
+      camera_switch_pending_ = false;
+      if (full_inventory_active_) {
+        fail_full_inventory("camera_manager ERROR during side switch: " + camera_error_message_);
+      } else {
+        fail_single_cabinet_motion("camera_manager ERROR during side switch: " + camera_error_message_);
+      }
+      return;
+    }
+
+    // Check timeout
+    const double elapsed = (this->now() - camera_switch_start_time_).seconds();
+    if (elapsed >= camera_switch_timeout_sec_) {
+      RCLCPP_ERROR(get_logger(),
+        "[CAMERA_SWITCH] timeout after %.1fs, expected_side=%s cabinet_side=%s "
+        "current_state=%s active_side=%s",
+        elapsed, camera_switch_expected_side_.c_str(), current_target_side_.c_str(),
+        camera_state_.c_str(), camera_active_side_.c_str());
+      camera_switch_pending_ = false;
+      if (full_inventory_active_) {
+        fail_full_inventory("camera switch timeout after " +
+          std::to_string(static_cast<int>(elapsed)) + "s");
+      } else {
+        fail_single_cabinet_motion("camera switch timeout after " +
+          std::to_string(static_cast<int>(elapsed)) + "s");
+      }
+      return;
+    }
+
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 2000,
+      "[CAMERA_SWITCH] waiting: expected_side=%s state=%s active_side=%s elapsed=%.1f/%.1f",
+      camera_switch_expected_side_.c_str(), camera_state_.c_str(), camera_active_side_.c_str(),
+      elapsed, camera_switch_timeout_sec_);
+  }
+
+  void resume_camera_switch_continuation()
+  {
+    const auto cont = camera_switch_continuation_;
+    camera_switch_continuation_ = CameraSwitchContinuation::NONE;
+    camera_switch_saved_context_.clear();
+
+    switch (cont) {
+      case CameraSwitchContinuation::FULL_INVENTORY_START_ROUTE:
+        {
+          RCLCPP_INFO(get_logger(),
+            "[CAMERA_SWITCH] resuming FULL_INVENTORY_START_ROUTE");
+          if (!start_full_inventory_target_route("camera switch done, start route")) {
+            // Error already handled in start_full_inventory_target_route
+          }
+        }
+        break;
+
+      case CameraSwitchContinuation::SINGLE_CABINET_START_SEARCH:
+        {
+          RCLCPP_INFO(get_logger(),
+            "[CAMERA_SWITCH] resuming SINGLE_CABINET_START_SEARCH");
+          // Re-enter the search gap flow with camera now ready
+          begin_search_gap_flow();
+        }
+        break;
+
+      case CameraSwitchContinuation::NONE:
+      default:
+        RCLCPP_WARN(get_logger(),
+          "[CAMERA_SWITCH] resumed with NONE continuation, returning to IDLE");
+        set_state(State::IDLE, "[CAMERA_SWITCH] no continuation, return to IDLE");
+        break;
+    }
+  }
+
+  void reset_camera_switch_context()
+  {
+    camera_switch_pending_ = false;
+    camera_switch_continuation_ = CameraSwitchContinuation::NONE;
+    camera_switch_saved_context_.clear();
+    camera_switch_expected_side_.clear();
+  }
+
   void advance_full_inventory_sequence()
   {
     if (!full_inventory_active_) {
@@ -9114,6 +9400,31 @@ private:
     std::string reason;
     if (!prepare_single_cabinet_target_cabinet(cabinet_id, reason)) {
       fail_single_cabinet_motion(context + "失败: " + reason);
+      return false;
+    }
+
+    // Check if camera is ready for the target side before searching
+    // MUST use current_entry_side_ (cabinet_entry_side_map) for camera selection,
+    // NOT current_target_side_ (cabinet_side_map which is the warehouse row side).
+    if (current_entry_side_ != "left" && current_entry_side_ != "right") {
+      RCLCPP_ERROR(get_logger(),
+        "[SINGLE_CABINET] entry_side invalid: '%s' for cabinet=%d, cannot select camera. "
+        "context=%s",
+        current_entry_side_.c_str(), current_target_cabinet_, context.c_str());
+      fail_single_cabinet_motion("entry_side invalid for camera selection: " + current_entry_side_);
+      return false;
+    }
+    if (camera_active_side_ != current_entry_side_ || camera_state_ != "READY") {
+      RCLCPP_INFO(get_logger(),
+        "[SINGLE_CABINET] camera not ready for entry_side=%s "
+        "(cabinet_side=%s, active_camera=%s state=%s), "
+        "switching camera before search context=%s",
+        current_entry_side_.c_str(), current_target_side_.c_str(),
+        camera_active_side_.c_str(), camera_state_.c_str(), context.c_str());
+      (void)ensure_inventory_camera_ready(
+        current_entry_side_,
+        CameraSwitchContinuation::SINGLE_CABINET_START_SEARCH,
+        context);
       return false;
     }
 
@@ -10825,6 +11136,7 @@ private:
     clear_inventory_upload_batch("error");
     stop_single_cabinet_motion_controls();
     reset_single_cabinet_scan_runtime();
+    reset_camera_switch_context();
     mission_active_ = false;
     mission_error_reason_ = reason;
     set_single_cabinet_state(State::ERROR, reason);
@@ -13011,6 +13323,11 @@ private:
         break;
       }
 
+      case State::CAMERA_SWITCH_WAIT: {
+        handle_camera_switch_wait_state();
+        break;
+      }
+
       case State::SINGLE_CABINET_NAV_TO_TARGET: {
         handle_nav_route_state();
         break;
@@ -13382,7 +13699,7 @@ private:
   double rear_target_turn_timeout_sec_{10.0};
   bool rear_target_backup_enabled_{true};
   double rear_target_backup_distance_m_{1.50};
-  double rear_target_backup_speed_{0.08};
+  double rear_target_backup_speed_{0.20};
   double rear_target_backup_timeout_sec_{30.0};
   bool stanley_line_control_enabled_{true};
   double stanley_cte_gain_{0.30};
@@ -13774,6 +14091,19 @@ private:
   rclcpp::Client<agv_inventory_system::srv::LiftMoveTimed>::SharedPtr lift_home_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr lift_stop_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr lift_all_off_client_;
+  rclcpp::Client<agv_inventory_system::srv::SwitchCamera>::SharedPtr camera_manager_client_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr camera_manager_status_sub_;
+  std::string camera_manager_switch_service_{"/inventory/camera_manager/switch_camera"};
+  std::string camera_manager_status_topic_{"/inventory/camera_manager/status"};
+  double camera_switch_timeout_sec_{30.0};
+  std::string camera_active_side_{""};
+  std::string camera_state_{""};
+  std::string camera_error_message_{""};
+  bool camera_switch_pending_{false};
+  rclcpp::Time camera_switch_start_time_{0, 0, RCL_ROS_TIME};
+  CameraSwitchContinuation camera_switch_continuation_{CameraSwitchContinuation::NONE};
+  std::string camera_switch_saved_context_;
+  std::string camera_switch_expected_side_;  // entry_side used for camera switch request
   rclcpp_action::Client<NavigateToPose>::SharedPtr nav2_client_;
   std::shared_ptr<NavigateGoalHandle> nav2_goal_handle_;
   std::shared_ptr<NavigateGoalHandle> nav2_route_goal_handle_;

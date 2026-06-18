@@ -1,0 +1,8 @@
+# Request camera side switch.
+# side: "left" or "right"
+string side
+---
+# success: true if switch completed or already on requested side and READY
+bool success
+# message: human-readable status or error description
+string message
