@@ -46,6 +46,9 @@ def generate_launch_description():
     cmd_vel_topic_arg = DeclareLaunchArgument(
         'cmd_vel_topic', default_value='/cmd_vel',
         description='底盘速度话题（需与底盘驱动一致）')
+    test_entry_side_arg = DeclareLaunchArgument(
+        'test_entry_side', default_value='right',
+        description='测试入缝侧: right 或 left')
 
     # Astra 相机
     astra_launch_file = os.path.join(
@@ -67,6 +70,7 @@ def generate_launch_description():
             'test_linear_speed': LaunchConfiguration('test_linear_speed'),
             'test_backward_linear_speed': LaunchConfiguration('test_backward_linear_speed'),
             'cmd_vel_topic': LaunchConfiguration('cmd_vel_topic'),
+            'test_entry_side': LaunchConfiguration('test_entry_side'),
         }]
     )
 
@@ -78,6 +82,7 @@ def generate_launch_description():
         linear_speed_arg,
         backward_linear_speed_arg,
         cmd_vel_topic_arg,
+        test_entry_side_arg,
         front_camera,
         drive_test,
     ])

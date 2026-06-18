@@ -82,6 +82,18 @@ public:
     forward_ = true;
   }
 
+  // 仅重置控制器内部状态（D 项历史、微分滤波器、角速度历史），保留 config 和检测结果
+  // 用于 target_x_ratio 跳变时防止瞬时大角速度
+  void resetControlState()
+  {
+    last_error_norm_ = 0.0;
+    last_time_sec_ = -1.0;
+    last_angular_z_ = 0.0;
+    last_raw_angular_ = 0.0;
+  }
+
+  const YellowLineFollowerConfig & getConfig() const {return config_;}
+
   // 图像识别：处理一帧 BGR 图像，更新内部检测结果
   // 返回 true 表示检测到黄线
   bool processImage(const cv::Mat & bgr_image, double now_sec)

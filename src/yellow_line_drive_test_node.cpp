@@ -57,6 +57,10 @@ public:
     linear_speed_ = declare_parameter<double>("test_linear_speed", 0.15);
     backward_linear_speed_ = declare_parameter<double>("test_backward_linear_speed", -1.0);
     const double backward_target_x_ratio = declare_parameter<double>("yellow_line_backward_target_x_ratio", -1.0);
+    backward_target_x_ratio_right_entry_ = declare_parameter<double>("yellow_line_backward_target_x_ratio_right_entry", -1.0);
+    backward_target_x_ratio_left_entry_ = declare_parameter<double>("yellow_line_backward_target_x_ratio_left_entry", -1.0);
+    backward_target_x_ratio_ = backward_target_x_ratio;
+    entry_side_ = declare_parameter<std::string>("test_entry_side", "right");
     const double backward_kp = declare_parameter<double>("yellow_line_backward_kp", -1.0);
     const double backward_kd = declare_parameter<double>("yellow_line_backward_kd", -1.0);
     const double backward_max_angular = declare_parameter<double>("yellow_line_backward_max_angular", -1.0);
@@ -154,6 +158,28 @@ public:
         RCLCPP_INFO(get_logger(), "[drive_test] direction=backward");
       });
 
+    right_entry_srv_ = create_service<std_srvs::srv::Trigger>(
+      "~/right_entry",
+      [this](const std_srvs::srv::Trigger::Request::SharedPtr,
+             std_srvs::srv::Trigger::Response::SharedPtr res) {
+        entry_side_ = "right";
+        apply_entry_side_to_follower();
+        res->success = true;
+        res->message = "右入缝, ratio=" + std::to_string(active_backward_ratio_);
+        RCLCPP_INFO(get_logger(), "[drive_test] entry_side=right ratio=%.3f", active_backward_ratio_);
+      });
+
+    left_entry_srv_ = create_service<std_srvs::srv::Trigger>(
+      "~/left_entry",
+      [this](const std_srvs::srv::Trigger::Request::SharedPtr,
+             std_srvs::srv::Trigger::Response::SharedPtr res) {
+        entry_side_ = "left";
+        apply_entry_side_to_follower();
+        res->success = true;
+        res->message = "左入缝, ratio=" + std::to_string(active_backward_ratio_);
+        RCLCPP_INFO(get_logger(), "[drive_test] entry_side=left ratio=%.3f", active_backward_ratio_);
+      });
+
     RCLCPP_INFO(get_logger(),
       "[drive_test] 黄线巡线驾驶测试节点已启动");
     RCLCPP_INFO(get_logger(),
@@ -170,6 +196,13 @@ public:
       backward_target_x_ratio > 0 ? backward_target_x_ratio : target_x_ratio,
       reverse_invert ? "true" : "false",
       lost_timeout);
+    RCLCPP_INFO(get_logger(),
+      "[drive_test] 入缝参数: entry_side=%s right_entry_ratio=%.3f left_entry_ratio=%.3f",
+      entry_side_.c_str(),
+      backward_target_x_ratio_right_entry_,
+      backward_target_x_ratio_left_entry_);
+    // 初始化 entry_side 对应的 ratio
+    apply_entry_side_to_follower();
     RCLCPP_INFO(get_logger(),
       "[drive_test] 注意: 请确认底盘驱动已启动，运行 'ros2 topic info %s -v' 查看 Subscription count",
       cmd_vel_topic.c_str());
@@ -196,6 +229,29 @@ private:
     cmd_pub_->publish(cmd);
   }
 
+  // 根据 entry_side 选择后退 ratio 并更新 follower 配置
+  void apply_entry_side_to_follower()
+  {
+    double ratio = -1.0;
+    if (entry_side_ == "right" && backward_target_x_ratio_right_entry_ >= 0.0) {
+      ratio = backward_target_x_ratio_right_entry_;
+    } else if (entry_side_ == "left" && backward_target_x_ratio_left_entry_ >= 0.0) {
+      ratio = backward_target_x_ratio_left_entry_;
+    } else if (backward_target_x_ratio_ >= 0.0) {
+      ratio = backward_target_x_ratio_;
+    }
+    if (std::abs(ratio - active_backward_ratio_) > 1e-6) {
+      auto cfg = follower_.getConfig();
+      cfg.backward_target_x_ratio = ratio;
+      follower_.setConfig(cfg);
+      follower_.resetControlState();
+      active_backward_ratio_ = ratio;
+      RCLCPP_INFO(get_logger(),
+        "[drive_test] entry_side=%s backward_ratio=%.3f (control state reset)",
+        entry_side_.c_str(), ratio);
+    }
+  }
+
   void on_image(const sensor_msgs::msg::Image::SharedPtr msg)
   {
     cv_bridge::CvImagePtr cv_ptr;
@@ -212,6 +268,10 @@ private:
     // 设置方向（影响 target_x_ratio 选择）
     const bool is_forward = forward_;
     follower_.setDirection(is_forward);
+    // 后退时根据 entry_side 选择 ratio
+    if (!is_forward) {
+      apply_entry_side_to_follower();
+    }
 
     follower_.processImage(cv_ptr->image, now_sec);
 
@@ -248,11 +308,12 @@ private:
       prev_line_x_ = r.line_x;
       // 详细后退调试日志（每 300ms 输出一次）
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 300,
-        "[drive_test] ctrl direction=%s linear_x=%.3f "
-        "line_x=%.1f target_x=%.1f error=%.4f "
+        "[drive_test] ctrl direction=%s entry_side=%s selected_ratio=%.3f "
+        "linear_x=%.3f line_x=%.1f target_x=%.1f error=%.4f "
         "raw_ang=%.4f final_ang=%.4f "
         "reverse_invert=%s line_x_delta=%.1f",
         is_forward ? "forward" : "backward",
+        entry_side_.c_str(), active_backward_ratio_,
         linear_x,
         r.line_x, r.target_x, r.error_norm,
         raw_angular, angular_z,
@@ -283,6 +344,8 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr stop_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr forward_srv_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr backward_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr right_entry_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr left_entry_srv_;
 
   std::atomic<bool> running_{false};
   std::atomic<bool> forward_{true};
@@ -292,6 +355,12 @@ private:
   bool config_has_reverse_invert_{true};
   double prev_line_x_{0.0};
   std::string cmd_vel_topic_;
+  // 入缝侧选择
+  std::string entry_side_{"right"};
+  double backward_target_x_ratio_{-1.0};
+  double backward_target_x_ratio_right_entry_{-1.0};
+  double backward_target_x_ratio_left_entry_{-1.0};
+  double active_backward_ratio_{-1.0};
 };
 
 int main(int argc, char ** argv)

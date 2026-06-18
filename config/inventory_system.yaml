@@ -632,7 +632,9 @@ mission_manager_node:
     yellow_line_kd: 0.03                                                 # 巡线 D 增益；现场标定值，轻微抑制超调
     yellow_line_max_angular: 0.15                                        # 最大角速度，单位 rad/s；现场标定值，安全限幅
     yellow_line_reverse_invert_angular: false                            # 后退时不翻转角速度方向；标准 PD 符号对后退同样适用
-    yellow_line_backward_target_x_ratio: 0.84                           # 后退时黄线目标 x 比例；与前进一致
+    yellow_line_backward_target_x_ratio_right_entry: 0.84                # 右入缝后退目标 x 比例；现场标定值
+    yellow_line_backward_target_x_ratio_left_entry: 0.16                 # 左入缝后退目标 x 比例；理论镜像初值，可独立标定
+    yellow_line_backward_target_x_ratio: 0.84                            # 后退时黄线目标 x 比例；兼容 fallback
     yellow_line_backward_kp: 0.40                                        # 后退巡线 P 增益；符号验证阶段保守值
     yellow_line_backward_kd: 0.00                                        # 后退巡线 D 增益；符号验证阶段关闭 D
     yellow_line_backward_max_angular: 0.05                               # 后退最大角速度；符号验证阶段严格限幅
@@ -767,7 +769,9 @@ yellow_line_drive_test_node:
     yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题
     test_linear_speed: 0.20                                              # 前进线速度，单位 m/s
     test_backward_linear_speed: 0.20                                     # 后退线速度，单位 m/s；与 rear_target_backup_speed 一致
-    yellow_line_backward_target_x_ratio: 0.84                          # 后退时黄线目标 x 位置比例；与正式盘库参数一致
+    yellow_line_backward_target_x_ratio_right_entry: 0.84               # 右入缝后退目标 x 比例；与正式盘库一致
+    yellow_line_backward_target_x_ratio_left_entry: 0.16                # 左入缝后退目标 x 比例；与正式盘库一致
+    yellow_line_backward_target_x_ratio: 0.84                           # 后退时黄线目标 x 位置比例；兼容 fallback
     yellow_line_backward_kp: 0.40                                        # 后退巡线 P 增益；与正式盘库参数一致
     yellow_line_backward_kd: 0.00                                        # 后退巡线 D 增益；与正式盘库参数一致
     yellow_line_backward_max_angular: 0.05                               # 后退最大角速度；与正式盘库参数一致

@@ -634,6 +634,10 @@ public:
     // 后退独立参数
     yellow_line_backward_target_x_ratio_ =
       declare_parameter<double>("yellow_line_backward_target_x_ratio", -1.0);
+    yellow_line_backward_target_x_ratio_right_entry_ =
+      declare_parameter<double>("yellow_line_backward_target_x_ratio_right_entry", -1.0);
+    yellow_line_backward_target_x_ratio_left_entry_ =
+      declare_parameter<double>("yellow_line_backward_target_x_ratio_left_entry", -1.0);
     yellow_line_backward_kp_ =
       declare_parameter<double>("yellow_line_backward_kp", -1.0);
     yellow_line_backward_kd_ =
@@ -883,6 +887,11 @@ public:
         yellow_line_backward_max_angular_ > 0 ? yellow_line_backward_max_angular_ : yellow_line_max_angular_,
         yellow_line_reverse_invert_angular_ ? "true" : "false",
         yellow_line_lost_timeout_sec_);
+      RCLCPP_INFO(get_logger(),
+        "[yellow_line] 入缝 ratio: right_entry=%.3f left_entry=%.3f fallback=%.3f",
+        yellow_line_backward_target_x_ratio_right_entry_,
+        yellow_line_backward_target_x_ratio_left_entry_,
+        yellow_line_backward_target_x_ratio_);
     }
     // 固定出缝目标角启动日志
     RCLCPP_INFO(get_logger(),
@@ -4398,11 +4407,36 @@ private:
     cfg.kd = yellow_line_kd_;
     cfg.max_angular = yellow_line_max_angular_;
     cfg.reverse_invert_angular = yellow_line_reverse_invert_angular_;
-    cfg.backward_target_x_ratio = yellow_line_backward_target_x_ratio_;
+    // 使用运行时选定的 active ratio（rear_target_backup 时由 entry_side 决定），
+    // 否则回退到全局参数
+    cfg.backward_target_x_ratio = active_backward_target_x_ratio_ >= 0.0
+      ? active_backward_target_x_ratio_ : yellow_line_backward_target_x_ratio_;
     cfg.backward_kp = yellow_line_backward_kp_;
     cfg.backward_kd = yellow_line_backward_kd_;
     cfg.backward_max_angular = yellow_line_backward_max_angular_;
     return cfg;
+  }
+
+  // ===== 黄线巡线：根据 current_entry_side_ 选择后退 target_x_ratio =====
+  double select_backward_target_x_ratio() const
+  {
+    // 优先使用左右入缝独立参数
+    if (current_entry_side_ == "right" &&
+      yellow_line_backward_target_x_ratio_right_entry_ >= 0.0)
+    {
+      return yellow_line_backward_target_x_ratio_right_entry_;
+    }
+    if (current_entry_side_ == "left" &&
+      yellow_line_backward_target_x_ratio_left_entry_ >= 0.0)
+    {
+      return yellow_line_backward_target_x_ratio_left_entry_;
+    }
+    // 回退到全局参数
+    if (yellow_line_backward_target_x_ratio_ >= 0.0) {
+      return yellow_line_backward_target_x_ratio_;
+    }
+    // 最终回退到前进 ratio
+    return yellow_line_target_x_ratio_;
   }
 
   // ===== 黄线巡线：场景是否允许使用黄线 =====
@@ -4573,10 +4607,19 @@ private:
           "line_x=%.1f target_x=%.1f",
           scene_name.c_str(), acquire_elapsed, r.line_x, r.target_x);
       }
+      const double sel_ratio = active_backward_target_x_ratio_ >= 0.0
+        ? active_backward_target_x_ratio_ : yellow_line_backward_target_x_ratio_;
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
-        "[yellow_line][%s] mode=yellow_line detected=1 line_x=%.1f target_x=%.1f "
-        "error=%.4f angular_z=%.4f linear_x=%.3f direction=%s",
+        "[yellow_line][%s] mode=yellow_line detected=1 "
+        "cabinet=%d cabinet_side=%s entry_side=%s "
+        "selected_ratio=%.3f img_w=%d "
+        "line_x=%.1f target_x=%.1f error=%.4f angular_z=%.4f "
+        "linear_x=%.3f direction=%s",
         scene_name.c_str(),
+        current_target_cabinet_,
+        current_target_side_.c_str(),
+        current_entry_side_.c_str(),
+        sel_ratio, r.image_width,
         r.line_x, r.target_x, r.error_norm, yellow_angular_z, linear_x,
         linear_x >= 0.0 ? "forward" : "backward");
       return true;
@@ -6628,6 +6671,7 @@ private:
     full_inventory_rear_target_backup_fixed_y_ = 0.0;
     full_inventory_rear_target_backup_start_time_ =
       rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    active_backward_target_x_ratio_ = -1.0;
   }
 
   SearchDirection effective_gap_search_direction() const
@@ -7563,9 +7607,20 @@ private:
 	    full_inventory_rear_target_backup_last_yaw_error_time_ =
 	      rclcpp::Time(0, 0, this->get_clock()->get_clock_type());
 	    stanley_controller_.reset();
+	    // 依据 current_entry_side_ 选定后退 target_x_ratio，并重置黄线控制器状态
+	    active_backward_target_x_ratio_ = select_backward_target_x_ratio();
+	    {
+	      auto ycfg = build_yellow_line_config_();
+	      ycfg.backward_target_x_ratio = active_backward_target_x_ratio_;
+	      yellow_line_follower_.setConfig(ycfg);
+	      yellow_line_follower_.resetControlState();
+	    }
 	    publish_full_inventory_log(
 	      "[rear_target_backup] start target=" +
 	      std::to_string(full_inventory_rear_target_next_cabinet_) +
+	      " cabinet_side=" + current_target_side_ +
+	      " entry_side=" + current_entry_side_ +
+	      " active_ratio=" + format_fixed(active_backward_target_x_ratio_, 3) +
 	      " start_x=" + format_fixed(map_pose.x, 3) +
 	      " start_y=" + format_fixed(map_pose.y, 3) +
 	      " start_yaw=" + format_fixed(map_pose.yaw, 4) +
@@ -14126,6 +14181,9 @@ private:
   double yellow_line_max_angular_{0.25};
   bool yellow_line_reverse_invert_angular_{true};
   double yellow_line_backward_target_x_ratio_{-1.0};
+  double yellow_line_backward_target_x_ratio_right_entry_{-1.0};
+  double yellow_line_backward_target_x_ratio_left_entry_{-1.0};
+  double active_backward_target_x_ratio_{-1.0};  // 运行时选定的后退 ratio，-1 表示未选定
   double yellow_line_backward_kp_{-1.0};
   double yellow_line_backward_kd_{-1.0};
   double yellow_line_backward_max_angular_{-1.0};
