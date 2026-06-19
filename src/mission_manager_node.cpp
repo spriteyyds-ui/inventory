@@ -500,6 +500,50 @@ public:
       declare_parameter<bool>("full_inventory_restore_after_left_enabled", true);
     full_inventory_restore_after_done_enabled_ =
       declare_parameter<bool>("full_inventory_restore_after_done_enabled", true);
+    cab1_post_restore_relocalization_enabled_ =
+      declare_parameter<bool>("cabinet_1_post_restore_relocalization_enabled", false);
+    cab1_exit_map_x_ =
+      declare_parameter<double>("cabinet_1_exit_map_x", 0.0);
+    cab1_exit_map_y_ =
+      declare_parameter<double>("cabinet_1_exit_map_y", 0.0);
+    cab1_exit_map_yaw_ =
+      declare_parameter<double>("cabinet_1_exit_map_yaw", 0.0);
+    cab1_post_restore_initialpose_std_x_ =
+      declare_parameter<double>("cabinet_1_post_restore_initialpose_std_x", 0.5);
+    cab1_post_restore_initialpose_std_y_ =
+      declare_parameter<double>("cabinet_1_post_restore_initialpose_std_y", 0.5);
+    cab1_post_restore_initialpose_std_yaw_ =
+      declare_parameter<double>("cabinet_1_post_restore_initialpose_std_yaw", 0.5);
+    cab36_post_restore_relocalization_enabled_ =
+      declare_parameter<bool>("cabinet_36_post_restore_relocalization_enabled", false);
+    cab36_exit_map_x_ =
+      declare_parameter<double>("cabinet_36_exit_map_x", 0.0);
+    cab36_exit_map_y_ =
+      declare_parameter<double>("cabinet_36_exit_map_y", 0.0);
+    cab36_exit_map_yaw_ =
+      declare_parameter<double>("cabinet_36_exit_map_yaw", 0.0);
+    cab36_post_restore_initialpose_std_x_ =
+      declare_parameter<double>("cabinet_36_post_restore_initialpose_std_x", 0.5);
+    cab36_post_restore_initialpose_std_y_ =
+      declare_parameter<double>("cabinet_36_post_restore_initialpose_std_y", 0.5);
+    cab36_post_restore_initialpose_std_yaw_ =
+      declare_parameter<double>("cabinet_36_post_restore_initialpose_std_yaw", 0.5);
+    post_restore_relocalization_timeout_sec_ =
+      declare_parameter<double>("post_restore_relocalization_timeout_sec", 30.0);
+    post_restore_stable_duration_sec_ =
+      declare_parameter<double>("post_restore_stable_duration_sec", 3.0);
+    post_restore_max_position_error_m_ =
+      declare_parameter<double>("post_restore_max_position_error_m", 0.30);
+    post_restore_max_yaw_error_rad_ =
+      declare_parameter<double>("post_restore_max_yaw_error_rad", 0.15);
+    post_restore_max_covariance_x_ =
+      declare_parameter<double>("post_restore_max_covariance_x", 0.50);
+    post_restore_max_covariance_y_ =
+      declare_parameter<double>("post_restore_max_covariance_y", 0.50);
+    post_restore_max_covariance_yaw_ =
+      declare_parameter<double>("post_restore_max_covariance_yaw", 0.30);
+    post_restore_initialpose_max_retries_ =
+      declare_parameter<int>("post_restore_initialpose_max_retries", 3);
     full_inventory_preopen_interval_sec_ =
       declare_parameter<double>("full_inventory_preopen_interval_sec", 10.0);
     full_inventory_left_route_ =
@@ -1022,6 +1066,11 @@ public:
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // 1→19 跨侧恢复后 AMCL 重定位：/initialpose 发布者和 /amcl_pose 订阅者
+    initialpose_pub_ =
+      create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("/initialpose", 1);
+    // AMCL 订阅者延迟到首次进入重定位状态时创建（避免常态占用）
+
     std::string route_load_error;
     routes_loaded_ = load_route_config(route_load_error);
     if (!routes_loaded_) {
@@ -1109,6 +1158,7 @@ private:
     FULL_INVENTORY_SAME_SIDE_NEXT_SEARCH,
     FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES,
     FULL_INVENTORY_RESTORE_CLOSE_WAIT,
+    FULL_INVENTORY_RELOCALIZING_AFTER_RESTORE,
     FULL_INVENTORY_COMPLETE,
     CAMERA_SWITCH_WAIT,
   };
@@ -1223,6 +1273,13 @@ private:
     NONE,
     FULL_INVENTORY_START_ROUTE,
     SINGLE_CABINET_START_SEARCH,
+  };
+
+  enum class PostRestoreRelocalizationContext
+  {
+    NONE,
+    BETWEEN_SIDES_AFTER_CABINET_1,
+    FINAL_AFTER_CABINET_36,
   };
 
   enum class SearchDirection
@@ -1422,6 +1479,8 @@ private:
         return "FULL_INVENTORY_AUTO_CHARGE_BETWEEN_SIDES";
       case State::FULL_INVENTORY_RESTORE_CLOSE_WAIT:
         return "FULL_INVENTORY_RESTORE_CLOSE_WAIT";
+      case State::FULL_INVENTORY_RELOCALIZING_AFTER_RESTORE:
+        return "FULL_INVENTORY_RELOCALIZING_AFTER_RESTORE";
       case State::FULL_INVENTORY_COMPLETE:
         return "FULL_INVENTORY_COMPLETE";
       case State::CAMERA_SWITCH_WAIT:
@@ -6634,6 +6693,9 @@ private:
     full_inventory_restore_active_ = false;
     full_inventory_restore_final_ = false;
     full_inventory_restore_close_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
+    cabinet_1_exit_turn_aligned_ = false;
+    cabinet_36_exit_turn_aligned_ = false;
+    reset_relocalization_context();
     reset_camera_switch_context();
   }
 
@@ -8864,9 +8926,29 @@ private:
     full_inventory_restore_active_ = false;
 
     if (is_final) {
-      // Final restore: return/ensure charging point then done
+      // Final restore: 验证来源确实是36号
+      const int last_finished = full_inventory_index_ < full_inventory_sequence_.size() ?
+        full_inventory_sequence_[full_inventory_index_] : -1;
       publish_full_inventory_log(
-        "[restore] done, return/ensure charging point, mission complete");
+        "[restore] done (final), last_finished=" + std::to_string(last_finished));
+
+      // 36号最终环境恢复完成后 AMCL 重定位
+      // 仅当：确认是36号 + 功能启用 + 36号柜TURN_TO_CORRIDOR已可靠对齐
+      if (last_finished == 36 && cabinet_36_exit_turn_aligned_ &&
+          cab36_post_restore_relocalization_enabled_)
+      {
+        RCLCPP_INFO(
+          get_logger(),
+          "[mission_manager][FULL_INVENTORY][relocalize] 触发36号最终恢复后重定位 "
+          "finished_cabinet=36 aligned=true");
+        publish_full_inventory_log(
+          "[relocalize] trigger cabinet=36 final relocalization after restore");
+        start_relocalization_after_restore(
+          PostRestoreRelocalizationContext::FINAL_AFTER_CABINET_36, -1);
+        return;
+      }
+
+      // 原有最终 continuation
       (void)start_finish_action(
         "[FULL_INVENTORY] restore done, execute finish_return_mode",
         mission_force_map_origin_on_finish_);
@@ -8879,7 +8961,401 @@ private:
     publish_full_inventory_log(
       "[restore] done, return/ensure charging point, next target=" +
       std::to_string(next_target));
+
+    // 1→19 跨侧环境恢复完成后 AMCL 重定位
+    // 仅当：1→19跨侧 + 功能启用 + 1号柜TURN_TO_CORRIDOR已可靠对齐
+    if (next_target == 19 && cabinet_1_exit_turn_aligned_ &&
+        cab1_post_restore_relocalization_enabled_)
+    {
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][FULL_INVENTORY][relocalize] 触发1→19恢复后重定位 "
+        "finished_cabinet=1 next_target=19 aligned=true");
+      publish_full_inventory_log(
+        "[relocalize] trigger cabinet=1→19 relocalization after restore");
+      start_relocalization_after_restore(
+        PostRestoreRelocalizationContext::BETWEEN_SIDES_AFTER_CABINET_1, next_target);
+      return;
+    }
+
     start_between_side_auto_charge_after_restore(next_target);
+  }
+
+  // 通用重定位入口：初始化运行时变量并进入重定位状态
+  void start_relocalization_after_restore(
+    PostRestoreRelocalizationContext context, int saved_next_target)
+  {
+    relocalization_context_ = context;
+    relocalization_saved_next_target_ = saved_next_target;
+    relocalization_initialpose_published_ = false;
+    relocalization_initialpose_pub_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_initialpose_retries_ = 0;
+    relocalization_start_time_ = this->now();
+    relocalization_last_amcl_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_stable_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_consecutive_stable_ = 0;
+    relocalization_tf_fail_count_ = 0;
+    relocalization_done_ = false;
+    relocalization_publishing_stop_ = false;
+    if (!relocalization_amcl_sub_) {
+      relocalization_amcl_sub_ = create_subscription<
+        geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "/amcl_pose", rclcpp::SensorDataQoS(),
+        [this](const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg) {
+          on_amcl_pose_for_relocalization(msg);
+        });
+    }
+    const std::string context_label =
+      context == PostRestoreRelocalizationContext::BETWEEN_SIDES_AFTER_CABINET_1 ?
+      "1→19" : "36最终";
+    set_state(
+      State::FULL_INVENTORY_RELOCALIZING_AFTER_RESTORE,
+      "[FULL_INVENTORY] " + context_label + "环境恢复后AMCL重定位");
+  }
+
+  // ===== 跨侧/最终环境恢复后 AMCL 重定位（通用） =====
+  // 注：这些条件只能验证 AMCL 输出的一致性，不能独立证明激光点云已与静态地图正确匹配。
+  // 现场仍必须在 RViz 中确认 LaserScan 与地图墙体重合。
+  void handle_full_inventory_relocalizing_after_restore_state()
+  {
+    publish_stop();
+
+    // 根据上下文检查对应功能开关
+    bool feature_enabled = false;
+    std::string context_label;
+    if (relocalization_context_ == PostRestoreRelocalizationContext::BETWEEN_SIDES_AFTER_CABINET_1) {
+      feature_enabled = cab1_post_restore_relocalization_enabled_;
+      context_label = "1→19";
+    } else if (relocalization_context_ == PostRestoreRelocalizationContext::FINAL_AFTER_CABINET_36) {
+      feature_enabled = cab36_post_restore_relocalization_enabled_;
+      context_label = "36最终";
+    }
+    if (!feature_enabled) {
+      fail_full_inventory("[relocalize] " + context_label + " 重定位功能未启用，无法继续");
+      return;
+    }
+
+    // 发布 /initialpose（仅一次，限制重试次数）
+    if (!relocalization_initialpose_published_ ||
+        (relocalization_initialpose_pub_time_.nanoseconds() == 0 &&
+         relocalization_initialpose_retries_ < post_restore_initialpose_max_retries_))
+    {
+      if (!relocalization_initialpose_published_) {
+        relocalization_initialpose_retries_ = 0;
+      }
+      publish_initialpose_for_relocalization();
+    }
+
+    // 检查总超时
+    const double total_elapsed =
+      relocalization_start_time_.nanoseconds() == 0 ?
+      0.0 : (this->now() - relocalization_start_time_).seconds();
+    const double timeout = std::max(1.0, post_restore_relocalization_timeout_sec_);
+    if (total_elapsed > timeout) {
+      const std::string reason =
+        "[relocalize] " + context_label + " 超时 elapsed=" + format_fixed(total_elapsed, 1) +
+        " timeout=" + format_fixed(timeout, 1);
+      RCLCPP_ERROR(get_logger(), "%s", reason.c_str());
+      publish_full_inventory_log(reason);
+      reset_relocalization_context();
+      fail_full_inventory(reason);
+      return;
+    }
+
+    // 等待 initialpose 发布完成
+    if (!relocalization_initialpose_published_) {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "[mission_manager][FULL_INVENTORY][relocalize] %s 等待 initialpose 发布...",
+        context_label.c_str());
+      return;
+    }
+
+    // 检查 /amcl_pose 是否收到新消息（时间戳晚于 initialpose 发布时间）
+    if (relocalization_last_amcl_time_.nanoseconds() == 0 ||
+        relocalization_last_amcl_time_ <= relocalization_initialpose_pub_time_)
+    {
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "[mission_manager][FULL_INVENTORY][relocalize] %s 等待新的 /amcl_pose...",
+        context_label.c_str());
+      return;
+    }
+
+    // 检查 TF 可用性
+    geometry_msgs::msg::TransformStamped tf_stamped;
+    try {
+      tf_stamped = tf_buffer_->lookupTransform(
+        "map", "base_footprint", tf2::TimePointZero);
+    } catch (const tf2::TransformException & ex) {
+      ++relocalization_tf_fail_count_;
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "[mission_manager][FULL_INVENTORY][relocalize] %s TF map→base_footprint 不可用: %s "
+        "tf_fail_count=%d",
+        context_label.c_str(), ex.what(), relocalization_tf_fail_count_);
+      relocalization_stable_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+      relocalization_consecutive_stable_ = 0;
+      return;
+    }
+
+    // 根据上下文选择标定目标
+    double target_x = 0.0, target_y = 0.0, target_yaw = 0.0;
+    if (relocalization_context_ == PostRestoreRelocalizationContext::BETWEEN_SIDES_AFTER_CABINET_1) {
+      target_x = cab1_exit_map_x_;
+      target_y = cab1_exit_map_y_;
+      target_yaw = cab1_exit_map_yaw_;
+    } else if (relocalization_context_ == PostRestoreRelocalizationContext::FINAL_AFTER_CABINET_36) {
+      target_x = cab36_exit_map_x_;
+      target_y = cab36_exit_map_y_;
+      target_yaw = cab36_exit_map_yaw_;
+    }
+
+    // 使用 /amcl_pose 进行稳定性判定
+    const double amcl_x = relocalization_latest_amcl_pose_.pose.pose.position.x;
+    const double amcl_y = relocalization_latest_amcl_pose_.pose.pose.position.y;
+    const auto & q = relocalization_latest_amcl_pose_.pose.pose.orientation;
+    const double amcl_yaw = std::atan2(2.0 * (q.w * q.z + q.x * q.y),
+                                       1.0 - 2.0 * (q.y * q.y + q.z * q.z));
+
+    const double pos_error = std::hypot(amcl_x - target_x, amcl_y - target_y);
+    const double yaw_error = normalize_angle(amcl_yaw - target_yaw);
+    const double max_pos_err = std::max(0.01, post_restore_max_position_error_m_);
+    const double max_yaw_err = std::max(0.01, post_restore_max_yaw_error_rad_);
+
+    // 检查协方差
+    const auto & cov = relocalization_latest_amcl_pose_.pose.covariance;
+    const double cov_x = cov[0];
+    const double cov_y = cov[7];
+    const double cov_yaw = cov[35];
+    const bool cov_finite = std::isfinite(cov_x) && std::isfinite(cov_y) && std::isfinite(cov_yaw);
+    const bool cov_positive = cov_finite && cov_x > 0.0 && cov_y > 0.0 && cov_yaw > 0.0;
+    const bool cov_below_threshold = cov_positive &&
+      cov_x < post_restore_max_covariance_x_ &&
+      cov_y < post_restore_max_covariance_y_ &&
+      cov_yaw < post_restore_max_covariance_yaw_;
+
+    // 检查位姿在阈值内
+    const bool pose_in_range = (pos_error <= max_pos_err) && (std::abs(yaw_error) <= max_yaw_err);
+
+    if (!cov_finite || !cov_positive) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "[mission_manager][FULL_INVENTORY][relocalize] %s 协方差无效 "
+        "cov_x=%.4f cov_y=%.4f cov_yaw=%.4f",
+        context_label.c_str(), cov_x, cov_y, cov_yaw);
+      relocalization_stable_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+      relocalization_consecutive_stable_ = 0;
+      return;
+    }
+
+    if (!pose_in_range || !cov_below_threshold) {
+      relocalization_stable_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+      relocalization_consecutive_stable_ = 0;
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "[mission_manager][FULL_INVENTORY][relocalize] %s 等待稳定 "
+        "x=%.3f y=%.3f yaw=%.3f pos_err=%.3f/%.3f yaw_err=%.3f/%.3f "
+        "cov_x=%.4f/%.4f cov_y=%.4f/%.4f cov_yaw=%.4f/%.4f",
+        context_label.c_str(),
+        amcl_x, amcl_y, amcl_yaw,
+        pos_error, max_pos_err,
+        std::abs(yaw_error), max_yaw_err,
+        cov_x, post_restore_max_covariance_x_,
+        cov_y, post_restore_max_covariance_y_,
+        cov_yaw, post_restore_max_covariance_yaw_);
+      return;
+    }
+
+    // 位姿在阈值内，开始稳定计时
+    if (relocalization_stable_start_time_.nanoseconds() == 0) {
+      relocalization_stable_start_time_ = this->now();
+      relocalization_consecutive_stable_ = 1;
+      RCLCPP_INFO(
+        get_logger(),
+        "[mission_manager][FULL_INVENTORY][relocalize] %s 开始稳定计时 "
+        "x=%.3f y=%.3f yaw=%.3f pos_err=%.3f yaw_err=%.3f "
+        "cov_x=%.4f cov_y=%.4f cov_yaw=%.4f",
+        context_label.c_str(),
+        amcl_x, amcl_y, amcl_yaw,
+        pos_error, std::abs(yaw_error),
+        cov_x, cov_y, cov_yaw);
+    }
+
+    const double stable_elapsed =
+      (this->now() - relocalization_stable_start_time_).seconds();
+    const double required_stable = std::max(0.1, post_restore_stable_duration_sec_);
+
+    // 检查稳定期间是否有跳变
+    const double jump_threshold = max_pos_err * 2.0;
+    const double yaw_jump_threshold = max_yaw_err * 2.0;
+    if (pos_error > jump_threshold || std::abs(yaw_error) > yaw_jump_threshold) {
+      RCLCPP_WARN(
+        get_logger(),
+        "[mission_manager][FULL_INVENTORY][relocalize] %s 稳定期间出现跳变，重置计时 "
+        "pos_err=%.3f yaw_err=%.3f",
+        context_label.c_str(), pos_error, std::abs(yaw_error));
+      relocalization_stable_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+      relocalization_consecutive_stable_ = 0;
+      return;
+    }
+
+    ++relocalization_consecutive_stable_;
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(), *get_clock(), 1000,
+      "[mission_manager][FULL_INVENTORY][relocalize] %s 稳定中 elapsed=%.1f/%.1f "
+      "x=%.3f y=%.3f yaw=%.3f pos_err=%.3f yaw_err=%.3f "
+      "cov_x=%.4f cov_y=%.4f cov_yaw=%.4f consecutive=%d",
+      context_label.c_str(),
+      stable_elapsed, required_stable,
+      amcl_x, amcl_y, amcl_yaw,
+      pos_error, std::abs(yaw_error),
+      cov_x, cov_y, cov_yaw,
+      relocalization_consecutive_stable_);
+
+    if (stable_elapsed < required_stable) {
+      return;
+    }
+
+    // 重定位成功
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][FULL_INVENTORY][relocalize] %s 重定位成功！"
+      "x=%.3f y=%.3f yaw=%.3f pos_err=%.3f yaw_err=%.3f "
+      "cov_x=%.4f cov_y=%.4f cov_yaw=%.4f stable=%.1fs tf_fail=%d",
+      context_label.c_str(),
+      amcl_x, amcl_y, amcl_yaw,
+      pos_error, std::abs(yaw_error),
+      cov_x, cov_y, cov_yaw,
+      stable_elapsed, relocalization_tf_fail_count_);
+    publish_full_inventory_log(
+      "[relocalize] " + context_label + " success x=" + format_fixed(amcl_x, 3) +
+      " y=" + format_fixed(amcl_y, 3) +
+      " yaw=" + format_fixed(amcl_yaw, 4) +
+      " pos_err=" + format_fixed(pos_error, 3) +
+      " yaw_err=" + format_fixed(std::abs(yaw_error), 4) +
+      " cov_x=" + format_fixed(cov_x, 4) +
+      " cov_y=" + format_fixed(cov_y, 4) +
+      " cov_yaw=" + format_fixed(cov_yaw, 4) +
+      " stable=" + format_fixed(stable_elapsed, 1));
+
+    // 注：重定位成功仅表示 AMCL 输出与标定目标一致，
+    // 不能独立证明激光点云已正确匹配地图墙体。
+    // 现场仍需在 RViz 中确认 LaserScan 与地图重合。
+
+    // 根据上下文执行对应原有 continuation
+    const auto saved_context = relocalization_context_;
+    const int saved_target = relocalization_saved_next_target_;
+    reset_relocalization_context();
+    relocalization_done_ = true;
+
+    if (saved_context == PostRestoreRelocalizationContext::BETWEEN_SIDES_AFTER_CABINET_1) {
+      start_between_side_auto_charge_after_restore(saved_target);
+    } else if (saved_context == PostRestoreRelocalizationContext::FINAL_AFTER_CABINET_36) {
+      (void)start_finish_action(
+        "[FULL_INVENTORY] 36号重定位成功, execute finish_return_mode",
+        mission_force_map_origin_on_finish_);
+    }
+  }
+
+  void publish_initialpose_for_relocalization()
+  {
+    if (!initialpose_pub_) {
+      return;
+    }
+    // 根据上下文选择对应柜号的标定位姿
+    double target_x = 0.0, target_y = 0.0, target_yaw = 0.0;
+    double std_x = 0.5, std_y = 0.5, std_yaw = 0.5;
+    std::string context_label;
+    if (relocalization_context_ == PostRestoreRelocalizationContext::BETWEEN_SIDES_AFTER_CABINET_1) {
+      target_x = cab1_exit_map_x_;
+      target_y = cab1_exit_map_y_;
+      target_yaw = cab1_exit_map_yaw_;
+      std_x = std::abs(cab1_post_restore_initialpose_std_x_);
+      std_y = std::abs(cab1_post_restore_initialpose_std_y_);
+      std_yaw = std::abs(cab1_post_restore_initialpose_std_yaw_);
+      context_label = "cab1";
+    } else if (relocalization_context_ == PostRestoreRelocalizationContext::FINAL_AFTER_CABINET_36) {
+      target_x = cab36_exit_map_x_;
+      target_y = cab36_exit_map_y_;
+      target_yaw = cab36_exit_map_yaw_;
+      std_x = std::abs(cab36_post_restore_initialpose_std_x_);
+      std_y = std::abs(cab36_post_restore_initialpose_std_y_);
+      std_yaw = std::abs(cab36_post_restore_initialpose_std_yaw_);
+      context_label = "cab36";
+    } else {
+      RCLCPP_ERROR(get_logger(), "[relocalize] publish_initialpose: 未知上下文");
+      return;
+    }
+
+    geometry_msgs::msg::PoseWithCovarianceStamped msg;
+    msg.header.stamp = this->now();
+    msg.header.frame_id = nav2_goal_frame_;
+    msg.pose.pose.position.x = target_x;
+    msg.pose.pose.position.y = target_y;
+    msg.pose.pose.position.z = 0.0;
+    const double half_yaw = target_yaw * 0.5;
+    msg.pose.pose.orientation.z = std::sin(half_yaw);
+    msg.pose.pose.orientation.w = std::cos(half_yaw);
+    // 标准差写入时必须平方为方差
+    msg.pose.covariance.fill(0.0);
+    msg.pose.covariance[0] = std_x * std_x;    // x 方差
+    msg.pose.covariance[7] = std_y * std_y;    // y 方差
+    msg.pose.covariance[35] = std_yaw * std_yaw;  // yaw 方差
+    initialpose_pub_->publish(msg);
+    relocalization_initialpose_published_ = true;
+    relocalization_initialpose_pub_time_ = this->now();
+    ++relocalization_initialpose_retries_;
+    RCLCPP_INFO(
+      get_logger(),
+      "[mission_manager][FULL_INVENTORY][relocalize] 发布 initialpose context=%s "
+      "x=%.3f y=%.3f yaw=%.3f std_x=%.3f std_y=%.3f std_yaw=%.3f "
+      "frame=%s retry=%d/%d time=%.3f",
+      context_label.c_str(),
+      target_x, target_y, target_yaw,
+      std_x, std_y, std_yaw,
+      nav2_goal_frame_.c_str(),
+      relocalization_initialpose_retries_,
+      post_restore_initialpose_max_retries_,
+      relocalization_initialpose_pub_time_.seconds());
+    publish_full_inventory_log(
+      "[relocalize] initialpose published context=" + context_label +
+      " x=" + format_fixed(target_x, 3) +
+      " y=" + format_fixed(target_y, 3) +
+      " yaw=" + format_fixed(target_yaw, 4) +
+      " retry=" + std::to_string(relocalization_initialpose_retries_) +
+      "/" + std::to_string(post_restore_initialpose_max_retries_));
+  }
+
+  void on_amcl_pose_for_relocalization(
+    const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
+  {
+    if (state_ != State::FULL_INVENTORY_RELOCALIZING_AFTER_RESTORE) {
+      return;
+    }
+    relocalization_latest_amcl_pose_ = *msg;
+    relocalization_last_amcl_time_ = msg->header.stamp;
+    // 若时间戳为 0（AMCL 可能使用接收时间），使用当前时间
+    if (relocalization_last_amcl_time_.nanoseconds() == 0) {
+      relocalization_last_amcl_time_ = this->now();
+    }
+  }
+
+  void reset_relocalization_context()
+  {
+    relocalization_context_ = PostRestoreRelocalizationContext::NONE;
+    relocalization_initialpose_published_ = false;
+    relocalization_initialpose_pub_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_initialpose_retries_ = 0;
+    relocalization_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_last_amcl_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_stable_start_time_ = rclcpp::Time(0, 0, RCL_ROS_TIME);
+    relocalization_consecutive_stable_ = 0;
+    relocalization_tf_fail_count_ = 0;
+    relocalization_saved_next_target_ = -1;
+    relocalization_done_ = false;
+    relocalization_publishing_stop_ = false;
   }
 
   void continue_full_inventory_after_between_side_auto_charge()
@@ -10687,6 +11163,16 @@ private:
 
   void handle_single_cabinet_exit_gap_state()
   {
+    // 每次进入 EXIT_GAP 时清零当前柜号的 aligned 标志，防止之前柜体的结果残留
+    // 不清零其他柜号的标志，因为其 restore 可能还在进行中
+    if (full_inventory_active_ && single_cabinet_exit_start_time_.nanoseconds() == 0) {
+      if (current_target_cabinet_ == 1) {
+        cabinet_1_exit_turn_aligned_ = false;
+      } else if (current_target_cabinet_ == 36) {
+        cabinet_36_exit_turn_aligned_ = false;
+      }
+    }
+
     std::string mode = single_cabinet_exit_mode_;
     std::transform(mode.begin(), mode.end(), mode.begin(), [](unsigned char c) {
       return static_cast<char>(std::tolower(c));
@@ -11097,6 +11583,24 @@ private:
           " selected_parameter=" + exit_param_name +
           " entry_turn_start_yaw=" + format_fixed(entry_turn_start_yaw_, 4) +
           " turn_to_corridor completion_reason=stable_yaw_in_tolerance");
+        if (full_inventory_active_) {
+          // 按柜号设置对应 aligned 标志，避免其他柜的结果污染
+          if (current_target_cabinet_ == 1) {
+            cabinet_1_exit_turn_aligned_ = true;
+            RCLCPP_INFO(
+              get_logger(),
+              "[mission_manager][single_cabinet][exit_gap] cabinet_1_exit_turn_aligned=true "
+              "yaw_error=%.4f tolerance=%.4f",
+              yaw_error, yaw_tolerance);
+          } else if (current_target_cabinet_ == 36) {
+            cabinet_36_exit_turn_aligned_ = true;
+            RCLCPP_INFO(
+              get_logger(),
+              "[mission_manager][single_cabinet][exit_gap] cabinet_36_exit_turn_aligned=true "
+              "yaw_error=%.4f tolerance=%.4f",
+              yaw_error, yaw_tolerance);
+          }
+        }
         finish_single_cabinet_exit_gap();
         return;
       }
@@ -13757,6 +14261,11 @@ private:
         break;
       }
 
+      case State::FULL_INVENTORY_RELOCALIZING_AFTER_RESTORE: {
+        handle_full_inventory_relocalizing_after_restore_state();
+        break;
+      }
+
       case State::CAMERA_SWITCH_WAIT: {
         handle_camera_switch_wait_state();
         break;
@@ -14106,6 +14615,59 @@ private:
   bool full_inventory_restore_active_{false};
   bool full_inventory_restore_final_{false};
   rclcpp::Time full_inventory_restore_close_start_time_{0, 0, RCL_ROS_TIME};
+
+  // 柜体 TURN_TO_CORRIDOR 姿态有效性标志
+  // 仅在对应柜号 yaw 容差内正常完成时置为 true；超时、降级、TF失败时保持 false
+  // 每次 EXIT_GAP 开始时清零，TURN_TO_CORRIDOR 成功时按柜号设置
+  bool cabinet_1_exit_turn_aligned_{false};
+  bool cabinet_36_exit_turn_aligned_{false};
+
+  // 1→19 跨侧环境恢复后 AMCL 重定位参数
+  bool cab1_post_restore_relocalization_enabled_{false};
+  double cab1_exit_map_x_{0.0};       // 现场标定前为占位值
+  double cab1_exit_map_y_{0.0};       // 现场标定前为占位值
+  double cab1_exit_map_yaw_{0.0};     // 现场标定前为占位值
+  double cab1_post_restore_initialpose_std_x_{0.5};
+  double cab1_post_restore_initialpose_std_y_{0.5};
+  double cab1_post_restore_initialpose_std_yaw_{0.5};
+
+  // 36号最终环境恢复后 AMCL 重定位参数
+  bool cab36_post_restore_relocalization_enabled_{false};
+  double cab36_exit_map_x_{0.0};      // 现场标定前为占位值
+  double cab36_exit_map_y_{0.0};      // 现场标定前为占位值
+  double cab36_exit_map_yaw_{0.0};    // 现场标定前为占位值
+  double cab36_post_restore_initialpose_std_x_{0.5};
+  double cab36_post_restore_initialpose_std_y_{0.5};
+  double cab36_post_restore_initialpose_std_yaw_{0.5};
+
+  // 重定位公用参数
+  double post_restore_relocalization_timeout_sec_{30.0};
+  double post_restore_stable_duration_sec_{3.0};
+  double post_restore_max_position_error_m_{0.30};
+  double post_restore_max_yaw_error_rad_{0.15};
+  double post_restore_max_covariance_x_{0.50};
+  double post_restore_max_covariance_y_{0.50};
+  double post_restore_max_covariance_yaw_{0.30};
+  int post_restore_initialpose_max_retries_{3};
+
+  // 重定位运行时状态
+  PostRestoreRelocalizationContext relocalization_context_{PostRestoreRelocalizationContext::NONE};
+  bool relocalization_initialpose_published_{false};
+  rclcpp::Time relocalization_initialpose_pub_time_{0, 0, RCL_ROS_TIME};
+  int relocalization_initialpose_retries_{0};
+  rclcpp::Time relocalization_start_time_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time relocalization_last_amcl_time_{0, 0, RCL_ROS_TIME};
+  geometry_msgs::msg::PoseWithCovarianceStamped relocalization_latest_amcl_pose_;
+  rclcpp::Time relocalization_stable_start_time_{0, 0, RCL_ROS_TIME};
+  int relocalization_consecutive_stable_{0};
+  int relocalization_tf_fail_count_{0};
+  int relocalization_saved_next_target_{-1};
+  bool relocalization_done_{false};
+  bool relocalization_publishing_stop_{false};
+  rclcpp::Publisher<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr initialpose_pub_;
+  rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr
+    relocalization_amcl_sub_;
+
   std::string full_inventory_left_route_{"left_route"};
   std::string full_inventory_right_route_{"right_route"};
   bool recognize_in_idle_{true};

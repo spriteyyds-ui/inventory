@@ -551,6 +551,38 @@ mission_manager_node:
     full_inventory_restore_after_left_enabled: true                      # 左侧完成后是否执行 close all → wait → open 恢复流程
     full_inventory_restore_after_done_enabled: true                      # 全部完成后是否执行 close all → wait → open 恢复流程
     full_inventory_preopen_interval_sec: 10.0                           # 连续开柜指令之间的间隔时间，单位 s；open 18 后等待再 open 19
+
+    # --- 环境恢复后 AMCL 重定位（1号跨侧 + 36号最终） ---
+    # 仅在对应柜号出缝后 TURN_TO_CORRIDOR 已可靠对齐、环境恢复完成（18/19开柜完成）后触发
+    # 必须分别完成1号和36号现场标定后才能启用对应功能
+
+    # 1号柜：1→19 跨侧恢复后重定位
+    cabinet_1_post_restore_relocalization_enabled: false                 # 启用 1→19 恢复后 AMCL 重定位；现场标定前必须为 false
+    cabinet_1_exit_map_x: 0.0                                           # 1号柜出缝后 map x 坐标，单位 m；必须完成现场标定
+    cabinet_1_exit_map_y: 0.0                                           # 1号柜出缝后 map y 坐标，单位 m；必须完成现场标定
+    cabinet_1_exit_map_yaw: 0.0                                         # 1号柜出缝后 map yaw 角，单位 rad；必须完成现场标定
+    cabinet_1_post_restore_initialpose_std_x: 0.50                      # initialpose x 标准差，单位 m；写入消息时自动平方为方差
+    cabinet_1_post_restore_initialpose_std_y: 0.50                      # initialpose y 标准差，单位 m；写入消息时自动平方为方差
+    cabinet_1_post_restore_initialpose_std_yaw: 0.50                    # initialpose yaw 标准差，单位 rad；写入消息时自动平方为方差
+
+    # 36号柜：最终恢复后重定位
+    cabinet_36_post_restore_relocalization_enabled: false                # 启用 36号最终恢复后 AMCL 重定位；现场标定前必须为 false
+    cabinet_36_exit_map_x: 0.0                                          # 36号柜出缝后 map x 坐标，单位 m；必须完成现场标定
+    cabinet_36_exit_map_y: 0.0                                          # 36号柜出缝后 map y 坐标，单位 m；必须完成现场标定
+    cabinet_36_exit_map_yaw: 0.0                                        # 36号柜出缝后 map yaw 角，单位 rad；必须完成现场标定
+    cabinet_36_post_restore_initialpose_std_x: 0.50                     # initialpose x 标准差，单位 m；写入消息时自动平方为方差
+    cabinet_36_post_restore_initialpose_std_y: 0.50                     # initialpose y 标准差，单位 m；写入消息时自动平方为方差
+    cabinet_36_post_restore_initialpose_std_yaw: 0.50                   # initialpose yaw 标准差，单位 rad；写入消息时自动平方为方差
+
+    # 重定位公用参数（1号和36号共用）
+    post_restore_relocalization_timeout_sec: 30.0                       # 重定位总超时，单位 s；超时后进入 ERROR
+    post_restore_stable_duration_sec: 3.0                               # 位姿稳定所需持续时间，单位 s；期间出现跳变会重置计时
+    post_restore_max_position_error_m: 0.30                             # 位姿稳定最大位置误差，单位 m；超过则不计入稳定时间
+    post_restore_max_yaw_error_rad: 0.15                                # 位姿稳定最大 yaw 误差，单位 rad；超过则不计入稳定时间
+    post_restore_max_covariance_x: 0.50                                 # AMCL 协方差[0]上限；超过则认为未收敛
+    post_restore_max_covariance_y: 0.50                                 # AMCL 协方差[7]上限；超过则认为未收敛
+    post_restore_max_covariance_yaw: 0.30                               # AMCL 协方差[35]上限；超过则认为未收敛
+    post_restore_initialpose_max_retries: 3                             # initialpose 最大发布次数；避免反复重置粒子滤波器
     recognize_in_idle: true                                             # IDLE 状态是否保持货柜编号识别；开启便于待机观察，关闭可省资源
     recognize_during_nav: false                                         # Nav2 导航期间是否保持识别；开启可提前发现目标但占用算力
     inventory_left_route: left_route                                    # 左/上排盘库使用的路线名；需与路线航点配置一致
