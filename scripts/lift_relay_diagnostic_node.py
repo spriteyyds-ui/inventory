@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+_COPYRIGHT = (
+    "========================================\n"
+    " agv_inventory_system\n"
+    " Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>\n"
+    " All rights reserved.\n"
+    "========================================\n"
+)
 from __future__ import annotations
 
 import time
@@ -125,6 +133,7 @@ class LiftRelayDiagnosticNode(Node):
 
 
 def main(args=None) -> None:
+    print(_COPYRIGHT)
     rclpy.init(args=args)
     node = LiftRelayDiagnosticNode()
     exit_code = 1

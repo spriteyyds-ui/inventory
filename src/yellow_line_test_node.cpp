@@ -1,3 +1,4 @@
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 // yellow_line_test_node.cpp
 // 黄线巡线独立测试节点
 // 功能：只订阅相机图像，运行黄线识别，发布 debug 图像，打印识别结果。
@@ -129,8 +130,17 @@ private:
   double linear_x_{0.15};
 };
 
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+static const char* COPYRIGHT_NOTICE =
+    "========================================\n"
+    " agv_inventory_system\n"
+    " Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>\n"
+    " All rights reserved.\n"
+    "========================================\n";
+
 int main(int argc, char ** argv)
 {
+  printf("%s", COPYRIGHT_NOTICE);
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<YellowLineTestNode>());
   rclcpp::shutdown();

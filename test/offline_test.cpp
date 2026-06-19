@@ -1,3 +1,4 @@
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 #include <filesystem>
 #include <iostream>
 #include <string>

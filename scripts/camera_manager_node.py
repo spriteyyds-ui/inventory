@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+_COPYRIGHT = (
+    "========================================\n"
+    " agv_inventory_system\n"
+    " Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>\n"
+    " All rights reserved.\n"
+    "========================================\n"
+)
 """
 camera_manager_node.py
 Manages left/right HJ (C100) USB camera processes for the inventory system.
@@ -849,6 +857,7 @@ class CameraManagerNode(Node):
 
 
 def main(args=None):
+    print(_COPYRIGHT)
     rclpy.init(args=args)
     node = CameraManagerNode()
     try:

@@ -1,5 +1,6 @@
-#ifndef WHEELTEC_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_
-#define WHEELTEC_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+#ifndef AGV_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_
+#define AGV_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_
 
 #include <string>
 #include <vector>
@@ -94,4 +95,4 @@ private:
 
 }  // namespace agv_inventory_system
 
-#endif  // WHEELTEC_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_
+#endif  // AGV_INVENTORY_SYSTEM__DIGIT_CLASSIFIER_HPP_

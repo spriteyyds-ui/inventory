@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 """ROS2 bridge for starting the existing inventory mission manager."""
 
 from __future__ import annotations

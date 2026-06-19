@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 #!/usr/bin/env python3
 """Generate cabinet QR labels as QR PNGs and A4 printable PDFs."""
 

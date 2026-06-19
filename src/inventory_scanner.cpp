@@ -1,3 +1,4 @@
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 #include "agv_inventory_system/inventory_scanner.hpp"
 
 #include <cerrno>

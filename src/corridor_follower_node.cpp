@@ -1,3 +1,4 @@
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -222,8 +223,17 @@ private:
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr set_enable_srv_;
 };
 
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+static const char* COPYRIGHT_NOTICE =
+    "========================================\n"
+    " agv_inventory_system\n"
+    " Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>\n"
+    " All rights reserved.\n"
+    "========================================\n";
+
 int main(int argc, char ** argv)
 {
+  printf("%s", COPYRIGHT_NOTICE);
   rclcpp::init(argc, argv);
   auto node = std::make_shared<CorridorFollowerNode>();
   rclcpp::spin(node);

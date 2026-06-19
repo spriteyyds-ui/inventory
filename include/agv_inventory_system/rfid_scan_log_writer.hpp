@@ -1,5 +1,6 @@
-#ifndef WHEELTEC_INVENTORY_SYSTEM__RFID_SCAN_LOG_WRITER_HPP_
-#define WHEELTEC_INVENTORY_SYSTEM__RFID_SCAN_LOG_WRITER_HPP_
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+#ifndef AGV_INVENTORY_SYSTEM__RFID_SCAN_LOG_WRITER_HPP_
+#define AGV_INVENTORY_SYSTEM__RFID_SCAN_LOG_WRITER_HPP_
 
 #include <cstddef>
 #include <string>
@@ -79,4 +80,4 @@ private:
 
 }  // namespace agv_inventory_system
 
-#endif  // WHEELTEC_INVENTORY_SYSTEM__RFID_SCAN_LOG_WRITER_HPP_
+#endif  // AGV_INVENTORY_SYSTEM__RFID_SCAN_LOG_WRITER_HPP_

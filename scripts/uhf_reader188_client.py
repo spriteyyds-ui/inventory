@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 #!/usr/bin/env python3
 """UHFReader188 RFID reader protocol client (answer mode / command-response).
 

@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 #!/usr/bin/env python3
 """Standalone test script for UHFReader188 RFID reader in answer mode.
 

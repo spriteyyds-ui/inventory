@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 """Small status store used by the robot HTTP API and operation GUI."""
 
 from __future__ import annotations

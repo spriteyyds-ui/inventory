@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+_COPYRIGHT = (
+    "========================================\n"
+    " agv_inventory_system\n"
+    " Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>\n"
+    " All rights reserved.\n"
+    "========================================\n"
+)
 # coding=utf-8
 
 import math
@@ -778,6 +786,7 @@ class InventoryAutoRecharger(Node):
 
 
 def main():
+    print(_COPYRIGHT)
     rclpy.init()
     node = InventoryAutoRecharger()
     executor = MultiThreadedExecutor(num_threads=2)

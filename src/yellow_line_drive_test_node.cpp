@@ -1,3 +1,4 @@
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 // yellow_line_drive_test_node.cpp
 // 独立巡线驾驶测试节点
 // 功能：订阅前方相机，识别黄线，发布 cmd_vel 做前进/后退巡线。
@@ -363,8 +364,17 @@ private:
   double active_backward_ratio_{-1.0};
 };
 
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+static const char* COPYRIGHT_NOTICE =
+    "========================================\n"
+    " agv_inventory_system\n"
+    " Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>\n"
+    " All rights reserved.\n"
+    "========================================\n";
+
 int main(int argc, char ** argv)
 {
+  printf("%s", COPYRIGHT_NOTICE);
   rclcpp::init(argc, argv);
   rclcpp::spin(std::make_shared<YellowLineDriveTestNode>());
   rclcpp::shutdown();

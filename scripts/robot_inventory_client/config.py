@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 """Global configuration for the robot inventory client.
 
 Business configuration is loaded from ``config/inventory_system.yaml``

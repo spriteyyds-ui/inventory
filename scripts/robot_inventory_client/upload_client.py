@@ -1,3 +1,4 @@
+# Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
 """HTTP upload client for Java backend callbacks."""
 
 import json

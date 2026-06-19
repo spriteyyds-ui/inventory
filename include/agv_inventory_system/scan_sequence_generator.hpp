@@ -1,5 +1,6 @@
-#ifndef WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_
-#define WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_
+// Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+#ifndef AGV_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_
+#define AGV_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_
 
 #include <string>
 #include <vector>
@@ -37,4 +38,4 @@ public:
 
 }  // namespace agv_inventory_system
 
-#endif  // WHEELTEC_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_
+#endif  // AGV_INVENTORY_SYSTEM__SCAN_SEQUENCE_GENERATOR_HPP_
