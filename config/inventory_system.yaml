@@ -398,10 +398,16 @@ mission_manager_node:
     gap_failures_before_adjust: 3                                       # 触发一次位姿调整前允许的失败检测轮数，单位 轮；调大会减少调整频率
     gap_adjust_speed: 0.10                                              # 间隙调整序列运动速度，单位 m/s；调大会调整更快但更难精确
     gap_adjust_sequence: [-0.20, 0.10, -0.20, 0.30]                     # 每个重试阶段的相对调整距离列表，单位 m；正负号决定前后移动方向
-    post_gap_detect_advance_enabled: true                               # 检测到间隙后是否额外前进对齐；关闭会直接进入后续进缝流程
-    post_gap_detect_advance_distance_m: 1.20                            # 检测到间隙后的额外前进距离，单位 m；调大会更靠近目标间隙
-    post_gap_detect_advance_speed: 0.20                                 # 检测后额外前进速度，单位 m/s；调大会更快但对齐误差可能增加
-    post_gap_detect_advance_timeout_sec: 40.0                           # 检测后额外前进超时，单位 s；调大会允许更慢完成对齐
+    post_gap_detect_advance_enabled: false                              # 关闭原逻辑，改用识别后前进
+    post_gap_detect_advance_distance_m: 1.20                            # 废弃：原检测到间隙后的额外前进距离
+    post_gap_detect_advance_speed: 0.20                                 # 废弃：原检测后额外前进速度
+    post_gap_detect_advance_timeout_sec: 40.0                           # 废弃：原检测后额外前进超时
+
+    post_recognition_advance_enabled: true                              # 识别到数字后是否额外前进对齐；新逻辑起点从识别稳定后开始
+    post_recognition_advance_forward_distance_m: 1.80                   # 识别后前进距离（偶数柜子），单位 m；从识别数字后沿走廊向前
+    post_recognition_advance_backward_distance_m: 1.20                  # 识别后后退距离（奇数柜子），单位 m；从识别数字后沿走廊向后
+    post_recognition_advance_speed: 0.15                                # 识别后前进/后退速度，单位 m/s；适中速度保证对齐精度
+    post_recognition_advance_timeout_sec: 60.0                          # 识别后前进/后退超时，单位 s；调大会允许更慢完成
 
     finish_return_mode: auto_charge                                     # 任务全部完成后的动作；auto_charge 启动自动回充，map_origin 导航到 map 零点
     between_side_auto_charge_wait_sec: 30.0                             # 跨侧自动回充到位/开始充电后继续等待时间，单位 s
@@ -450,7 +456,7 @@ mission_manager_node:
     plc_verify_tls: false                                               # 当前 HTTPS 测试默认不校验证书；正式部署建议开启并配置可信证书
     plc_require_body_success: true                                       # true 时要求 body 明确包含 success=true；Java 8099 接口返回 {"success":true,...}
     plc_request_timeout_sec: 8.0                                        # 单次 PLC HTTP 请求超时，单位 s；匹配 curl --max-time 8 验证值
-    plc_retry_count: 1                                                  # PLC HTTP 请求失败后的重试次数，单位 次
+    plc_retry_count: 3                                                  # PLC HTTP 请求失败后的重试次数，单位 次；增加重试避免瞬时失败
     plc_fail_policy: "error"                                            # PLC open 失败策略：error 或 continue_without_plc
     plc_supported_cabinets: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36] # 支持 PLC 控制的柜号范围 1-36
     plc_open_wait_sec: 60.0                                              # /open 请求层成功后的固定等待时间，单位 s；不等待 PLC 状态反馈
@@ -537,8 +543,11 @@ mission_manager_node:
     exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
     exit_gap_turn_angular_speed: 0.25                                   # 退出后转向角速度，单位 rad/s；调大会转向更快
-    exit_gap_turn_yaw_tolerance_rad: 0.08                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
+    exit_gap_turn_yaw_tolerance_rad: 0.05                               # 退出后转向完成偏航误差，单位 rad；调小更准但耗时更久
     exit_gap_turn_timeout_sec: 40.0                                     # 退出后转向超时，单位 s；调大会允许更慢完成转向
+    exit_gap_force_turn_enabled: true                                   # 启用强制转向；当修正角度不足45度时强制转向90度
+    exit_gap_force_turn_min_yaw_error_rad: 0.785                        # 强制转向阈值，单位 rad（45度）；小于此值时触发强制转向
+    exit_gap_force_turn_target_yaw_rad: 1.571                           # 强制转向目标角度，单位 rad（90度）；强制转向时的目标偏航角
     reentry_for_position_adjustment: true                               # 是否允许为位置调整重新进入间隙；关闭可减少重复进出动作
     close_gap_after_final_exit: true                                    # 最终退出后是否请求关闭间隙；关闭会跳过关闭请求
 
@@ -649,7 +658,7 @@ mission_manager_node:
     yellow_line_use_in_same_side_search: true                            # 同侧搜索使用黄线巡线；前进时黄线横向纠偏
     yellow_line_use_in_rear_target_backup: true                          # 后方目标回退使用黄线巡线；后退时黄线横向纠偏
     yellow_line_use_in_restore_backup: false                             # 出缝回退是否使用黄线巡线；默认关闭
-    yellow_line_use_in_gap_search: true                                  # SEARCH_GAP 搜缝阶段使用黄线巡线；沿走廊前进/后退时横向纠偏
+    yellow_line_use_in_gap_search: true                                  # SEARCH_GAP 搜缝阶段使用黄线巡线；沿走廊前进/后退时横向纠偏；同时复用于识别后前进阶段
     yellow_line_use_in_post_gap_detect_advance: true                     # 缝隙检测后前进对齐阶段使用黄线巡线；沿走廊直行时横向纠偏
     yellow_line_use_in_gap_entry: false                                  # 入缝是否使用黄线巡线；默认关闭，先不让黄线影响入缝
     yellow_line_detect_only: false                                       # 只识别不控制模式；true 时只运行图像识别和发布 debug，不改变小车控制
@@ -674,9 +683,9 @@ mission_manager_node:
     yellow_line_backward_target_x_ratio_right_entry: 0.84                # 右入缝后退目标 x 比例；现场标定值
     yellow_line_backward_target_x_ratio_left_entry: 0.16                 # 左入缝后退目标 x 比例；理论镜像初值，可独立标定
     yellow_line_backward_target_x_ratio: 0.84                            # 后退时黄线目标 x 比例；兼容 fallback
-    yellow_line_backward_kp: 0.40                                        # 后退巡线 P 增益；符号验证阶段保守值
-    yellow_line_backward_kd: 0.00                                        # 后退巡线 D 增益；符号验证阶段关闭 D
-    yellow_line_backward_max_angular: 0.05                               # 后退最大角速度；符号验证阶段严格限幅
+    yellow_line_backward_kp: 0.50                                        # 后退巡线 P 增益；增加响应力度
+    yellow_line_backward_kd: 0.02                                        # 后退巡线 D 增益；启用微分项抑制超调
+    yellow_line_backward_max_angular: 0.10                               # 后退最大角速度；增加纠偏能力
     yellow_line_debug_image_enabled: true                                # 发布调试图像；可在 rv2 中查看识别效果
     yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题名
 
@@ -751,66 +760,3 @@ robot_inventory_client:
     upload_retry_count: 3                                                           # 上传失败重试次数
     api_host: "0.0.0.0"                                                             # FastAPI uvicorn 监听地址
     api_port: 8000                                                                  # FastAPI uvicorn 监听端口
-
-# ==========================================================================
-# yellow_line_test_node 参数块
-# 独立测试节点，只做黄线识别和 debug 发布，不控制小车。
-# 参数名与 mission_manager_node 的黄线参数一致，方便统一配置。
-# ==========================================================================
-yellow_line_test_node:
-  ros__parameters:
-    yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题
-    yellow_line_roi_y_min_ratio: 0.50                                    # ROI 上边界比例
-    yellow_line_roi_y_max_ratio: 0.90                                    # ROI 下边界比例
-    yellow_line_target_x_ratio: 0.84                                     # 黄线目标 x 位置比例；现场标定值
-    yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
-    yellow_h_min: 15                                                     # 黄色 HSV H 最小值
-    yellow_h_max: 40                                                     # 黄色 HSV H 最大值
-    yellow_s_min: 80                                                     # 黄色 HSV S 最小值
-    yellow_s_max: 255                                                    # 黄色 HSV S 最大值
-    yellow_v_min: 80                                                     # 黄色 HSV V 最小值
-    yellow_v_max: 255                                                    # 黄色 HSV V 最大值
-    yellow_line_min_area: 300.0                                          # 最小轮廓面积
-    yellow_line_lost_timeout_sec: 5.5                                    # 丢线超时；与正式盘库一致
-    yellow_line_kp: 0.5                                                  # 巡线 P 增益；现场标定值
-    yellow_line_kd: 0.03                                                 # 巡线 D 增益；现场标定值
-    yellow_line_max_angular: 0.15                                        # 最大角速度；现场标定值
-    yellow_line_reverse_invert_angular: false                            # 后退时不翻转角速度方向
-    yellow_line_debug_image_enabled: true                                # 测试节点默认开启 debug 图像
-    yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题
-    test_linear_speed: 0.15                                              # 测试用线速度（仅用于打印计算结果）
-
-# ==========================================================================
-# yellow_line_drive_test_node 参数块
-# 独立巡线驾驶测试，不依赖盘库流程，只做前进/后退巡线。
-# ==========================================================================
-yellow_line_drive_test_node:
-  ros__parameters:
-    yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题
-    cmd_vel_topic: "/cmd_vel"                                            # 速度发布话题
-    yellow_line_roi_y_min_ratio: 0.50                                    # ROI 上边界比例
-    yellow_line_roi_y_max_ratio: 0.90                                    # ROI 下边界比例
-    yellow_line_target_x_ratio: 0.84                                    # 前进时黄线目标 x 位置比例；现场标定值
-    yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
-    yellow_h_min: 15                                                     # 黄色 HSV H 最小值
-    yellow_h_max: 40                                                     # 黄色 HSV H 最大值
-    yellow_s_min: 80                                                     # 黄色 HSV S 最小值
-    yellow_s_max: 255                                                    # 黄色 HSV S 最大值
-    yellow_v_min: 80                                                     # 黄色 HSV V 最小值
-    yellow_v_max: 255                                                    # 黄色 HSV V 最大值
-    yellow_line_min_area: 300.0                                          # 最小轮廓面积
-    yellow_line_lost_timeout_sec: 5.5                                    # 丢线超时停车；与正式盘库一致
-    yellow_line_kp: 0.5                                                  # 前进巡线 P 增益；现场标定值
-    yellow_line_kd: 0.03                                                 # 前进巡线 D 增益；现场标定值
-    yellow_line_max_angular: 0.15                                        # 前进最大角速度；现场标定值
-    yellow_line_reverse_invert_angular: false                            # 后退时不翻转角速度方向；与正式盘库参数一致
-    yellow_line_debug_image_enabled: true                                # 发布调试图像
-    yellow_line_debug_image_topic: "/yellow_line/debug_image"            # 调试图像话题
-    test_linear_speed: 0.20                                              # 前进线速度，单位 m/s
-    test_backward_linear_speed: 0.20                                     # 后退线速度，单位 m/s；与 rear_target_backup_speed 一致
-    yellow_line_backward_target_x_ratio_right_entry: 0.84               # 右入缝后退目标 x 比例；与正式盘库一致
-    yellow_line_backward_target_x_ratio_left_entry: 0.16                # 左入缝后退目标 x 比例；与正式盘库一致
-    yellow_line_backward_target_x_ratio: 0.84                           # 后退时黄线目标 x 位置比例；兼容 fallback
-    yellow_line_backward_kp: 0.40                                        # 后退巡线 P 增益；与正式盘库参数一致
-    yellow_line_backward_kd: 0.00                                        # 后退巡线 D 增益；与正式盘库参数一致
-    yellow_line_backward_max_angular: 0.05                               # 后退最大角速度；与正式盘库参数一致

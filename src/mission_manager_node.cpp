@@ -464,6 +464,12 @@ public:
       declare_parameter<double>("exit_gap_turn_yaw_tolerance_rad", 0.08);
     single_cabinet_exit_turn_timeout_sec_ =
       declare_parameter<double>("exit_gap_turn_timeout_sec", 8.0);
+    exit_gap_force_turn_enabled_ =
+      declare_parameter<bool>("exit_gap_force_turn_enabled", true);
+    exit_gap_force_turn_min_yaw_error_rad_ =
+      declare_parameter<double>("exit_gap_force_turn_min_yaw_error_rad", 0.785);
+    exit_gap_force_turn_target_yaw_rad_ =
+      declare_parameter<double>("exit_gap_force_turn_target_yaw_rad", 1.571);
     single_cabinet_reentry_for_position_adjustment_ =
       declare_parameter<bool>("reentry_for_position_adjustment", true);
     single_cabinet_grid_motion_enabled_ =
@@ -721,6 +727,16 @@ public:
       declare_parameter<double>("post_gap_detect_advance_speed", 0.04);
     post_gap_detect_advance_timeout_sec_ =
       declare_parameter<double>("post_gap_detect_advance_timeout_sec", 8.0);
+    post_recognition_advance_enabled_ =
+      declare_parameter<bool>("post_recognition_advance_enabled", true);
+    post_recognition_advance_forward_distance_m_ =
+      declare_parameter<double>("post_recognition_advance_forward_distance_m", 1.80);
+    post_recognition_advance_backward_distance_m_ =
+      declare_parameter<double>("post_recognition_advance_backward_distance_m", 1.20);
+    post_recognition_advance_speed_ =
+      declare_parameter<double>("post_recognition_advance_speed", 0.15);
+    post_recognition_advance_timeout_sec_ =
+      declare_parameter<double>("post_recognition_advance_timeout_sec", 60.0);
     scan_layers_ = declare_parameter<int>("scan_layers", 2);
     scan_depth_count_ = declare_parameter<int>("scan_depth_count", 3);
     {
@@ -1151,6 +1167,7 @@ private:
     FULL_INVENTORY_POST_ROUTE_RECOGNITION_WAIT,
     FULL_INVENTORY_RECOGNITION_FALLBACK,
     FULL_INVENTORY_TARGET_DISTANCE_ALIGN,
+    FULL_INVENTORY_POST_RECOGNITION_ADVANCE,
     FULL_INVENTORY_SEARCH_GAP,
     FULL_INVENTORY_POST_GAP_DETECT_ADVANCE,
     FULL_INVENTORY_ENTERING_GAP,
@@ -1462,6 +1479,8 @@ private:
         return "FULL_INVENTORY_RECOGNITION_FALLBACK";
       case State::FULL_INVENTORY_TARGET_DISTANCE_ALIGN:
         return "FULL_INVENTORY_TARGET_DISTANCE_ALIGN";
+      case State::FULL_INVENTORY_POST_RECOGNITION_ADVANCE:
+        return "FULL_INVENTORY_POST_RECOGNITION_ADVANCE";
       case State::FULL_INVENTORY_SEARCH_GAP:
         return "FULL_INVENTORY_SEARCH_GAP";
       case State::FULL_INVENTORY_POST_GAP_DETECT_ADVANCE:
@@ -2354,7 +2373,8 @@ private:
       "second_gap=%s second_seq=%s transfer_target=%d motion_model=%s "
       "exit_distance=%.2f exit_speed=%.3f "
       "exit_timeout=%.2f exit_turn=%s exit_turn_angular=%.3f exit_turn_tolerance=%.3f "
-      "exit_turn_timeout=%.2f grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
+      "exit_turn_timeout=%.2f exit_force_turn=%s exit_force_turn_min_yaw=%.3f exit_force_turn_target=%.3f "
+      "grid_motion=%s grid_spacing=%.2f grid_speed=%.3f grid_timeout=%.2f",
       single_cabinet_side_row_enabled_ ? "true" : "false",
       single_cabinet_side_row_name_.c_str(),
       single_cabinet_side_row_first_gap_.c_str(),
@@ -2370,6 +2390,9 @@ private:
       single_cabinet_exit_turn_angular_speed_,
       single_cabinet_exit_turn_yaw_tolerance_rad_,
       single_cabinet_exit_turn_timeout_sec_,
+      exit_gap_force_turn_enabled_ ? "true" : "false",
+      exit_gap_force_turn_min_yaw_error_rad_,
+      exit_gap_force_turn_target_yaw_rad_,
       single_cabinet_grid_motion_enabled_ ? "true" : "false",
       single_cabinet_grid_spacing_m_,
       single_cabinet_grid_move_speed_,
@@ -2392,6 +2415,7 @@ private:
       "final_recognition_wait=%.2f "
       "recognition_fallback=%s fallback_speed=%.3f fallback_wait=%.2f fallback_timeout=%.2f "
       "fallback_sequence=%s post_gap_advance=%s distance=%.2f speed=%.3f timeout=%.2f "
+      "post_recognition_advance=%s forward_distance=%.2f backward_distance=%.2f speed=%.3f timeout=%.2f "
       "preopen_cabinets=%s restore_close_wait=%.2f restore_open_cabinets=%s "
       "restore_after_left=%s restore_after_done=%s preopen_interval=%.2f",
       full_inventory_enabled_ ? "true" : "false",
@@ -2450,6 +2474,11 @@ private:
       post_gap_detect_advance_distance_m_,
       post_gap_detect_advance_speed_,
       post_gap_detect_advance_timeout_sec_,
+      post_recognition_advance_enabled_ ? "true" : "false",
+      post_recognition_advance_forward_distance_m_,
+      post_recognition_advance_backward_distance_m_,
+      post_recognition_advance_speed_,
+      post_recognition_advance_timeout_sec_,
       cabinet_unit_to_string(full_inventory_start_preopen_cabinets_).c_str(),
       full_inventory_restore_close_all_wait_sec_,
       cabinet_unit_to_string(full_inventory_restore_open_cabinets_).c_str(),
@@ -4514,7 +4543,7 @@ private:
       return yellow_line_use_in_same_side_search_;
     } else if (scene_name == "restore_backup") {
       return yellow_line_use_in_restore_backup_;
-    } else if (scene_name == "gap_search") {
+    } else if (scene_name == "gap_search" || scene_name == "post_recognition_advance") {
       return yellow_line_use_in_gap_search_;
     } else if (scene_name == "post_gap_detect_advance") {
       return yellow_line_use_in_post_gap_detect_advance_;
@@ -8574,7 +8603,11 @@ private:
           " >= threshold=" + format_fixed(gap_threshold, 2) +
           "，认为已扫到缝隙/开放空间，提前进入 SEARCH_GAP");
         set_distance_estimator_enabled(false, true);
-        begin_search_gap_flow();
+        if (post_recognition_advance_enabled_) {
+          begin_full_inventory_post_recognition_advance_flow();
+        } else {
+          begin_search_gap_flow();
+        }
       }
       return;
     }
@@ -8609,7 +8642,11 @@ private:
           " in [" + format_fixed(aligned_min, 2) + ", " + format_fixed(aligned_max, 2) +
           "] stable_elapsed=" + format_fixed(stable_elapsed, 2) +
           "，进入 SEARCH_GAP");
-        begin_search_gap_flow();
+        if (post_recognition_advance_enabled_) {
+          begin_full_inventory_post_recognition_advance_flow();
+        } else {
+          begin_search_gap_flow();
+        }
       }
       return;
     }
@@ -11547,12 +11584,40 @@ private:
         return;
       }
 
-      const double target_exit_yaw = fixed_exit_target_yaw;
+      double target_exit_yaw = fixed_exit_target_yaw;
       const double current_exit_yaw = normalize_angle(exit_yaw_control.yaw);
-      const double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
+      double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
       const double yaw_tolerance =
         std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
         std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
+
+      // 强制转向逻辑：当修正角度不足45度时，强制转向90度
+      if (exit_gap_force_turn_enabled_ &&
+        std::abs(yaw_error) > yaw_tolerance &&
+        std::abs(yaw_error) < exit_gap_force_turn_min_yaw_error_rad_)
+      {
+        const double force_direction = yaw_error > 0 ? 1.0 : -1.0;
+        target_exit_yaw = normalize_angle(current_exit_yaw + force_direction * exit_gap_force_turn_target_yaw_rad_);
+        yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
+        RCLCPP_INFO(
+          get_logger(),
+          "[mission_manager][single_cabinet][exit_gap] force turn activated: "
+          "original_yaw_error=%.3f (%.1f°) < threshold=%.3f (%.1f°), "
+          "force_turn_target=%.3f (%.1f°) new_yaw_error=%.3f (%.1f°)",
+          normalize_angle(fixed_exit_target_yaw - current_exit_yaw),
+          normalize_angle(fixed_exit_target_yaw - current_exit_yaw) * 180.0 / M_PI,
+          exit_gap_force_turn_min_yaw_error_rad_,
+          exit_gap_force_turn_min_yaw_error_rad_ * 180.0 / M_PI,
+          target_exit_yaw,
+          target_exit_yaw * 180.0 / M_PI,
+          yaw_error,
+          yaw_error * 180.0 / M_PI);
+        publish_motion_log(
+          "[exit_gap] force_turn activated: original_error=" +
+          format_fixed(normalize_angle(fixed_exit_target_yaw - current_exit_yaw), 4) +
+          " threshold=" + format_fixed(exit_gap_force_turn_min_yaw_error_rad_, 4) +
+          " new_target=" + format_fixed(target_exit_yaw, 4));
+      }
 
       if (std::abs(yaw_error) <= yaw_tolerance) {
         publish_stop();
@@ -13090,6 +13155,130 @@ private:
     return search_gap_forward_timeout_sec_;
   }
 
+  void begin_full_inventory_post_recognition_advance_flow()
+  {
+    publish_stop();
+    set_gap_detector_enabled(false);
+    set_distance_estimator_enabled(false, true);
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false, true);
+
+    if (!post_recognition_advance_enabled_ ||
+      !std::isfinite(post_recognition_advance_forward_distance_m_) ||
+      !std::isfinite(post_recognition_advance_backward_distance_m_))
+    {
+      publish_full_inventory_log(
+        "recognition stable, post-recognition advance disabled, start search gap target=" +
+        std::to_string(current_target_cabinet_));
+      begin_search_gap_flow("recognition stable, post-recognition advance disabled");
+      return;
+    }
+
+    const bool is_forward = effective_gap_search_direction() == SearchDirection::FORWARD;
+    post_recognition_advance_target_distance_ = is_forward ?
+      post_recognition_advance_forward_distance_m_ :
+      post_recognition_advance_backward_distance_m_;
+
+    if (post_recognition_advance_target_distance_ <= 1e-4) {
+      publish_full_inventory_log(
+        "recognition stable, post-recognition advance distance too small, start search gap target=" +
+        std::to_string(current_target_cabinet_));
+      begin_search_gap_flow("recognition stable, post-recognition advance distance too small");
+      return;
+    }
+
+    full_inventory_post_recognition_advance_start_ = this->now();
+    reset_segment_distance();
+    publish_full_inventory_log(
+      "recognition stable, post-recognition advance direction=" +
+      search_direction_to_string(effective_gap_search_direction()) +
+      " distance=" + format_seconds(post_recognition_advance_target_distance_));
+    set_state(
+      State::FULL_INVENTORY_POST_RECOGNITION_ADVANCE,
+      "[FULL_INVENTORY] recognition stable, post-recognition advance direction=" +
+      search_direction_to_string(effective_gap_search_direction()) +
+      " distance=" + format_seconds(post_recognition_advance_target_distance_));
+  }
+
+  void handle_full_inventory_post_recognition_advance_state()
+  {
+    request_recognizer_enable(false);
+    set_recognizer_topic_enabled(false);
+    set_distance_estimator_enabled(false);
+    set_gap_detector_enabled(false);
+
+    if (full_inventory_post_recognition_advance_start_.nanoseconds() == 0) {
+      full_inventory_post_recognition_advance_start_ = this->now();
+      reset_segment_distance();
+    }
+
+    const double timeout =
+      std::isfinite(post_recognition_advance_timeout_sec_) ?
+      std::max(0.1, post_recognition_advance_timeout_sec_) : 60.0;
+    const double elapsed = (this->now() - full_inventory_post_recognition_advance_start_).seconds();
+    if (elapsed >= timeout) {
+      publish_stop();
+      fail_full_inventory(
+        "post-recognition advance timeout target=" +
+        std::to_string(current_target_cabinet_) +
+        " elapsed=" + format_seconds(elapsed) +
+        " timeout=" + format_seconds(timeout));
+      return;
+    }
+
+    const double direction =
+      effective_gap_search_direction() == SearchDirection::BACKWARD ? -1.0 : 1.0;
+    const double target_distance = std::abs(post_recognition_advance_target_distance_);
+    const double traveled = segment_distance();
+
+    // 到达目标距离 → 停车，进入搜索间隙流程
+    if (traveled >= target_distance) {
+      publish_stop();
+      full_inventory_post_recognition_advance_start_ =
+        rclcpp::Time(0, 0, get_clock()->get_clock_type());
+      publish_full_inventory_log(
+        "post-recognition advance done, start search gap target=" +
+        std::to_string(current_target_cabinet_));
+      begin_search_gap_flow("post-recognition advance done");
+      return;
+    }
+
+    // 构造运动指令（保持黄线巡线）
+    geometry_msgs::msg::Twist cmd;
+    cmd.linear.x = direction * post_recognition_advance_speed_;
+    cmd.angular.z = 0.0;
+
+    // 使用黄线巡线修正角速度
+    double output_angular_z = 0.0;
+    bool should_stop = false;
+    const bool use_yellow_line = yellow_line_follow_enabled_ &&
+      apply_line_follow_control("post_recognition_advance", cmd.linear.x, 0.0, output_angular_z, should_stop);
+    if (use_yellow_line) {
+      cmd.angular.z = output_angular_z;
+    }
+    if (should_stop) {
+      publish_stop();
+      return;
+    }
+
+    cmd_pub_->publish(cmd);
+
+    RCLCPP_INFO_THROTTLE(
+      get_logger(),
+      *get_clock(),
+      1000,
+      "[mission_manager][FULL_INVENTORY] post_recognition_advance target=%d direction=%s "
+      "traveled=%.2f/%.2f speed=%.3f cmd.angular.z=%.4f elapsed=%.2f/%.2f",
+      current_target_cabinet_,
+      search_direction_to_string(effective_gap_search_direction()).c_str(),
+      traveled,
+      target_distance,
+      post_recognition_advance_speed_,
+      cmd.angular.z,
+      elapsed,
+      timeout);
+  }
+
   void begin_full_inventory_post_gap_detect_advance_flow()
   {
     publish_stop();
@@ -14310,6 +14499,11 @@ private:
         break;
       }
 
+      case State::FULL_INVENTORY_POST_RECOGNITION_ADVANCE: {
+        handle_full_inventory_post_recognition_advance_state();
+        break;
+      }
+
       case State::FULL_INVENTORY_SEARCH_GAP: {
         handle_search_gap_state();
         break;
@@ -14701,6 +14895,9 @@ private:
   double single_cabinet_exit_turn_angular_speed_{0.25};
   double single_cabinet_exit_turn_yaw_tolerance_rad_{0.08};
   double single_cabinet_exit_turn_timeout_sec_{8.0};
+  bool exit_gap_force_turn_enabled_{true};
+  double exit_gap_force_turn_min_yaw_error_rad_{0.785};
+  double exit_gap_force_turn_target_yaw_rad_{1.571};
   bool single_cabinet_reentry_for_position_adjustment_{true};
   bool single_cabinet_grid_motion_enabled_{false};
   double single_cabinet_grid_spacing_m_{0.30};
@@ -14886,6 +15083,13 @@ private:
   double post_gap_detect_advance_distance_m_{0.25};
   double post_gap_detect_advance_speed_{0.04};
   double post_gap_detect_advance_timeout_sec_{8.0};
+  bool post_recognition_advance_enabled_{true};
+  double post_recognition_advance_forward_distance_m_{1.80};
+  double post_recognition_advance_backward_distance_m_{1.20};
+  double post_recognition_advance_speed_{0.15};
+  double post_recognition_advance_timeout_sec_{60.0};
+  double post_recognition_advance_target_distance_{0.0};
+  rclcpp::Time full_inventory_post_recognition_advance_start_{0, 0, RCL_ROS_TIME};
   int scan_layers_{2};
   int scan_depth_count_{3};
   std::map<int, int> cabinet_depth_count_overrides_;
