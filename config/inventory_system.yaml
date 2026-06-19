@@ -558,9 +558,9 @@ mission_manager_node:
 
     # 1号柜：1→19 跨侧恢复后重定位
     cabinet_1_post_restore_relocalization_enabled: false                 # 启用 1→19 恢复后 AMCL 重定位；现场标定前必须为 false
-    cabinet_1_exit_map_x: 0.0                                           # 1号柜出缝后 map x 坐标，单位 m；必须完成现场标定
-    cabinet_1_exit_map_y: 0.0                                           # 1号柜出缝后 map y 坐标，单位 m；必须完成现场标定
-    cabinet_1_exit_map_yaw: 0.0                                         # 1号柜出缝后 map yaw 角，单位 rad；必须完成现场标定
+    cabinet_1_exit_map_x: 25.0979                                           # 1号柜出缝后 map x 坐标，单位 m；必须完成现场标定
+    cabinet_1_exit_map_y: -1.8280                                           # 1号柜出缝后 map y 坐标，单位 m；必须完成现场标定
+    cabinet_1_exit_map_yaw: -0.0301                                         # 1号柜出缝后 map yaw 角，单位 rad；必须完成现场标定
     cabinet_1_post_restore_initialpose_std_x: 0.50                      # initialpose x 标准差，单位 m；写入消息时自动平方为方差
     cabinet_1_post_restore_initialpose_std_y: 0.50                      # initialpose y 标准差，单位 m；写入消息时自动平方为方差
     cabinet_1_post_restore_initialpose_std_yaw: 0.50                    # initialpose yaw 标准差，单位 rad；写入消息时自动平方为方差
