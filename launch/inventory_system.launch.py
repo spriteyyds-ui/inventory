@@ -3,6 +3,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     ExecuteProcess,
     IncludeLaunchDescription,
+    OpaqueFunction,
     TimerAction,
 )
 from launch.conditions import IfCondition
@@ -12,6 +13,7 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 import os
+import yaml
 
 
 RIGHT_CAMERA_DEVICE_DEFAULT = (
@@ -24,6 +26,47 @@ LEFT_CAMERA_DEVICE_DEFAULT = (
 ROBOT_API_SERVER_DIR = (
     '/home/wheeltec/wheeltec_ros2/src/agv_inventory_system/scripts/robot_inventory_client'
 )
+
+SLAM_TOOLBOX_CONFIG_DIR = os.path.join(
+    get_package_share_directory('wheeltec_slam_toolbox'), 'config'
+)
+
+
+def read_slam_mode_from_config(params_file):
+    """从 inventory_system.yaml 读取 slam_mode 参数"""
+    try:
+        # 尝试直接读取文件路径
+        if os.path.isfile(params_file):
+            with open(params_file, 'r') as f:
+                cfg = yaml.safe_load(f)
+            return cfg.get('slam_mode', 'localization')
+    except Exception:
+        pass
+    return 'localization'
+
+
+def launch_slam_toolbox(context, *args, **kwargs):
+    """根据 slam_mode 参数启动对应的 SLAM Toolbox 节点"""
+    slam_mode = LaunchConfiguration('slam_mode').perform(context)
+
+    if slam_mode == 'none':
+        return []
+
+    if slam_mode == 'lifelong':
+        config_file = os.path.join(SLAM_TOOLBOX_CONFIG_DIR, 'mapper_params_lifelong.yaml')
+    else:
+        config_file = os.path.join(SLAM_TOOLBOX_CONFIG_DIR, 'mapper_params_online_async.yaml')
+
+    slam_node = Node(
+        package='slam_toolbox',
+        executable='async_slam_toolbox_node',
+        name='slam_toolbox',
+        output='screen',
+        parameters=[config_file],
+        remappings=[('odom', 'odom_combined')]
+    )
+
+    return [slam_node]
 
 
 def generate_launch_description():
@@ -107,8 +150,22 @@ def generate_launch_description():
         'wheeltec_nav2.launch.py'
     )
 
+    # slam_mode 参数：none=使用AMCL | localization=SLAM纯定位 | lifelong=SLAM动态建图
+    # 从 inventory_system.yaml 读取默认值
+    inventory_yaml_path = os.path.join(
+        get_package_share_directory('agv_inventory_system'), 'config', 'inventory_system.yaml'
+    )
+    default_slam_mode = read_slam_mode_from_config(inventory_yaml_path)
+
+    slam_mode_arg = DeclareLaunchArgument(
+        'slam_mode',
+        default_value=default_slam_mode,
+        description='SLAM模式: none(使用AMCL) | localization(SLAM纯定位) | lifelong(SLAM动态建图)'
+    )
+
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(nav2_launch_file),
+        launch_arguments={'slam_mode': LaunchConfiguration('slam_mode')}.items(),
         condition=IfCondition(launch_nav2)
     )
 
@@ -250,6 +307,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         launch_nav2_arg,
+        slam_mode_arg,
         enable_inventory_operation_gui_arg,
         enable_robot_api_server_arg,
         robot_api_host_arg,
@@ -261,6 +319,7 @@ def generate_launch_description():
         enable_front_depth_arg,
         robot_api_server_process,
         nav2_launch,
+        OpaqueFunction(function=launch_slam_toolbox),
         front_camera_launch,
         corridor_follower_node,
         camera_manager_node,

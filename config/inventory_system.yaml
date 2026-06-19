@@ -1,3 +1,8 @@
+# ==========================================================================
+# 全局设置
+# ==========================================================================
+slam_mode: "localization"                                               # SLAM模式：localization(纯定位，地图不变) | lifelong(动态建图，地图持续更新)
+
 corridor_follower_node:
   ros__parameters:
     scan_topic: /scan                                                   # 走廊居中控制使用的激光雷达输入话题；更换传感器话题时需同步修改
@@ -345,14 +350,14 @@ mission_manager_node:
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
     entry_turn_timeout_sec: 60.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
-    entry_yaw_recovery_timeout_sec: 30.0                                # 入缝前 yaw 漂移恢复等待超时，单位 s
-    entry_yaw_recovery_max_deviation_rad: 0.10                        # 入缝前 yaw 与走廊方向最大允许偏差，约10°
+    entry_yaw_recovery_timeout_sec: 60.0                                # 入缝前 yaw 漂移恢复等待超时，单位 s
+    entry_yaw_recovery_max_deviation_rad: 1.00                          # 入缝前 yaw 与走廊方向最大允许偏差，约10°
     entry_straight_speed: 0.10                                          # 转向对齐后直行到深度网格中心的速度，单位 m/s；调大会更快但精度下降
     entry_straight_timeout_sec: 120.0                                    # MOVING_TO_GRID_CENTER 入缝直行到深度格中心的超时，单位 s；调大会允许低速入缝更久
     entry_straight_yaw_kp: 0.40                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
     entry_straight_yaw_deadband_rad: 0.03                               # 进缝直行航向保持死区，单位 rad；调大会减少小幅修正，调小更准
     entry_straight_max_angular_speed: 0.20                              # 进缝直行航向保持角速度限幅，单位 rad/s；调大会纠偏更快
-    entry_side_hold_target_distance_m: 0.40                             # 进缝到网格中心时目标侧保持距离，单位 m；调大会离侧柜更远
+    entry_side_hold_target_distance_m: 0.10                             # 进缝到网格中心时目标侧保持距离，单位 m；调大会离侧柜更远
     entry_side_hold_kp: 0.10                                            # 目标侧距离保持比例增益，单位 rad/s/m；调大会更积极贴合目标侧距离
     entry_side_hold_min_valid_points: 5                                 # 启用侧向保持所需最小有效雷达点数，单位 个；调大会更保守
     max_dynamic_entry_distance_m: 10.0                                  # 动态计算进缝距离安全上限，单位 m；调小可防止异常目标导致长距离前进
