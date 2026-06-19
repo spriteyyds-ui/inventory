@@ -337,6 +337,10 @@ mission_manager_node:
     entry_center_offset_m: 0.40                                         # 进缝到网格中心的距离标定偏移，单位 m；正值多前进，负值少前进
     entry_right_target_yaw_rad: -1.5526                                # 右侧进缝固定目标 yaw，单位 rad；map -Y，新地图方向相反
     entry_left_target_yaw_rad: -0.1322                                   # 左侧进缝固定目标 yaw，单位 rad；map +Y，新地图方向相反
+    exit_left_forward_target_yaw_rad: 0.0182                            # 左侧货柜(1~18)前进出缝(REVERSE_ENTRY→forward exit)后走廊绝对 yaw，map 坐标系 rad
+    exit_left_backward_target_yaw_rad: 0.0182                           # 左侧货柜(1~18)后退出缝(FORWARD_ENTRY→backward exit)后走廊绝对 yaw，map 坐标系 rad
+    exit_right_forward_target_yaw_rad: 0.0                              # 右侧货柜(19~36)前进出缝(REVERSE_ENTRY→forward exit)后走廊绝对 yaw，map 坐标系 rad — 需现场标定
+    exit_right_backward_target_yaw_rad: 0.0                             # 右侧货柜(19~36)后退出缝(FORWARD_ENTRY→backward exit)后走廊绝对 yaw，map 坐标系 rad — 需现场标定
     entry_align_yaw_tolerance_rad: 0.030                                # 完成进缝转向的偏航允许误差，单位 rad；调小更准但耗时更久
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
@@ -409,7 +413,7 @@ mission_manager_node:
     nav2_route_waypoint_timeout_sec: 60.0                               # 路线航点单点导航超时，单位 s；调大会允许更慢到点
     nav2_cancel_stop_duration_sec: 0.50                                 # 取消 Nav2 路线搜索后持续发布零速度时间，单位 s；调大会停车更稳
     continue_on_error: false                                            # 单个目标失败后是否继续下一个目标；开启可提高任务连续性但可能跳过异常
-    control_rate_hz: 10.0                                               # 任务管理器主控制循环频率，单位 Hz；调大会响应更快但 CPU 占用增加
+    control_rate_hz: 20.0                                               # 任务管理器主控制循环频率，单位 Hz；调大会响应更快但 CPU 占用增加
 
     use_scan_safety: true                                               # 进入阶段是否启用激光雷达安全检查；关闭会减少保护
     max_scan_age_sec: 0.8                                               # 安全检查接受的最大雷达消息年龄，单位 s；调大会容忍旧数据，调小更实时
@@ -428,7 +432,7 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 60.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 60.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_http_enabled: false                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
     plc_server_url: "https://192.168.1.100:8099"                         # Java/PLC HTTPS 服务地址；使用 HTTPS 与 Java 8099 网关通信
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
@@ -521,7 +525,7 @@ mission_manager_node:
     exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
     exit_gap_speed: 0.20                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
-    exit_gap_extra_distance_m: 0.00                                     # 退出间隙额外距离，单位 m；调大会多退一些
+    exit_gap_extra_distance_m: 0.10                                     # 退出间隙额外距离，单位 m；调大会多退一些
     exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
     exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向

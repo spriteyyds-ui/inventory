@@ -180,6 +180,10 @@ public:
     entry_center_offset_m_ = declare_parameter<double>("entry_center_offset_m", 0.0);
     entry_right_target_yaw_rad_ = declare_parameter<double>("entry_right_target_yaw_rad", -1.5708);
     entry_left_target_yaw_rad_ = declare_parameter<double>("entry_left_target_yaw_rad", 1.5708);
+    exit_left_forward_target_yaw_rad_ = declare_parameter<double>("exit_left_forward_target_yaw_rad", 0.0);
+    exit_left_backward_target_yaw_rad_ = declare_parameter<double>("exit_left_backward_target_yaw_rad", 0.0);
+    exit_right_forward_target_yaw_rad_ = declare_parameter<double>("exit_right_forward_target_yaw_rad", 0.0);
+    exit_right_backward_target_yaw_rad_ = declare_parameter<double>("exit_right_backward_target_yaw_rad", 0.0);
     entry_align_yaw_tolerance_rad_ =
       declare_parameter<double>("entry_align_yaw_tolerance_rad", 0.08);
     entry_turn_yaw_stable_required_count_ =
@@ -880,6 +884,14 @@ public:
         yellow_line_reverse_invert_angular_ ? "true" : "false",
         yellow_line_lost_timeout_sec_);
     }
+    // 固定出缝目标角启动日志
+    RCLCPP_INFO(get_logger(),
+      "[exit_gap_fixed_target] left_forward=%.4f(%.2f°) left_backward=%.4f(%.2f°) "
+      "right_forward=%.4f(%.2f°) right_backward=%.4f(%.2f°)",
+      exit_left_forward_target_yaw_rad_, exit_left_forward_target_yaw_rad_ * 180.0 / M_PI,
+      exit_left_backward_target_yaw_rad_, exit_left_backward_target_yaw_rad_ * 180.0 / M_PI,
+      exit_right_forward_target_yaw_rad_, exit_right_forward_target_yaw_rad_ * 180.0 / M_PI,
+      exit_right_backward_target_yaw_rad_, exit_right_backward_target_yaw_rad_ * 180.0 / M_PI);
     if (yellow_line_follow_enabled_ || yellow_line_detect_only_) {
       yellow_line_image_sub_ = create_subscription<sensor_msgs::msg::Image>(
         yellow_line_image_topic_,
@@ -3156,6 +3168,13 @@ private:
       clear_current_target_cabinet();
     }
 
+    // Turn off HJ camera when task lifecycle ends (DONE or ERROR with active task)
+    if ((s == State::DONE || s == State::ERROR) &&
+        (mission_active_ || inventory_flow_active_ || single_cabinet_motion_active_))
+    {
+      request_camera_off("set_state:" + detail);
+    }
+
     set_gap_detector_enabled(gap_enabled);
     set_distance_estimator_enabled(distance_enabled);
     set_recognizer_topic_enabled(recognizer_enabled);
@@ -3283,6 +3302,7 @@ private:
     reset_single_cabinet_scan_runtime();
     publish_gap_context();
     clear_current_target_cabinet();
+    request_camera_off("prepare_interrupt:" + reason);
 
     mission_active_ = false;
     inventory_flow_active_ = false;
@@ -4440,13 +4460,36 @@ private:
 
     // 检查场景开关
     if (!yellow_line_follow_enabled_ || !yellow_line_scene_enabled(scene_name)) {
-      // 场景未启用黄线，使用原逻辑
+      // 场景未启用黄线，标记场景非激活，使用原逻辑
+      if (yellow_line_scene_active_ && yellow_line_active_scene_ == scene_name) {
+        yellow_line_scene_active_ = false;
+        yellow_line_active_scene_.clear();
+      }
       if (line_follow_control_mode_ == "yellow_line") {
         RCLCPP_INFO_ONCE(get_logger(),
           "[yellow_line] scene=%s not enabled, using original control",
           scene_name.c_str());
       }
       return true;
+    }
+
+    // ===== 场景切换检测：首次激活或场景名变化时 reset =====
+    {
+      const double now_for_scene = this->now().seconds();
+      const bool scene_changed =
+        !yellow_line_scene_active_ || yellow_line_active_scene_ != scene_name;
+      if (scene_changed) {
+        const std::string prev_scene = yellow_line_active_scene_;
+        yellow_line_follower_.reset();
+        yellow_line_active_scene_ = scene_name;
+        yellow_line_scene_start_time_ = now_for_scene;
+        yellow_line_scene_active_ = true;
+        yellow_line_first_detection_in_scene_ = false;
+        RCLCPP_INFO(get_logger(),
+          "[yellow_line] scene activated scene=%s scene_start_time=%.3f "
+          "previous_scene=%s result_reset=1 first_detection=0",
+          scene_name.c_str(), now_for_scene, prev_scene.c_str());
+      }
     }
 
     // 检查图像订阅是否已启动
@@ -4487,12 +4530,49 @@ private:
     // 检查黄线是否可用
     double yellow_angular_z = 0.0;
     const bool line_ok = yellow_line_follower_.getAngularCorrection(linear_x, yellow_angular_z);
-    const bool lost_timeout = yellow_line_follower_.isLostTimeout(now_sec);
+
+    // 场景感知丢线超时：区分"从未检测"和"检测后丢失"
+    bool lost_timeout = false;
+    {
+      const double lost_timeout_sec = yellow_line_lost_timeout_sec_;
+      if (!line_ok) {
+        double lost_elapsed = 0.0;
+        const char * timeout_source = "unknown";
+        if (!yellow_line_first_detection_in_scene_) {
+          // 本场景从未检测到黄线：从场景激活时间开始计时
+          lost_elapsed = now_sec - yellow_line_scene_start_time_;
+          timeout_source = "scene_start";
+        } else {
+          // 本场景已检测过黄线后丢失：从最后一次检测时间计时
+          const auto & r = yellow_line_follower_.getResult();
+          lost_elapsed = now_sec - r.last_detect_time_sec;
+          timeout_source = "last_detection";
+        }
+        lost_timeout = lost_elapsed >= lost_timeout_sec;
+        if (lost_timeout) {
+          RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            "[yellow_line] lost line scene=%s first_detection=%d "
+            "timeout_source=%s lost_elapsed=%.2f lost_timeout=%.2f action=stop",
+            scene_name.c_str(),
+            yellow_line_first_detection_in_scene_ ? 1 : 0,
+            timeout_source, lost_elapsed, lost_timeout_sec);
+        }
+      }
+    }
 
     if (line_ok) {
       // 黄线可用，使用黄线角速度
       output_angular_z = yellow_angular_z;
       const auto & r = yellow_line_follower_.getResult();
+      // 记录本场景首次检测
+      if (!yellow_line_first_detection_in_scene_) {
+        yellow_line_first_detection_in_scene_ = true;
+        const double acquire_elapsed = now_sec - yellow_line_scene_start_time_;
+        RCLCPP_INFO(get_logger(),
+          "[yellow_line] first detection in scene scene=%s acquire_elapsed=%.3f "
+          "line_x=%.1f target_x=%.1f",
+          scene_name.c_str(), acquire_elapsed, r.line_x, r.target_x);
+      }
       RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
         "[yellow_line][%s] mode=yellow_line detected=1 line_x=%.1f target_x=%.1f "
         "error=%.4f angular_z=%.4f linear_x=%.3f direction=%s",
@@ -4508,9 +4588,7 @@ private:
       if (lost_timeout) {
         should_stop = true;
         output_angular_z = 0.0;
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-          "[yellow_line] lost line for %.2f sec, action=stop scene=%s",
-          yellow_line_lost_timeout_sec_, scene_name.c_str());
+        // 丢线超时日志已在上方统一打印（含 scene/timeout_source/lost_elapsed）
         return true;
       }
       // 丢线未超时，保持上一次角速度
@@ -7027,6 +7105,7 @@ private:
     reset_between_side_auto_charge_runtime();
     clear_full_inventory_rear_target_context("fail_full_inventory");
     reset_camera_switch_context();
+    request_camera_off("fail_full_inventory:" + reason);
     mission_error_reason_ = reason;
     set_flow_state(State::ERROR, "[FULL_INVENTORY] " + reason);
   }
@@ -9000,6 +9079,38 @@ private:
     return true;
   }
 
+  void request_camera_off(const std::string & context)
+  {
+    if (!camera_manager_client_->service_is_ready()) {
+      RCLCPP_WARN(get_logger(),
+        "[camera_off] camera_manager service not ready, skip off request context=%s",
+        context.c_str());
+      return;
+    }
+
+    RCLCPP_INFO(get_logger(),
+      "[camera_off] requesting camera off context=%s "
+      "current_active_camera=%s current_state=%s",
+      context.c_str(), camera_active_side_.c_str(), camera_state_.c_str());
+
+    auto request = std::make_shared<agv_inventory_system::srv::SwitchCamera::Request>();
+    request->side = "off";
+
+    camera_manager_client_->async_send_request(request,
+      [this, context](rclcpp::Client<agv_inventory_system::srv::SwitchCamera>::SharedFuture future) {
+        auto result = future.get();
+        if (!result->success) {
+          RCLCPP_ERROR(get_logger(),
+            "[camera_off] service call failed: message=%s context=%s",
+            result->message.c_str(), context.c_str());
+        } else {
+          RCLCPP_INFO(get_logger(),
+            "[camera_off] camera off success: message=%s context=%s",
+            result->message.c_str(), context.c_str());
+        }
+      });
+  }
+
   bool ensure_inventory_camera_ready(
     const std::string & target_side,
     CameraSwitchContinuation continuation,
@@ -10399,14 +10510,68 @@ private:
     return false;
   }
 
+  // ===== 固定出缝目标角统一选择函数 =====
+  // 根据 warehouse_side 和 entry_motion_mode_ 选择 4 个固定参数之一。
+  // 返回 true 表示成功，target_yaw 已 normalize。
+  // 返回 false 表示参数无效或侧别/模式非法，error_reason 包含原因。
+  bool select_fixed_exit_target_yaw(
+    double & target_yaw,
+    std::string & parameter_name,
+    std::string & exit_motion_note,
+    std::string & error_reason) const
+  {
+    const std::string & warehouse_side = current_target_side_;
+    if (warehouse_side != "left" && warehouse_side != "right") {
+      error_reason = "warehouse_side 无效: " + warehouse_side;
+      return false;
+    }
+
+    // FORWARD_ENTRY → backward exit; REVERSE_ENTRY → forward exit
+    const bool is_forward_exit =
+      (entry_motion_mode_ == EntryMotionMode::REVERSE_ENTRY);
+
+    double raw_value = 0.0;
+    if (warehouse_side == "left") {
+      if (is_forward_exit) {
+        raw_value = exit_left_forward_target_yaw_rad_;
+        parameter_name = "exit_left_forward_target_yaw_rad";
+        exit_motion_note = "left/REVERSE_ENTRY/forward_exit";
+      } else {
+        raw_value = exit_left_backward_target_yaw_rad_;
+        parameter_name = "exit_left_backward_target_yaw_rad";
+        exit_motion_note = "left/FORWARD_ENTRY/backward_exit";
+      }
+    } else {
+      if (is_forward_exit) {
+        raw_value = exit_right_forward_target_yaw_rad_;
+        parameter_name = "exit_right_forward_target_yaw_rad";
+        exit_motion_note = "right/REVERSE_ENTRY/forward_exit";
+      } else {
+        raw_value = exit_right_backward_target_yaw_rad_;
+        parameter_name = "exit_right_backward_target_yaw_rad";
+        exit_motion_note = "right/FORWARD_ENTRY/backward_exit";
+      }
+    }
+
+    if (!std::isfinite(raw_value)) {
+      error_reason = "固定出缝目标角参数无效: " + parameter_name;
+      return false;
+    }
+
+    target_yaw = normalize_angle(raw_value);
+    return true;
+  }
+
   void finish_single_cabinet_exit_gap()
   {
     publish_stop();
     robot_inside_gap_ = false;
-    const bool finished_exit_entry_yaw_valid =
-      entry_turn_start_yaw_valid_ && std::isfinite(entry_turn_start_yaw_);
-    const double finished_exit_entry_yaw =
-      finished_exit_entry_yaw_valid ? normalize_angle(entry_turn_start_yaw_) : 0.0;
+    // 选择固定出缝目标角（用于保存到 full_inventory_last_exit_entry_yaw_）
+    std::string exit_param_name, exit_motion_note, exit_error_reason;
+    double fixed_exit_target_yaw = 0.0;
+    const bool fixed_exit_valid = select_fixed_exit_target_yaw(
+      fixed_exit_target_yaw, exit_param_name, exit_motion_note, exit_error_reason);
+
     reset_entry_gap_runtime();
     clear_safe_exit_gap_recovery_context();
     single_cabinet_exit_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
@@ -10419,12 +10584,14 @@ private:
     }
 
     if (full_inventory_active_) {
-      full_inventory_last_exit_entry_yaw_valid_ = finished_exit_entry_yaw_valid;
-      full_inventory_last_exit_entry_yaw_ = finished_exit_entry_yaw;
+      full_inventory_last_exit_entry_yaw_valid_ = fixed_exit_valid;
+      full_inventory_last_exit_entry_yaw_ = fixed_exit_valid ? fixed_exit_target_yaw : 0.0;
       publish_full_inventory_log(
-        "[rear_target] exit gap captured entry_turn_start_yaw_valid=" +
+        "[rear_target] exit gap captured fixed_exit_valid=" +
         std::string(full_inventory_last_exit_entry_yaw_valid_ ? "1" : "0") +
-        " entry_turn_start_yaw=" + format_fixed(full_inventory_last_exit_entry_yaw_, 4));
+        " fixed_exit_target_yaw=" + format_fixed(full_inventory_last_exit_entry_yaw_, 4) +
+        " parameter=" + exit_param_name +
+        " entry_turn_start_yaw=" + format_fixed(entry_turn_start_yaw_, 4));
       set_state(
         State::FULL_INVENTORY_ADVANCE_NEXT_TARGET,
         "[FULL_INVENTORY] exit gap finished, advance sequence");
@@ -10620,11 +10787,13 @@ private:
           return;
         }
 
-        // ---- use map TF yaw (same frame as entry_turn_start_yaw_) ----
+        // ---- 固定出缝目标角选择 ----
         EnteringYawControl exit_yaw_control;
-        if (!std::isfinite(entry_turn_start_yaw_)) {
+        std::string exit_param_name, exit_motion_note, exit_error_reason;
+        double fixed_exit_target_yaw = 0.0;
+        if (!select_fixed_exit_target_yaw(fixed_exit_target_yaw, exit_param_name, exit_motion_note, exit_error_reason)) {
           const std::string reason =
-            "出缝转向无法恢复航向：entry_turn_start_yaw 无效，无法确定目标朝向";
+            "出缝转向无法恢复航向：" + exit_error_reason;
           RCLCPP_ERROR(
             get_logger(),
             "[mission_manager][single_cabinet][exit_gap] %s",
@@ -10674,7 +10843,7 @@ private:
           return;
         }
 
-        const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
+        const double target_exit_yaw = fixed_exit_target_yaw;
         const double current_exit_yaw = normalize_angle(exit_yaw_control.yaw);
         const double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
         const double yaw_tolerance =
@@ -10687,7 +10856,7 @@ private:
             "yaw already aligned current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
             "yaw_frame=%s yaw_source=%s "
             "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
-            "exit_motion_label=%s",
+            "exit_motion_label=%s selected_parameter=%s entry_turn_start_yaw=%.4f",
             exit_motion_label.c_str(),
             current_exit_yaw,
             target_exit_yaw,
@@ -10697,7 +10866,9 @@ private:
             entry_motion_mode_to_string(entry_motion_mode_).c_str(),
             finished_exit_linear_cmd,
             finished_exit_linear_cmd,
-            exit_motion_label.c_str());
+            exit_motion_label.c_str(),
+            exit_param_name.c_str(),
+            entry_turn_start_yaw_);
           publish_motion_log(
             "[exit_gap] entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
             " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
@@ -10705,6 +10876,8 @@ private:
             " exit_motion_label=" + exit_motion_label +
             " yaw_frame=" + exit_yaw_control.yaw_frame +
             " yaw_source=" + exit_yaw_control.pose_note +
+            " selected_parameter=" + exit_param_name +
+            " entry_turn_start_yaw=" + format_fixed(entry_turn_start_yaw_, 4) +
             " turn_to_corridor yaw already aligned");
           finish_single_cabinet_exit_gap();
           return;
@@ -10716,19 +10889,21 @@ private:
           get_logger(),
           "[mission_manager][single_cabinet][exit_gap] switch phase=%s entry_side=%s "
           "current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
-          "yaw_frame=%s yaw_source=%s",
+          "yaw_frame=%s yaw_source=%s selected_parameter=%s",
           single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_).c_str(),
           current_entry_side_.c_str(),
           current_exit_yaw,
           target_exit_yaw,
           yaw_error,
           exit_yaw_control.yaw_frame.c_str(),
-          exit_yaw_control.pose_note.c_str());
+          exit_yaw_control.pose_note.c_str(),
+          exit_param_name.c_str());
         publish_motion_log(
           "[exit_gap] switch phase=" + single_cabinet_exit_phase_to_string(single_cabinet_exit_phase_) +
           " entry_side=" + current_entry_side_ +
           " yaw_frame=" + exit_yaw_control.yaw_frame +
-          " yaw_source=" + exit_yaw_control.pose_note);
+          " yaw_source=" + exit_yaw_control.pose_note +
+          " selected_parameter=" + exit_param_name);
         return;
       }
 
@@ -10757,11 +10932,13 @@ private:
     }
 
     if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::TURN_TO_CORRIDOR) {
-      // ---- map TF yaw only (same frame as entry_turn_start_yaw_) ----
-      if (!std::isfinite(entry_turn_start_yaw_)) {
+      // ---- 固定出缝目标角选择 ----
+      std::string exit_param_name, exit_motion_note, exit_error_reason;
+      double fixed_exit_target_yaw = 0.0;
+      if (!select_fixed_exit_target_yaw(fixed_exit_target_yaw, exit_param_name, exit_motion_note, exit_error_reason)) {
         publish_stop();
         const std::string reason =
-          "出缝转向无法恢复航向：entry_turn_start_yaw 无效，无法确定目标朝向";
+          "出缝转向无法恢复航向：" + exit_error_reason;
         RCLCPP_ERROR(
           get_logger(),
           "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR %s",
@@ -10817,7 +10994,7 @@ private:
         return;
       }
 
-      const double target_exit_yaw = normalize_angle(entry_turn_start_yaw_);
+      const double target_exit_yaw = fixed_exit_target_yaw;
       const double current_exit_yaw = normalize_angle(exit_yaw_control.yaw);
       const double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
       const double yaw_tolerance =
@@ -10835,7 +11012,8 @@ private:
           "entry_side=%s current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
           "yaw_frame=%s yaw_source=%s "
           "entry_motion_mode=%s exit_linear_cmd=%.3f published_cmd_linear_x=%.3f "
-          "exit_motion_label=%s elapsed=%.2f completion_reason=stable_yaw_in_tolerance",
+          "exit_motion_label=%s elapsed=%.2f completion_reason=stable_yaw_in_tolerance "
+          "selected_parameter=%s entry_turn_start_yaw=%.4f",
           exit_motion_label.c_str(),
           current_entry_side_.c_str(),
           current_exit_yaw,
@@ -10847,7 +11025,9 @@ private:
           finished_exit_linear_cmd,
           finished_exit_linear_cmd,
           exit_motion_label.c_str(),
-          elapsed);
+          elapsed,
+          exit_param_name.c_str(),
+          entry_turn_start_yaw_);
         publish_motion_log(
           "[exit_gap] entry_motion_mode=" + entry_motion_mode_to_string(entry_motion_mode_) +
           " exit_linear_cmd=" + format_fixed(finished_exit_linear_cmd, 3) +
@@ -10859,6 +11039,8 @@ private:
           " target_exit_yaw=" + format_fixed(target_exit_yaw, 4) +
           " yaw_error=" + format_fixed(yaw_error, 4) +
           " elapsed=" + format_fixed(elapsed, 2) +
+          " selected_parameter=" + exit_param_name +
+          " entry_turn_start_yaw=" + format_fixed(entry_turn_start_yaw_, 4) +
           " turn_to_corridor completion_reason=stable_yaw_in_tolerance");
         finish_single_cabinet_exit_gap();
         return;
@@ -10917,7 +11099,8 @@ private:
         "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
         "entry_side=%s current_exit_yaw=%.3f target_exit_yaw=%.3f yaw_error=%.3f "
         "yaw_frame=%s yaw_source=%s "
-        "cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f timeout=%.2f",
+        "cmd.linear.x=%.3f cmd.angular.z=%.3f elapsed=%.2f timeout=%.2f "
+        "selected_parameter=%s",
         current_entry_side_.c_str(),
         current_exit_yaw,
         target_exit_yaw,
@@ -10927,7 +11110,8 @@ private:
         cmd.linear.x,
         cmd.angular.z,
         elapsed,
-        turn_timeout);
+        turn_timeout,
+        exit_param_name.c_str());
       return;
     }
 
@@ -11948,6 +12132,13 @@ private:
     }
     if (!std::isfinite(entry_right_target_yaw_rad_) || !std::isfinite(entry_left_target_yaw_rad_)) {
       reason = "entry_right_target_yaw_rad / entry_left_target_yaw_rad 必须为有限值";
+      return false;
+    }
+    if (!std::isfinite(exit_left_forward_target_yaw_rad_) ||
+        !std::isfinite(exit_left_backward_target_yaw_rad_) ||
+        !std::isfinite(exit_right_forward_target_yaw_rad_) ||
+        !std::isfinite(exit_right_backward_target_yaw_rad_)) {
+      reason = "exit_*_target_yaw_rad 参数必须为有限值";
       return false;
     }
     if (!std::isfinite(entry_align_yaw_tolerance_rad_) || entry_align_yaw_tolerance_rad_ <= 0.0) {
@@ -13699,6 +13890,10 @@ private:
   bool current_entry_profile_valid_{false};
   double entry_right_target_yaw_rad_{-1.5708};
   double entry_left_target_yaw_rad_{1.5708};
+  double exit_left_forward_target_yaw_rad_{0.0};
+  double exit_left_backward_target_yaw_rad_{0.0};
+  double exit_right_forward_target_yaw_rad_{0.0};
+  double exit_right_backward_target_yaw_rad_{0.0};
   double entry_align_yaw_tolerance_rad_{0.08};
   int entry_turn_yaw_stable_required_count_{3};
   double entry_turn_angular_speed_{0.30};
@@ -13946,6 +14141,11 @@ private:
   bool yellow_line_camera_ready_{false};
   double yellow_line_first_image_time_{0.0};
   double yellow_line_initial_grace_sec_{2.0};
+  // 黄线场景追踪：解决跨状态丢线计时累计问题
+  std::string yellow_line_active_scene_;          // 当前激活的黄线场景名
+  double yellow_line_scene_start_time_{0.0};      // 场景激活时间
+  bool yellow_line_scene_active_{false};          // 场景是否处于激活状态
+  bool yellow_line_first_detection_in_scene_{false}; // 本场景是否已首次检测到黄线
   double full_inventory_same_side_active_fixed_y_m_{0.575};
   double full_inventory_same_side_active_fixed_yaw_rad_{0.0};
   std::string full_inventory_same_side_active_map_side_{"left"};

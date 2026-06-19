@@ -1,8 +1,12 @@
-# Request camera side switch.
-# side: "left" or "right"
+# Request camera side switch or camera off.
+# side: "left", "right", or "off"
+#   "left"  - switch to left HJ camera
+#   "right" - switch to right HJ camera
+#   "off"   - stop current HJ camera and release device
 string side
 ---
-# success: true if switch completed or already on requested side and READY
+# success: true if switch completed, already on requested side and READY,
+#          or camera successfully stopped (for "off")
 bool success
 # message: human-readable status or error description
 string message

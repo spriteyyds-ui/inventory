@@ -85,6 +85,12 @@ def generate_launch_description():
         description='是否启动前方 Astra 相机（黄线巡线需要）'
     )
 
+    enable_front_depth_arg = DeclareLaunchArgument(
+        'enable_front_depth',
+        default_value='false',
+        description='是否启用 Astra 深度/IR/点云流（默认关闭以节省 USB 带宽；仅彩色足以满足黄线巡线需求）'
+    )
+
     launch_nav2 = LaunchConfiguration('launch_nav2')
     enable_inventory_operation_gui = LaunchConfiguration('enable_inventory_operation_gui')
     enable_robot_api_server = LaunchConfiguration('enable_robot_api_server')
@@ -94,6 +100,7 @@ def generate_launch_description():
     c100_right_video_device = LaunchConfiguration('c100_right_video_device')
     c100_left_video_device = LaunchConfiguration('c100_left_video_device')
     launch_front_camera = LaunchConfiguration('launch_front_camera')
+    enable_front_depth = LaunchConfiguration('enable_front_depth')
     nav2_launch_file = os.path.join(
         get_package_share_directory('wheeltec_nav2'),
         'launch',
@@ -114,6 +121,14 @@ def generate_launch_description():
     )
     front_camera_launch_raw = IncludeLaunchDescription(
         AnyLaunchDescriptionSource(astra_launch_file),
+        launch_arguments={
+            'enable_color': 'true',
+            'enable_depth': enable_front_depth,
+            'enable_ir': 'false',
+            'enable_point_cloud': enable_front_depth,
+            'enable_colored_point_cloud': 'false',
+            'depth_registration': enable_front_depth,
+        }.items(),
         condition=IfCondition(launch_front_camera)
     )
     front_camera_launch = TimerAction(
@@ -243,6 +258,7 @@ def generate_launch_description():
         c100_right_video_device_arg,
         c100_left_video_device_arg,
         launch_front_camera_arg,
+        enable_front_depth_arg,
         robot_api_server_process,
         nav2_launch,
         front_camera_launch,
