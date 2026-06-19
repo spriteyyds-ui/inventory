@@ -305,7 +305,7 @@ mission_manager_node:
     safe_exit_gap_speed_mps: 0.05                                       # 安全出缝倒退线速度，单位 m/s；使用车体 x 负方向
     safe_exit_gap_yaw_kp: 0.6                                           # 安全出缝 yaw 保持比例增益；调大会纠偏更强
     safe_exit_gap_max_angular_z: 0.15                                   # 安全出缝 yaw 修正角速度限幅，单位 rad/s
-    safe_exit_gap_extra_clearance_m: 0.30                               # 安全出缝在入缝实测距离外额外倒退余量，单位 m
+    safe_exit_gap_extra_clearance_m: 0.25                               # 安全出缝在入缝实测距离外额外倒退余量，单位 m
     safe_exit_gap_timeout_sec: 30.0                                     # 安全出缝超时，单位 s；超时后停车并保持在缝隙内标志
     stop_auto_charge_depart_distance_m: 0.5                             # 停止自动充电后统一主离桩距离，单位 m；不再依赖 Python cancel 离桩
     stop_auto_charge_depart_speed_mps: 0.10                             # 二级离桩速度，保留正负号；系统原生 E/e 为正向，方向相反可改负值
@@ -432,7 +432,7 @@ mission_manager_node:
     web_client_mode: local                                              # 本地 Web/API 桥接模式；local 会在未接 HTTP 时本地确认请求
     open_gap_wait_sec: 60.0                                              # 请求打开货柜间隙后的等待时间，单位 s；调大会给机械动作更多时间
     close_gap_wait_sec: 60.0                                             # 请求关闭货柜间隙后的等待时间，单位 s；调大会等待关闭更充分
-    plc_http_enabled: false                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
+    plc_http_enabled: true                                              # 是否启用真实 PLC/Java HTTP 开柜；开启后开柜失败会进入 ERROR
     plc_server_url: "https://192.168.1.100:8099"                         # Java/PLC HTTPS 服务地址；使用 HTTPS 与 Java 8099 网关通信
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
@@ -525,7 +525,7 @@ mission_manager_node:
     exit_gap_after_each_scan: true                                      # 每次扫描后是否退出间隙；关闭会留在间隙内继续后续动作
     exit_gap_mode: reverse                                              # 退出间隙方式；reverse 表示倒车退出
     exit_gap_speed: 0.20                                                # 退出间隙速度，单位 m/s；调大会退出更快但安全余量变小
-    exit_gap_extra_distance_m: 0.10                                     # 退出间隙额外距离，单位 m；调大会多退一些
+    exit_gap_extra_distance_m: 0.05                                     # 退出间隙额外距离，单位 m；调大会多退一些
     exit_gap_timeout_sec: 120.0                                         # 退出间隙超时，单位 s；调大会允许更慢退出
     exit_gap_distance_m: 1.60                                           # 退出间隙目标距离，单位 m；调大会倒退更远
     exit_gap_turn_enabled: true                                         # 直线倒出后是否原地转回走廊朝向；关闭会保持退出后的朝向
@@ -647,8 +647,8 @@ mission_manager_node:
     yellow_line_use_in_gap_entry: false                                  # 入缝是否使用黄线巡线；默认关闭，先不让黄线影响入缝
     yellow_line_detect_only: false                                       # 只识别不控制模式；true 时只运行图像识别和发布 debug，不改变小车控制
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题；Orbbec ASTRA S 默认话题
-    yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例；图像高度的 55% 处开始
-    yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例；图像高度的 95% 处结束
+    yellow_line_roi_y_min_ratio: 0.50                                    # ROI 上边界比例；图像高度的 55% 处开始
+    yellow_line_roi_y_max_ratio: 0.90                                    # ROI 下边界比例；图像高度的 95% 处结束
     yellow_line_target_x_ratio: 0.84                                    # 前进时黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素；用于现场手动标定微调
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
@@ -753,8 +753,8 @@ robot_inventory_client:
 yellow_line_test_node:
   ros__parameters:
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题
-    yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例
-    yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例
+    yellow_line_roi_y_min_ratio: 0.50                                    # ROI 上边界比例
+    yellow_line_roi_y_max_ratio: 0.90                                    # ROI 下边界比例
     yellow_line_target_x_ratio: 0.84                                     # 黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
@@ -781,8 +781,8 @@ yellow_line_drive_test_node:
   ros__parameters:
     yellow_line_image_topic: "/camera/color/image_raw"                   # 前方相机图像话题
     cmd_vel_topic: "/cmd_vel"                                            # 速度发布话题
-    yellow_line_roi_y_min_ratio: 0.55                                    # ROI 上边界比例
-    yellow_line_roi_y_max_ratio: 0.95                                    # ROI 下边界比例
+    yellow_line_roi_y_min_ratio: 0.50                                    # ROI 上边界比例
+    yellow_line_roi_y_max_ratio: 0.90                                    # ROI 下边界比例
     yellow_line_target_x_ratio: 0.84                                    # 前进时黄线目标 x 位置比例；现场标定值
     yellow_line_target_x_offset_px: 0.0                                  # 目标 x 偏移像素
     yellow_h_min: 15                                                     # 黄色 HSV H 最小值
