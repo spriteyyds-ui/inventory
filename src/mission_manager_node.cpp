@@ -192,6 +192,10 @@ public:
     entry_turn_timeout_sec_ = declare_parameter<double>("entry_turn_timeout_sec", 12.0);
     entry_turn_timeout_sec_ = std::isfinite(entry_turn_timeout_sec_) ?
       std::max(0.1, entry_turn_timeout_sec_) : 12.0;
+    entry_yaw_recovery_timeout_sec_ =
+      declare_parameter<double>("entry_yaw_recovery_timeout_sec", 30.0);
+    entry_yaw_recovery_max_deviation_rad_ =
+      declare_parameter<double>("entry_yaw_recovery_max_deviation_rad", 0.1745);
     entry_straight_speed_ = declare_parameter<double>("entry_straight_speed", 0.08);
     entry_straight_timeout_sec_ = declare_parameter<double>("entry_straight_timeout_sec", 60.0);
     entry_straight_timeout_sec_ = std::isfinite(entry_straight_timeout_sec_) ?
@@ -1242,6 +1246,7 @@ private:
   enum class EntryGapPhase
   {
     IDLE,
+    YAW_RECOVERY_WAIT,
     ENTERING_TURN,
     ENTERING_STRAIGHT_ALIGN,
     MOVING_TO_GRID_CENTER,
@@ -1778,6 +1783,8 @@ private:
   static std::string entry_gap_phase_to_string(EntryGapPhase phase)
   {
     switch (phase) {
+      case EntryGapPhase::YAW_RECOVERY_WAIT:
+        return "YAW_RECOVERY_WAIT";
       case EntryGapPhase::ENTERING_TURN:
         return "ENTERING_TURN";
       case EntryGapPhase::ENTERING_STRAIGHT_ALIGN:
@@ -12548,6 +12555,8 @@ private:
     entry_turn_yaw_stable_count_ = 0;
     entry_straight_completed_ = false;
     entry_stopped_by_safety_ = false;
+    entry_yaw_recovery_start_sec_ = 0.0;
+    entry_yaw_recovery_corridor_yaw_ = 0.0;
   }
 
   void set_wait_gap_phase(WaitGapPhase phase)
@@ -12887,6 +12896,48 @@ private:
     if (!current_entering_gap_control_yaw(current, yaw_control)) {
       fail_entering_gap("入缝前当前航向无效: " + yaw_control.pose_note);
       return;
+    }
+
+    // === yaw 漂移检测 ===
+    {
+      // 走廊方向：同侧搜索的 fixed_yaw（左排和右排都是 0.0）
+      double corridor_yaw = 0.0;
+      if (current_entry_side_ == "right") {
+        corridor_yaw = full_inventory_same_side_right_fixed_yaw_rad_;
+      } else {
+        corridor_yaw = full_inventory_same_side_left_fixed_yaw_rad_;
+      }
+      const double yaw_deviation = std::abs(normalize_angle(yaw_control.yaw - corridor_yaw));
+      if (yaw_deviation > entry_yaw_recovery_max_deviation_rad_) {
+        // yaw 偏差过大，进入原地等待恢复
+        RCLCPP_WARN(get_logger(),
+          "[entering_gap] yaw 偏差过大: current_yaw=%.4f (%.1f°) corridor_yaw=%.4f deviation=%.4f (%.1f°) > threshold=%.4f (%.1f°). "
+          "进入原地等待恢复，超时 %.0f 秒",
+          yaw_control.yaw, yaw_control.yaw * 180.0 / M_PI,
+          corridor_yaw, yaw_deviation, yaw_deviation * 180.0 / M_PI,
+          entry_yaw_recovery_max_deviation_rad_, entry_yaw_recovery_max_deviation_rad_ * 180.0 / M_PI,
+          entry_yaw_recovery_timeout_sec_);
+        entry_yaw_recovery_start_sec_ = this->now().seconds();
+        entry_yaw_recovery_corridor_yaw_ = corridor_yaw;
+        publish_stop();
+        set_entry_gap_phase(
+          EntryGapPhase::YAW_RECOVERY_WAIT,
+          "yaw_deviation=" + format_fixed(yaw_deviation, 4) +
+          " corridor_yaw=" + format_fixed(corridor_yaw, 4) +
+          " current_yaw=" + format_fixed(yaw_control.yaw, 4) +
+          " timeout=" + format_fixed(entry_yaw_recovery_timeout_sec_, 1));
+        const std::string state_detail =
+          detail + "，yaw漂移等待恢复 target_straight_distance=" +
+          std::to_string(target_straight_distance_) + "m";
+        if (full_inventory_active_) {
+          set_state(State::FULL_INVENTORY_ENTERING_GAP, "[FULL_INVENTORY] " + state_detail);
+        } else if (single_cabinet_motion_active_) {
+          set_single_cabinet_state(State::SINGLE_CABINET_ENTERING_GAP, state_detail);
+        } else {
+          set_state(State::ENTERING_GAP, state_detail);
+        }
+        return;  // 不继续设置 entry_turn_start_yaw_，等恢复后再设置
+      }
     }
 
     reset_entry_gap_runtime();
@@ -13492,6 +13543,55 @@ private:
     }
 
     switch (entry_gap_phase_) {
+      case EntryGapPhase::YAW_RECOVERY_WAIT: {
+        const double wait_elapsed = this->now().seconds() - entry_yaw_recovery_start_sec_;
+
+        // 重新获取当前 yaw
+        EnteringYawControl recovery_yaw;
+        const bool yaw_valid = current_entering_gap_control_yaw(odom_current, recovery_yaw) &&
+          std::isfinite(recovery_yaw.yaw);
+        const double current_yaw_val = yaw_valid ? recovery_yaw.yaw : std::numeric_limits<double>::quiet_NaN();
+        const double current_deviation = yaw_valid ?
+          std::abs(normalize_angle(recovery_yaw.yaw - entry_yaw_recovery_corridor_yaw_)) :
+          std::numeric_limits<double>::quiet_NaN();
+
+        if (yaw_valid && current_deviation <= entry_yaw_recovery_max_deviation_rad_) {
+          // yaw 已恢复，继续入缝
+          RCLCPP_INFO(get_logger(),
+            "[entering_gap] yaw 恢复成功: current_yaw=%.4f (%.1f°) deviation=%.4f (%.1f°) <= threshold=%.4f (%.1f°) "
+            "等待 %.1f 秒后恢复，继续入缝",
+            current_yaw_val, current_yaw_val * 180.0 / M_PI,
+            current_deviation, current_deviation * 180.0 / M_PI,
+            entry_yaw_recovery_max_deviation_rad_, entry_yaw_recovery_max_deviation_rad_ * 180.0 / M_PI,
+            wait_elapsed);
+          // 重新执行 begin_entering_gap_flow，此时 yaw 已恢复
+          begin_entering_gap_flow("yaw恢复后重新入缝");
+          return;
+        }
+
+        // 检查超时
+        if (wait_elapsed >= entry_yaw_recovery_timeout_sec_) {
+          RCLCPP_ERROR(get_logger(),
+            "[entering_gap] yaw 恢复超时: 等待 %.1f 秒，yaw 仍不可信. yaw_valid=%d current_yaw=%.4f corridor_yaw=%.4f deviation=%.4f",
+            wait_elapsed,
+            yaw_valid ? 1 : 0,
+            current_yaw_val, entry_yaw_recovery_corridor_yaw_,
+            current_deviation);
+          fail_entering_gap("入缝前 yaw 漂移恢复超时，Nav2 定位不可信");
+          return;
+        }
+
+        // 继续等待，原地停车
+        publish_stop();
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 3000,
+          "[entering_gap] yaw 恢复等待中: elapsed=%.1f/%.1f yaw_valid=%d current_yaw=%.4f deviation=%.4f threshold=%.4f",
+          wait_elapsed, entry_yaw_recovery_timeout_sec_,
+          yaw_valid ? 1 : 0,
+          current_yaw_val,
+          current_deviation,
+          entry_yaw_recovery_max_deviation_rad_);
+        break;
+      }
       case EntryGapPhase::ENTERING_TURN: {
         const double yaw_tolerance = std::max(0.001, std::abs(entry_align_yaw_tolerance_rad_));
         const int required_count = std::max(1, entry_turn_yaw_stable_required_count_);
@@ -15055,6 +15155,12 @@ private:
   int entry_turn_yaw_stable_count_{0};
   bool entry_straight_completed_{false};
   bool entry_stopped_by_safety_{false};
+
+  // 入缝前 yaw 漂移恢复等待
+  double entry_yaw_recovery_start_sec_{0.0};
+  double entry_yaw_recovery_timeout_sec_{30.0};
+  double entry_yaw_recovery_corridor_yaw_{0.0};
+  double entry_yaw_recovery_max_deviation_rad_{0.1745};  // 约10°
 
   rclcpp::Time tracking_stable_start_{0, 0, RCL_ROS_TIME};
   rclcpp::Time last_target_seen_time_{0, 0, RCL_ROS_TIME};

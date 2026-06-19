@@ -345,6 +345,8 @@ mission_manager_node:
     entry_turn_yaw_stable_required_count: 3                             # ENTERING_TURN 连续满足偏航误差阈值的次数；调大更稳但耗时更久
     entry_turn_angular_speed: 0.30                                      # ENTERING_TURN 原地转向角速度上限，单位 rad/s；调大会转向更快
     entry_turn_timeout_sec: 60.0                                        # ENTERING_TURN 入缝原地转向超时，单位 s；调大会允许更慢完成入缝转向
+    entry_yaw_recovery_timeout_sec: 30.0                                # 入缝前 yaw 漂移恢复等待超时，单位 s
+    entry_yaw_recovery_max_deviation_rad: 0.10                        # 入缝前 yaw 与走廊方向最大允许偏差，约10°
     entry_straight_speed: 0.10                                          # 转向对齐后直行到深度网格中心的速度，单位 m/s；调大会更快但精度下降
     entry_straight_timeout_sec: 120.0                                    # MOVING_TO_GRID_CENTER 入缝直行到深度格中心的超时，单位 s；调大会允许低速入缝更久
     entry_straight_yaw_kp: 0.40                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
