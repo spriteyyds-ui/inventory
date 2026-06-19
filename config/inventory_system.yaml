@@ -352,8 +352,8 @@ mission_manager_node:
     entry_straight_yaw_kp: 0.40                                         # 进缝直行阶段保持航向的比例增益；调大会纠偏更强但可能摆动
     entry_straight_yaw_deadband_rad: 0.03                               # 进缝直行航向保持死区，单位 rad；调大会减少小幅修正，调小更准
     entry_straight_max_angular_speed: 0.20                              # 进缝直行航向保持角速度限幅，单位 rad/s；调大会纠偏更快
-    entry_side_hold_target_distance_m: 0.30                             # 进缝到网格中心时目标侧保持距离，单位 m；调大会离侧柜更远
-    entry_side_hold_kp: 0.00                                            # 目标侧距离保持比例增益，单位 rad/s/m；调大会更积极贴合目标侧距离
+    entry_side_hold_target_distance_m: 0.40                             # 进缝到网格中心时目标侧保持距离，单位 m；调大会离侧柜更远
+    entry_side_hold_kp: 0.10                                            # 目标侧距离保持比例增益，单位 rad/s/m；调大会更积极贴合目标侧距离
     entry_side_hold_min_valid_points: 5                                 # 启用侧向保持所需最小有效雷达点数，单位 个；调大会更保守
     max_dynamic_entry_distance_m: 10.0                                  # 动态计算进缝距离安全上限，单位 m；调小可防止异常目标导致长距离前进
     enter_stop_distance: 0.10                                           # 反应式进缝硬停止距离阈值，单位 m；调大会更早停车

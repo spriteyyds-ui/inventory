@@ -5432,9 +5432,14 @@ private:
     }
 
     eval.side_error = eval.control_side_dist - eval.target_distance;
-    eval.side_distance_cmd = entry_is_right ?
-      -entry_side_hold_kp_ * eval.side_error :
-      entry_side_hold_kp_ * eval.side_error;
+    // 只在实际距离低于目标距离时才修正（太近了推开），距离足够时不做干预
+    if (eval.side_error < 0.0) {
+      eval.side_distance_cmd = entry_is_right ?
+        -entry_side_hold_kp_ * eval.side_error :
+        entry_side_hold_kp_ * eval.side_error;
+    } else {
+      eval.side_distance_cmd = 0.0;
+    }
     eval.active = true;
     eval.status = "ACTIVE";
     return true;
