@@ -1,7 +1,7 @@
 # ==========================================================================
 # 全局设置
 # ==========================================================================
-slam_mode: "localization"                                               # SLAM模式：localization(纯定位，地图不变) | lifelong(动态建图，地图持续更新)
+slam_mode: "none"                                               # SLAM模式：none(使用AMCL，之前的方案) | localization(纯定位，地图不变) | lifelong(动态建图，地图持续更新)
 
 corridor_follower_node:
   ros__parameters:
@@ -404,7 +404,7 @@ mission_manager_node:
     post_gap_detect_advance_timeout_sec: 40.0                           # 废弃：原检测后额外前进超时
 
     post_recognition_advance_enabled: true                              # 识别到数字后是否额外前进对齐；新逻辑起点从识别稳定后开始
-    post_recognition_advance_forward_distance_m: 1.80                   # 识别后前进距离（偶数柜子），单位 m；从识别数字后沿走廊向前
+    post_recognition_advance_forward_distance_m: 1.40                   # 识别后前进距离（偶数柜子），单位 m；从识别数字后沿走廊向前
     post_recognition_advance_backward_distance_m: 1.20                  # 识别后后退距离（奇数柜子），单位 m；从识别数字后沿走廊向后
     post_recognition_advance_speed: 0.15                                # 识别后前进/后退速度，单位 m/s；适中速度保证对齐精度
     post_recognition_advance_timeout_sec: 60.0                          # 识别后前进/后退超时，单位 s；调大会允许更慢完成
@@ -450,7 +450,7 @@ mission_manager_node:
     plc_open_path: "/http-control-plc/car_open"                         # 当前 Java/PLC 开柜接口；最终请求为 server_url + path + ?shelfId=<柜号>
     plc_open_endpoint: "/http-control-plc/car_open"                     # 兼容旧参数名；与 plc_open_path 保持一致
     plc_open_query_param: "shelfId"                                       # 当前 Java/PLC 开柜参数名；最终请求为 endpoint?shelfId=<柜号>
-    plc_close_endpoint: "/close"                                        # PLC Flask 网关全关接口预留；默认不自动调用
+    plc_close_endpoint: "/http-control-plc/all_close"                                        # PLC Flask 网关全关接口预留；默认不自动调用
     plc_stop_endpoint: "/stop"                                          # PLC Flask 网关全停止接口预留；默认不自动调用，不等同底盘急停
     plc_hello_endpoint: "/hello"                                        # PLC Flask 网关连通性接口预留；本轮不自动调用
     plc_verify_tls: false                                               # 当前 HTTPS 测试默认不校验证书；正式部署建议开启并配置可信证书
