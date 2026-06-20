@@ -21,4 +21,13 @@ cp "$SCRIPT_DIR/online_async_launch.py" \
    "/home/wheeltec/wheeltec_ros2/src/wheeltec_robot_slam/wheeltec_slam_toolbox/launch/online_async_launch.py"
 echo "✓ online_async_launch.py"
 
+# 恢复半地图文件
+cp "$SCRIPT_DIR/WHEELTEC_left.pgm" "$SCRIPT_DIR/WHEELTEC_left.yaml" \
+   "/home/wheeltec/wheeltec_ros2/src/wheeltec_robot_nav2/map/"
+echo "✓ WHEELTEC_left.pgm/yaml"
+
+cp "$SCRIPT_DIR/WHEELTEC_right.pgm" "$SCRIPT_DIR/WHEELTEC_right.yaml" \
+   "/home/wheeltec/wheeltec_ros2/src/wheeltec_robot_nav2/map/"
+echo "✓ WHEELTEC_right.pgm/yaml"
+
 echo "恢复完成！"

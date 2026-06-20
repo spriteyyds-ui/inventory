@@ -275,7 +275,7 @@ mission_manager_node:
     gap_topic: /inventory/gap_status                                    # 间隙检测状态输入话题；用于 WAITING_GAP 判断是否可进入
     odom_topic: /odom_combined                                          # 主里程计输入话题；用于局部移动和姿态判断
     odom_fallback_topic: /odom                                          # 备用里程计输入话题；主话题超时后切换使用
-    odom_primary_timeout_sec: 2.0                                       # 主里程计超时阈值，单位 s；调大会更久等待主源，调小更快切备用源
+    odom_primary_timeout_sec: 12.0                                       # 主里程计超时阈值，单位 s；调大会更久等待主源，调小更快切备用源
     scan_topic: /scan                                                   # 进入阶段安全检查使用的雷达话题；改动会切换避障数据来源
 
     mission_state_topic: /inventory/mission_state                       # 任务状态发布话题；外部监控通过该话题查看状态机
