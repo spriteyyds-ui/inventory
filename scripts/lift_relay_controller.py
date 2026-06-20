@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 郁有冬 <spriteyyds@gmail.com>. All rights reserved.
+from __future__ import annotations
+
 _COPYRIGHT = (
     "========================================\n"
     " agv_inventory_system\n"
@@ -7,7 +9,6 @@ _COPYRIGHT = (
     " All rights reserved.\n"
     "========================================\n"
 )
-from __future__ import annotations
 
 import math
 import os

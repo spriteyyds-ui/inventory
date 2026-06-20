@@ -39,10 +39,13 @@ def read_slam_mode_from_config(params_file):
         if os.path.isfile(params_file):
             with open(params_file, 'r') as f:
                 cfg = yaml.safe_load(f)
-            return cfg.get('slam_mode', 'localization')
+            # slam_mode 放在 _global.ros__parameters 下，避免 params-file 解析错误
+            global_cfg = cfg.get('_global', {})
+            ros_params = global_cfg.get('ros__parameters', {})
+            return ros_params.get('slam_mode', 'none')
     except Exception:
         pass
-    return 'localization'
+    return 'none'
 
 
 def launch_slam_toolbox(context, *args, **kwargs):

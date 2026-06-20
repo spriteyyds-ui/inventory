@@ -1,7 +1,9 @@
 # ==========================================================================
-# 全局设置
+# 全局设置（使用 _global 命名空间，避免 ROS2 params-file 解析错误）
 # ==========================================================================
-slam_mode: "none"                                               # SLAM模式：none(使用AMCL，之前的方案) | localization(纯定位，地图不变) | lifelong(动态建图，地图持续更新)
+_global:
+  ros__parameters:
+    slam_mode: "none"                                                     # SLAM模式：none(使用AMCL，之前的方案) | localization(纯定位，地图不变) | lifelong(动态建图，地图持续更新)
 
 corridor_follower_node:
   ros__parameters:
@@ -462,6 +464,12 @@ mission_manager_node:
     plc_open_wait_sec: 60.0                                              # /open 请求层成功后的固定等待时间，单位 s；不等待 PLC 状态反馈
     plc_call_close_on_mission_done: false                               # 是否任务完成后调用 PLC /close 全关；默认关闭
     plc_call_stop_on_error: false                                       # 是否任务异常时调用 PLC /stop 全停止；默认关闭
+
+    plc_close_half_enabled: true                                        # 是否使用分侧关闭接口；启用后跨侧/结束恢复时先关南侧再关北侧
+    plc_close_half_endpoint: "/http-control-plc/close_half"             # 分侧关闭接口路径；GET 请求，参数 shelfId=100(南侧) 或 101(北侧)
+    plc_close_half_shelf_south: 100                                     # 南侧 shelfId；用于 close_half 接口参数
+    plc_close_half_shelf_north: 101                                     # 北侧 shelfId；用于 close_half 接口参数
+    plc_close_half_interval_sec: 10.0                                   # 南北两侧关闭指令之间的间隔时间，单位 s；等待机械动作完成
 
     rfid_upload_enabled: false                                           # 是否在当前扫描序列全部格位完成后批量上传 RFID/扫码结果
     rfid_upload_url: "https://192.168.1.100:8099/RobotInspection/inventoryAudit"  # RFID 盘库结果 HTTPS POST 地址；与 robot_inventory_client 块保持一致

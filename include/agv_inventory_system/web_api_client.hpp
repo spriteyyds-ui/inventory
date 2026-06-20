@@ -20,6 +20,7 @@ struct WebApiClientParams
   std::string plc_open_endpoint{"/http-control-plc/car_open"};
   std::string plc_open_query_param{"shelfId"};
   std::string plc_close_endpoint{"/close"};
+  std::string plc_close_half_endpoint{"/http-control-plc/close_half"};
   std::string plc_stop_endpoint{"/stop"};
   std::string plc_hello_endpoint{"/hello"};
   bool plc_verify_tls{false};
@@ -61,6 +62,7 @@ public:
   bool requestOpenGap(const std::string & gap_id) const;
   bool requestOpenCabinet(int cabinet_id) const;
   bool requestPlcClose() const;
+  bool requestPlcCloseHalf(int shelf_id) const;
   bool requestCloseGap(const std::string & gap_id) const;
   bool reportRobotStatus(const std::string & state) const;
   bool reportInventoryResult(

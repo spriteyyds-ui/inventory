@@ -389,6 +389,21 @@ namespace agv_inventory_system
     return requestHttpGet("PLC close all", url);
   }
 
+  bool WebApiClient::requestPlcCloseHalf(int shelf_id) const
+  {
+    const std::string base_url = trim_trailing_slashes(params_.plc_server_url);
+    const std::string endpoint = ensure_leading_slash(params_.plc_close_half_endpoint);
+    const std::string url = base_url + endpoint + "?shelfId=" + std::to_string(shelf_id);
+
+    std::cout << "[web_api_client][PLC] close half request"
+              << " shelf_id=" << shelf_id
+              << " url=" << url
+              << " verify_tls=" << (params_.plc_verify_tls ? "true" : "false")
+              << " timeout_sec=" << params_.plc_request_timeout_sec
+              << " retry_count=" << params_.plc_retry_count << std::endl;
+    return requestHttpGet("PLC close half shelf=" + std::to_string(shelf_id), url);
+  }
+
   bool WebApiClient::requestCloseGap(const std::string &gap_id) const
   {
     if (isLocalMode())

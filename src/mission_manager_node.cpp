@@ -326,6 +326,11 @@ public:
       declare_parameter<std::string>("plc_open_path", plc_open_endpoint_);
     plc_open_query_param_ = declare_parameter<std::string>("plc_open_query_param", "shelfId");
     plc_close_endpoint_ = declare_parameter<std::string>("plc_close_endpoint", "/close");
+    plc_close_half_enabled_ = declare_parameter<bool>("plc_close_half_enabled", false);
+    plc_close_half_endpoint_ = declare_parameter<std::string>("plc_close_half_endpoint", "/http-control-plc/close_half");
+    plc_close_half_shelf_south_ = declare_parameter<int>("plc_close_half_shelf_south", 100);
+    plc_close_half_shelf_north_ = declare_parameter<int>("plc_close_half_shelf_north", 101);
+    plc_close_half_interval_sec_ = declare_parameter<double>("plc_close_half_interval_sec", 10.0);
     plc_stop_endpoint_ = declare_parameter<std::string>("plc_stop_endpoint", "/stop");
     plc_hello_endpoint_ = declare_parameter<std::string>("plc_hello_endpoint", "/hello");
     plc_verify_tls_ = declare_parameter<bool>("plc_verify_tls", false);
@@ -2215,6 +2220,7 @@ private:
     web_params.plc_open_endpoint = plc_open_endpoint_;
     web_params.plc_open_query_param = plc_open_query_param_;
     web_params.plc_close_endpoint = plc_close_endpoint_;
+    web_params.plc_close_half_endpoint = plc_close_half_endpoint_;
     web_params.plc_stop_endpoint = plc_stop_endpoint_;
     web_params.plc_hello_endpoint = plc_hello_endpoint_;
     web_params.plc_verify_tls = plc_verify_tls_;
@@ -6737,6 +6743,9 @@ private:
     full_inventory_restore_close_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     cabinet_1_exit_turn_aligned_ = false;
     cabinet_36_exit_turn_aligned_ = false;
+    odom_rotate_active_ = false;
+    odom_rotate_initial_yaw_ = 0.0;
+    odom_rotate_target_rotation_ = 0.0;
     reset_relocalization_context();
     reset_camera_switch_context();
   }
@@ -8871,18 +8880,63 @@ private:
       return;
     }
 
-    // Send PLC /close (close all)
-    if (!web_api_client_.requestPlcClose()) {
-      const std::string reason = "PLC close all 失败";
-      if (plc_continue_without_plc()) {
-        RCLCPP_WARN(get_logger(), "[mission_manager][FULL_INVENTORY][restore] %s, continue_without_plc", reason.c_str());
-        publish_full_inventory_log("[restore] WARNING " + reason + ", continue_without_plc");
+    if (plc_close_half_enabled_) {
+      // Use close_half: close south side first, then north side with interval
+      publish_full_inventory_log("[restore] using close_half mode");
+
+      // Close south side (shelf_id=100)
+      publish_full_inventory_log("[restore] close half south shelf=" + std::to_string(plc_close_half_shelf_south_));
+      if (!web_api_client_.requestPlcCloseHalf(plc_close_half_shelf_south_)) {
+        const std::string reason = "PLC close half south shelf=" + std::to_string(plc_close_half_shelf_south_) + " 失败";
+        if (plc_continue_without_plc()) {
+          RCLCPP_WARN(get_logger(), "[mission_manager][FULL_INVENTORY][restore] %s, continue_without_plc", reason.c_str());
+          publish_full_inventory_log("[restore] WARNING " + reason + ", continue_without_plc");
+        } else {
+          fail_full_inventory("[restore] " + reason);
+          return;
+        }
       } else {
-        fail_full_inventory("[restore] " + reason);
-        return;
+        publish_full_inventory_log("[restore] close half south request sent");
+      }
+
+      // Wait interval before closing north side
+      if (plc_close_half_interval_sec_ > 0.0) {
+        publish_full_inventory_log(
+          "[restore] wait interval " + format_seconds(plc_close_half_interval_sec_) + " before close half north");
+        const auto interval_until = this->now() + rclcpp::Duration::from_seconds(plc_close_half_interval_sec_);
+        while (this->now() < interval_until) {
+          rclcpp::sleep_for(std::chrono::milliseconds(100));
+        }
+      }
+
+      // Close north side (shelf_id=101)
+      publish_full_inventory_log("[restore] close half north shelf=" + std::to_string(plc_close_half_shelf_north_));
+      if (!web_api_client_.requestPlcCloseHalf(plc_close_half_shelf_north_)) {
+        const std::string reason = "PLC close half north shelf=" + std::to_string(plc_close_half_shelf_north_) + " 失败";
+        if (plc_continue_without_plc()) {
+          RCLCPP_WARN(get_logger(), "[mission_manager][FULL_INVENTORY][restore] %s, continue_without_plc", reason.c_str());
+          publish_full_inventory_log("[restore] WARNING " + reason + ", continue_without_plc");
+        } else {
+          fail_full_inventory("[restore] " + reason);
+          return;
+        }
+      } else {
+        publish_full_inventory_log("[restore] close half north request sent");
       }
     } else {
-      publish_full_inventory_log("[restore] close all request sent");
+      // Send PLC /close (close all)
+      if (!web_api_client_.requestPlcClose()) {
+        const std::string reason = "PLC close all 失败";
+        if (plc_continue_without_plc()) {
+          RCLCPP_WARN(get_logger(), "[mission_manager][FULL_INVENTORY][restore] %s, continue_without_plc", reason.c_str());
+          publish_full_inventory_log("[restore] WARNING " + reason + ", continue_without_plc");
+        } else {
+          fail_full_inventory("[restore] " + reason);
+          return;
+        }
+      } else {
+        publish_full_inventory_log("[restore] close all request sent");
+      }
     }
 
     full_inventory_restore_active_ = true;
@@ -11159,6 +11213,9 @@ private:
     single_cabinet_exit_phase_start_time_ = rclcpp::Time(0, 0, get_clock()->get_clock_type());
     single_cabinet_exit_phase_ = SingleCabinetExitPhase::STRAIGHT_REVERSE;
     single_cabinet_exit_effective_timeout_sec_ = single_cabinet_exit_timeout_sec_;
+    odom_rotate_active_ = false;
+    odom_rotate_initial_yaw_ = 0.0;
+    odom_rotate_target_rotation_ = 0.0;
 
     if (consume_pending_interrupt_after_exit()) {
       return;
@@ -11523,6 +11580,159 @@ private:
     }
 
     if (single_cabinet_exit_phase_ == SingleCabinetExitPhase::TURN_TO_CORRIDOR) {
+      // Compute elapsed BEFORE the yaw check so timeout is always enforced.
+      const double elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
+      const double turn_timeout =
+        std::isfinite(single_cabinet_exit_turn_timeout_sec_) ?
+        std::max(0.1, single_cabinet_exit_turn_timeout_sec_) : 8.0;
+
+      const double yaw_tolerance =
+        std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
+        std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
+
+      const double turn_speed = std::isfinite(single_cabinet_exit_turn_angular_speed_) ?
+        std::abs(single_cabinet_exit_turn_angular_speed_) : 0.0;
+
+      // ================================================================
+      // 1号/36号：odom 原地右转90度（地图变化导致 map TF 漂移不可靠）
+      // ================================================================
+      const bool use_odom_rotate =
+        full_inventory_active_ &&
+        (current_target_cabinet_ == 1 || current_target_cabinet_ == 36);
+
+      if (use_odom_rotate) {
+        // 首次进入：记录 odom 初始 yaw
+        if (!odom_rotate_active_) {
+          if (!has_yaw_) {
+            publish_stop();
+            RCLCPP_WARN_THROTTLE(
+              get_logger(), *get_clock(), 2000,
+              "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+              "odom_rotate cabinet=%d waiting for odom yaw...",
+              current_target_cabinet_);
+            return;
+          }
+          odom_rotate_active_ = true;
+          odom_rotate_initial_yaw_ = latest_yaw_;
+          odom_rotate_target_rotation_ = -M_PI / 2.0;  // 顺时针90度
+          RCLCPP_INFO(
+            get_logger(),
+            "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+            "odom_rotate START cabinet=%d initial_yaw=%.4f target_rotation=%.4f (%.1f°)",
+            current_target_cabinet_,
+            odom_rotate_initial_yaw_,
+            odom_rotate_target_rotation_,
+            odom_rotate_target_rotation_ * 180.0 / M_PI);
+          publish_motion_log(
+            "[exit_gap] odom_rotate start cabinet=" + std::to_string(current_target_cabinet_) +
+            " initial_yaw=" + format_fixed(odom_rotate_initial_yaw_, 4) +
+            " target_rotation=" + format_fixed(odom_rotate_target_rotation_, 4));
+        }
+
+        // 检查 odom yaw 有效性
+        if (!has_yaw_) {
+          publish_stop();
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 2000,
+            "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+            "odom_rotate odom yaw lost, waiting...");
+          return;
+        }
+
+        // 计算已转过的角度（odom 瞬时差值，避免累积漂移）
+        const double accumulated = normalize_angle(latest_yaw_ - odom_rotate_initial_yaw_);
+        const double yaw_error = normalize_angle(odom_rotate_target_rotation_ - accumulated);
+
+        // 检查是否转够
+        if (std::abs(yaw_error) <= yaw_tolerance) {
+          publish_stop();
+          RCLCPP_INFO(
+            get_logger(),
+            "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+            "odom_rotate DONE cabinet=%d accumulated=%.4f (%.1f°) yaw_error=%.4f "
+            "tolerance=%.4f elapsed=%.2f",
+            current_target_cabinet_,
+            accumulated,
+            accumulated * 180.0 / M_PI,
+            yaw_error,
+            yaw_tolerance,
+            elapsed);
+          publish_motion_log(
+            "[exit_gap] odom_rotate done cabinet=" + std::to_string(current_target_cabinet_) +
+            " accumulated=" + format_fixed(accumulated, 4) +
+            " yaw_error=" + format_fixed(yaw_error, 4) +
+            " elapsed=" + format_fixed(elapsed, 2));
+          cabinet_1_exit_turn_aligned_ = (current_target_cabinet_ == 1);
+          cabinet_36_exit_turn_aligned_ = (current_target_cabinet_ == 36);
+          finish_single_cabinet_exit_gap();
+          return;
+        }
+
+        // 超时检查
+        if (elapsed > turn_timeout) {
+          publish_stop();
+          RCLCPP_WARN(
+            get_logger(),
+            "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+            "odom_rotate TIMEOUT cabinet=%d accumulated=%.4f (%.1f°) yaw_error=%.4f "
+            "elapsed=%.2f timeout=%.2f",
+            current_target_cabinet_,
+            accumulated,
+            accumulated * 180.0 / M_PI,
+            yaw_error,
+            elapsed,
+            turn_timeout);
+          publish_motion_log(
+            "[exit_gap] odom_rotate timeout cabinet=" + std::to_string(current_target_cabinet_) +
+            " accumulated=" + format_fixed(accumulated, 4) +
+            " yaw_error=" + format_fixed(yaw_error, 4) +
+            " elapsed=" + format_fixed(elapsed, 2));
+          // 超时不设置 aligned 标志
+          finish_single_cabinet_exit_gap();
+          return;
+        }
+
+        // 角速度非法检查
+        if (turn_speed <= 1e-4) {
+          publish_stop();
+          RCLCPP_WARN(
+            get_logger(),
+            "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+            "odom_rotate angular speed invalid, finish to avoid blocking");
+          publish_motion_log("[exit_gap] odom_rotate angular speed invalid, finish to avoid blocking");
+          finish_single_cabinet_exit_gap();
+          return;
+        }
+
+        // 发布旋转指令
+        geometry_msgs::msg::Twist cmd;
+        cmd.linear.x = 0.0;
+        cmd.linear.y = 0.0;
+        cmd.angular.z = std::clamp(yaw_error, -turn_speed, turn_speed);
+        cmd_pub_->publish(cmd);
+        RCLCPP_INFO_THROTTLE(
+          get_logger(),
+          *get_clock(),
+          1000,
+          "[mission_manager][single_cabinet][exit_gap] phase=TURN_TO_CORRIDOR "
+          "odom_rotate cabinet=%d accumulated=%.4f (%.1f°) target=%.4f (%.1f°) "
+          "yaw_error=%.4f cmd.angular.z=%.3f elapsed=%.2f/%.2f",
+          current_target_cabinet_,
+          accumulated,
+          accumulated * 180.0 / M_PI,
+          odom_rotate_target_rotation_,
+          odom_rotate_target_rotation_ * 180.0 / M_PI,
+          yaw_error,
+          cmd.angular.z,
+          elapsed,
+          turn_timeout);
+        return;
+      }
+
+      // ================================================================
+      // 其他柜号：原有 map TF 目标角旋转逻辑
+      // ================================================================
+
       // ---- 固定出缝目标角选择 ----
       std::string exit_param_name, exit_motion_note, exit_error_reason;
       double fixed_exit_target_yaw = 0.0;
@@ -11542,12 +11752,6 @@ private:
         }
         return;
       }
-
-      // Compute elapsed BEFORE the TF check so timeout is always enforced.
-      const double elapsed = (this->now() - single_cabinet_exit_phase_start_time_).seconds();
-      const double turn_timeout =
-        std::isfinite(single_cabinet_exit_turn_timeout_sec_) ?
-        std::max(0.1, single_cabinet_exit_turn_timeout_sec_) : 8.0;
 
       EnteringYawControl exit_yaw_control;
       if (!current_map_yaw_strict(exit_yaw_control)) {
@@ -11588,9 +11792,6 @@ private:
       double target_exit_yaw = fixed_exit_target_yaw;
       const double current_exit_yaw = normalize_angle(exit_yaw_control.yaw);
       double yaw_error = normalize_angle(target_exit_yaw - current_exit_yaw);
-      const double yaw_tolerance =
-        std::isfinite(single_cabinet_exit_turn_yaw_tolerance_rad_) ?
-        std::max(0.001, std::abs(single_cabinet_exit_turn_yaw_tolerance_rad_)) : 0.08;
 
       // 强制转向逻辑：当修正角度不足45度时，强制转向90度
       if (exit_gap_force_turn_enabled_ &&
@@ -11711,8 +11912,6 @@ private:
         return;
       }
 
-      const double turn_speed = std::isfinite(single_cabinet_exit_turn_angular_speed_) ?
-        std::abs(single_cabinet_exit_turn_angular_speed_) : 0.0;
       if (turn_speed <= 1e-4) {
         publish_stop();
         RCLCPP_WARN(
@@ -13171,7 +13370,7 @@ private:
       publish_full_inventory_log(
         "recognition stable, post-recognition advance disabled, start search gap target=" +
         std::to_string(current_target_cabinet_));
-      begin_search_gap_flow("recognition stable, post-recognition advance disabled");
+      begin_search_gap_flow();
       return;
     }
 
@@ -13184,7 +13383,7 @@ private:
       publish_full_inventory_log(
         "recognition stable, post-recognition advance distance too small, start search gap target=" +
         std::to_string(current_target_cabinet_));
-      begin_search_gap_flow("recognition stable, post-recognition advance distance too small");
+      begin_search_gap_flow();
       return;
     }
 
@@ -13240,7 +13439,7 @@ private:
       publish_full_inventory_log(
         "post-recognition advance done, start search gap target=" +
         std::to_string(current_target_cabinet_));
-      begin_search_gap_flow("post-recognition advance done");
+      begin_search_gap_flow();
       return;
     }
 
@@ -14925,6 +15124,12 @@ private:
   bool cabinet_1_exit_turn_aligned_{false};
   bool cabinet_36_exit_turn_aligned_{false};
 
+  // odom-based 90度原地旋转（1号/36号出缝 TURN_TO_CORRIDOR）
+  // 地图变化导致 map TF 漂移时，改用 odom 积分做精确右转90度
+  bool odom_rotate_active_{false};
+  double odom_rotate_initial_yaw_{0.0};
+  double odom_rotate_target_rotation_{0.0};
+
   // 1→19 跨侧环境恢复后 AMCL 重定位参数
   bool cab1_post_restore_relocalization_enabled_{false};
   double cab1_exit_map_x_{0.0};       // 现场标定前为占位值
@@ -15104,6 +15309,11 @@ private:
   std::string plc_open_endpoint_{"/http-control-plc/car_open"};
   std::string plc_open_query_param_{"shelfId"};
   std::string plc_close_endpoint_{"/close"};
+  bool plc_close_half_enabled_{false};
+  std::string plc_close_half_endpoint_{"/http-control-plc/close_half"};
+  int plc_close_half_shelf_south_{100};
+  int plc_close_half_shelf_north_{101};
+  double plc_close_half_interval_sec_{10.0};
   std::string plc_stop_endpoint_{"/stop"};
   std::string plc_hello_endpoint_{"/hello"};
   bool plc_verify_tls_{false};
